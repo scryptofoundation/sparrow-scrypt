@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow;
 
 import com.beust.jcommander.Parameter;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import org.slf4j.event.Level;
 
@@ -13,6 +14,9 @@ public class Args {
 
     @Parameter(names = { "--network", "-n" }, description = "Network to use")
     public Network network;
+
+    @Parameter(names = { "--coin", "-c" }, description = "Coin to use")
+    public Coin coin;
 
     @Parameter(names = { "--level", "-l" }, description = "Set log level")
     public Level level;
@@ -36,6 +40,10 @@ public class Args {
         if(network != null) {
             params.add("-n");
             params.add(network.toString());
+        }
+        if(coin != null) {
+            params.add("-c");
+            params.add(coin.toString());
         }
         if(level != null) {
             params.add("-l");

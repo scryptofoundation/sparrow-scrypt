@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow;
 
 import com.beust.jcommander.JCommander;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Drongo;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.sparrow.io.Storage;
@@ -23,6 +24,8 @@ public class SparrowWallet {
     public static final String APP_VERSION_SUFFIX = "";
     public static final String APP_HOME_PROPERTY = "sparrow.home";
     public static final String NETWORK_ENV_PROPERTY = "SPARROW_NETWORK";
+    public static final String COIN_ENV_PROPERTY = "SCRYPTO_COIN";
+    public static final String COIN_SYSTEM_PROPERTY = "scrypto.coin";
     public static final String JPACKAGE_APP_PATH = "jpackage.app-path";
 
     private static Instance instance;
@@ -57,6 +60,25 @@ public class SparrowWallet {
         if(args.dir != null) {
             System.setProperty(APP_HOME_PROPERTY, args.dir);
             getLogger().info("Using configured Sparrow-LTC home folder of " + args.dir);
+        }
+
+        //Set the coin before any chain parameters, home folder or network are resolved. A packaged
+        //flavor bakes -Dscrypto.coin=<name> into its JVM args; the arg and env are for development.
+        if(args.coin != null) {
+            Coin.set(args.coin);
+        } else {
+            String coinProperty = System.getProperty(COIN_SYSTEM_PROPERTY, System.getenv(COIN_ENV_PROPERTY));
+            if(coinProperty != null) {
+                try {
+                    Coin.set(Coin.valueOf(coinProperty.toUpperCase(Locale.ROOT)));
+                } catch(Exception e) {
+                    getLogger().warn("Invalid " + COIN_SYSTEM_PROPERTY + "/" + COIN_ENV_PROPERTY + " value: " + coinProperty);
+                }
+            }
+        }
+
+        if(Coin.get() != Coin.LITECOIN) {
+            getLogger().info("Using " + Coin.get() + " configuration");
         }
 
         if(args.network != null) {

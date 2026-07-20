@@ -611,11 +611,15 @@ public class Storage {
             return new File(System.getProperty(SparrowWallet.APP_HOME_PROPERTY));
         }
 
+        //Home folder follows the coin so wallets and config of different chains never share a directory.
+        //Litecoin resolves to the historical "Sparrow-LTC" / ".sparrow-ltc" exactly, preserving existing
+        //installs; a Dogecoin flavor uses "Sparrow-DOGE" / ".sparrow-doge".
+        String appName = "Sparrow-" + Coin.get().getTicker();
         if(isWindows()) {
-            return new File(getHomeDir(), WINDOWS_SPARROW_DIR);
+            return new File(getHomeDir(), appName);
         }
 
-        return new File(getHomeDir(), SPARROW_DIR);
+        return new File(getHomeDir(), "." + appName.toLowerCase(Locale.ROOT));
     }
 
     static File getHomeDir() {
