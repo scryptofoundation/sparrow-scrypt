@@ -4,6 +4,7 @@ import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.gui2.*;
 import com.googlecode.lanterna.gui2.dialogs.DialogWindow;
 import com.sparrowwallet.drongo.BitcoinUnit;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.UnitFormat;
 import com.sparrowwallet.sparrow.event.BitcoinUnitChangedEvent;
@@ -48,7 +49,7 @@ public class GeneralDialog extends DialogWindow {
         Panel mainPanel = new Panel();
         mainPanel.setLayoutManager(new GridLayout(2).setHorizontalSpacing(5));
 
-        mainPanel.addComponent(new Label("Litecoin Unit"));
+        mainPanel.addComponent(new Label(Coin.get().toDisplayString() + " Unit"));
         bitcoinUnit = new ComboBox<>(BitcoinUnit.values());
         mainPanel.addComponent(bitcoinUnit);
 

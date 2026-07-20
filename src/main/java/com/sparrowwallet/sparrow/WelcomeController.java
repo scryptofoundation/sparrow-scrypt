@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow;
 
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.sparrow.control.UnlabeledToggleSwitch;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -81,7 +82,7 @@ public class WelcomeController {
             welcomeBox.getStyleClass().clear();
             welcomeBox.getStyleClass().add("bitcoin-core");
             serverToggle.setSelected(true);
-            serverStatus.setText("Connected to Litecoin Core (demonstration only)");
+            serverStatus.setText("Connected to " + Coin.get().getCoreName() + " (demonstration only)");
             return true;
         }
 
@@ -128,7 +129,7 @@ public class WelcomeController {
             welcomeBox.getStyleClass().clear();
             welcomeBox.getStyleClass().add("bitcoin-core");
             serverToggle.setSelected(true);
-            serverStatus.setText("Connected to Litecoin Core (demonstration only)");
+            serverStatus.setText("Connected to " + Coin.get().getCoreName() + " (demonstration only)");
             return true;
         }
 

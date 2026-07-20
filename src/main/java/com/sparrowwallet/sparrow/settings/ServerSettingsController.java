@@ -4,6 +4,7 @@ import com.github.arteam.simplejsonrpc.client.exception.JsonRpcException;
 import com.google.common.base.Throwables;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.net.HostAndPort;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.sparrow.AppServices;
@@ -269,7 +270,7 @@ public class ServerSettingsController extends SettingsDetailController {
             Stage window = new Stage();
 
             DirectoryChooser directorChooser = new DirectoryChooser();
-            directorChooser.setTitle("Select Litecoin Core Data Directory");
+            directorChooser.setTitle("Select " + Coin.get().getCoreName() + " Data Directory");
             directorChooser.setInitialDirectory(config.getCoreDataDir() != null ? config.getCoreDataDir() : new File(System.getProperty("user.home")));
 
             File dataDir = directorChooser.showDialog(window);
@@ -942,14 +943,17 @@ public class ServerSettingsController extends SettingsDetailController {
     }
 
     private File getDefaultCoreDataDir() {
+        //Core data directory names follow the coin: Litecoin -> ~/.litecoin, Dogecoin -> ~/.dogecoin, etc.
+        String capitalizedName = Coin.get().getCapitalizedName();
+        String lowerName = Coin.get().getName();
         OsType osType = OsType.getCurrent();
         if(osType == OsType.MACOS) {
-            return new File(System.getProperty("user.home") + "/Library/Application Support/Litecoin");
+            return new File(System.getProperty("user.home") + "/Library/Application Support/" + capitalizedName);
         } else if(osType == OsType.WINDOWS) {
-            File oldDir = new File(System.getenv("APPDATA") + "/Litecoin");
-            return oldDir.exists() ? oldDir : new File(System.getenv("LOCALAPPDATA") + "/Litecoin");
+            File oldDir = new File(System.getenv("APPDATA") + "/" + capitalizedName);
+            return oldDir.exists() ? oldDir : new File(System.getenv("LOCALAPPDATA") + "/" + capitalizedName);
         } else {
-            return new File(System.getProperty("user.home") + "/.litecoin");
+            return new File(System.getProperty("user.home") + "/." + lowerName);
         }
     }
 

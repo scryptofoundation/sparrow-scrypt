@@ -3,6 +3,7 @@ package com.sparrowwallet.sparrow.terminal.settings;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.gui2.*;
 import com.googlecode.lanterna.gui2.dialogs.DirectoryDialogBuilder;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.io.Server;
@@ -23,7 +24,7 @@ public class BitcoinCoreDialog extends ServerUrlDialog {
     private final TextBox pass;
 
     public BitcoinCoreDialog() {
-        super("Litecoin Core");
+        super(Coin.get().getCoreName());
 
         setHints(List.of(Hint.CENTERED));
         Panel mainPanel = new Panel(new GridLayout(3).setHorizontalSpacing(2).setVerticalSpacing(0));
@@ -83,7 +84,7 @@ public class BitcoinCoreDialog extends ServerUrlDialog {
             }
         });
         selectDataFolder.addListener(button -> {
-            DirectoryDialogBuilder builder = new DirectoryDialogBuilder().setTitle("Select Litecoin Core Data Folder").setActionLabel("Select");
+            DirectoryDialogBuilder builder = new DirectoryDialogBuilder().setTitle("Select " + Coin.get().getCoreName() + " Data Folder").setActionLabel("Select");
             builder.setShowHiddenDirectories(true);
             builder.setSelectedDirectory(Config.get().getCoreDataDir() == null ? new File(System.getProperty("user.home")) : Config.get().getCoreDataDir());
             File file = builder.build().showDialog(SparrowTerminal.get().getGui());
