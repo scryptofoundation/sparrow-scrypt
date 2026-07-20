@@ -373,7 +373,7 @@ public class ReceiveController extends WalletFormController implements Initializ
 
         BigDecimal ltcValue = BigDecimal.valueOf(sats).divide(BigDecimal.valueOf(Transaction.SATOSHIS_PER_BITCOIN));
         DecimalFormat df = new DecimalFormat("0.########", DecimalFormatSymbols.getInstance(Locale.ENGLISH));
-        return BitcoinURI.BITCOIN_SCHEME + ":" + addressString + "?" + BitcoinURI.FIELD_AMOUNT + "=" + df.format(ltcValue);
+        return BitcoinURI.getUriScheme() + ":" + addressString + "?" + BitcoinURI.FIELD_AMOUNT + "=" + df.format(ltcValue);
     }
 
     private void updateQR() {
