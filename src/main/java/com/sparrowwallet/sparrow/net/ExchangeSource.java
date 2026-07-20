@@ -299,6 +299,15 @@ public enum ExchangeSource {
 
     public abstract Map<Date, Double> getHistoricalExchangeRates(Currency currency, Date start, Date end);
 
+    /**
+     * The default exchange source for the active coin. CoinGecko's /exchange_rates (BTC-relative) only
+     * lists major coins - Litecoin is present, Dogecoin is not - so non-Litecoin coins default to
+     * Coinbase, which quotes by ticker. Coins Coinbase does not list simply show no rate.
+     */
+    public static ExchangeSource getDefault() {
+        return Coin.get() == Coin.LITECOIN ? COINGECKO : COINBASE;
+    }
+
     private static boolean isValidISO4217Code(String code) {
         try {
             Currency currency = Currency.getInstance(code);

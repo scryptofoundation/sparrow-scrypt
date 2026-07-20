@@ -86,7 +86,6 @@ public class AppServices {
     private static final int CONNECTION_DELAY_SECS = 2;
     private static final int RATES_DELAY_SECS_DEFAULT = 2;
     private static final int RATES_DELAY_SECS_WINDOWS = 5;
-    private static final ExchangeSource DEFAULT_EXCHANGE_SOURCE = ExchangeSource.COINGECKO;
     private static final Currency DEFAULT_FIAT_CURRENCY = Currency.getInstance("USD");
     private static final String TOR_DEFAULT_PROXY_CIRCUIT_ID = "default";
 
@@ -392,7 +391,7 @@ public class AppServices {
 
     private ExchangeSource.RatesService createRatesService(ExchangeSource exchangeSource, Currency currency) {
         ExchangeSource.RatesService ratesService = new ExchangeSource.RatesService(
-                exchangeSource == null ? DEFAULT_EXCHANGE_SOURCE : exchangeSource,
+                exchangeSource == null ? ExchangeSource.getDefault() : exchangeSource,
                 currency == null ? DEFAULT_FIAT_CURRENCY : currency);
         //Delay startup on first run, Windows requires a longer delay
         ratesService.setDelay(OsType.getCurrent() == OsType.WINDOWS ? Duration.seconds(RATES_DELAY_SECS_WINDOWS) : Duration.seconds(RATES_DELAY_SECS_DEFAULT));
