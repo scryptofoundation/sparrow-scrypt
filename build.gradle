@@ -19,6 +19,24 @@ if(System.getProperty("os.arch") == "aarch64") {
 }
 def headless = "true".equals(System.getProperty("java.awt.headless"))
 
+// Coin flavor: -Pcoin=doge|pep|lky (default ltc). Drives the packaged app name, icon and the
+// scrypto.coin runtime property, so one codebase produces Sparrow-LTC / Sparrow-DOGE / Sparrow-PEP /
+// Sparrow-LKY. coin=ltc reproduces the historical Sparrow-LTC packaging exactly.
+def coin = (project.findProperty('coin') ?: 'ltc').toString().toLowerCase()
+def coinConfig = [
+    ltc : [ticker: 'LTC',  name: 'litecoin'],
+    doge: [ticker: 'DOGE', name: 'dogecoin'],
+    pep : [ticker: 'PEP',  name: 'pepecoin'],
+    lky : [ticker: 'LKY',  name: 'luckycoin'],
+]
+if(!coinConfig.containsKey(coin)) {
+    throw new GradleException("Unknown coin '${coin}'. Use one of: ${coinConfig.keySet().join(', ')}")
+}
+def coinTicker = coinConfig[coin].ticker
+def coinName = coinConfig[coin].name
+def appName = "Sparrow-${coinTicker}"
+def installerBase = "sparrow${coin}"
+
 group = 'com.sparrowwallet'
 version = '2.4.3'
 
@@ -138,6 +156,7 @@ application {
     mainClass = 'com.sparrowwallet.sparrow.SparrowWallet'
 
     applicationDefaultJvmArgs = ["-XX:+HeapDumpOnOutOfMemoryError",
+                                 "-Dscrypto.coin=${coinName}".toString(),
                                  "--enable-native-access=com.sparrowwallet.drongo",
                                  "--enable-native-access=com.sun.jna",
                                  "--enable-native-access=javafx.graphics",
@@ -163,7 +182,7 @@ application {
                                  "--add-reads=org.flywaydb.core=java.desktop"]
 
     if(os.macOsX) {
-        applicationDefaultJvmArgs += ["-Dprism.lcdtext=false", "-Xdock:name=Sparrow-LTC"]
+        applicationDefaultJvmArgs += ["-Dprism.lcdtext=false", "-Xdock:name=${appName}".toString()]
     }
     if(headless) {
         applicationDefaultJvmArgs += ["-Dglass.platform=Monocle", "-Dmonocle.platform=Headless", "-Dprism.order=sw"]
@@ -276,31 +295,31 @@ jlink {
     }
     addExtraDependencies("javafx")
     jpackage {
-        imageName = "Sparrow-LTC"
-        installerName = "Sparrow-LTC"
+        imageName = appName
+        installerName = appName
         appVersion = "${version}"
         skipInstaller = os.macOsX || properties.skipInstallers
         imageOptions = []
         installerOptions = ['--file-associations', 'src/main/deploy/psbt.properties', '--file-associations', 'src/main/deploy/txn.properties', '--file-associations', 'src/main/deploy/asc.properties', '--license-file', 'LICENSE']
         if(os.windows) {
-            installerOptions += ['--win-per-user-install', '--win-dir-chooser', '--win-menu', '--win-menu-group', 'Sparrow-LTC', '--win-shortcut', '--resource-dir', 'src/main/deploy/package/windows/']
-            imageOptions += ['--icon', 'src/main/deploy/package/windows/sparrow.ico']
+            installerOptions += ['--win-per-user-install', '--win-dir-chooser', '--win-menu', '--win-menu-group', appName, '--win-shortcut', '--resource-dir', 'src/main/deploy/package/windows/']
+            imageOptions += ['--icon', "src/main/deploy/package/windows/sparrow-${coin}.ico".toString()]
             installerType = "msi"
         }
         if(os.linux) {
             if(headless) {
-                installerName = "sparrowltcserver"
+                installerName = "${installerBase}server"
                 installerOptions = ['--license-file', 'LICENSE']
             } else {
-                installerName = "sparrowltcwallet"
-                installerOptions += ['--linux-shortcut', '--linux-menu-group', 'Sparrow-LTC']
+                installerName = "${installerBase}wallet"
+                installerOptions += ['--linux-shortcut', '--linux-menu-group', appName]
             }
             installerOptions += ['--resource-dir', layout.buildDirectory.dir('deploy/package').get().asFile.toString(), '--linux-app-category', 'utils', '--linux-app-release', '1', '--linux-rpm-license-type', 'ASL 2.0', '--linux-deb-maintainer', 'mail@sparrowwallet.com']
-            imageOptions += ['--icon', 'src/main/deploy/package/linux/Sparrow-LTC.png', '--resource-dir', 'src/main/deploy/package/linux/']
+            imageOptions += ['--icon', "src/main/deploy/package/linux/${appName}.png".toString(), '--resource-dir', 'src/main/deploy/package/linux/']
         }
         if(os.macOsX) {
             installerOptions += ['--mac-sign', '--mac-signing-key-user-name', 'Craig Raw (UPLVMSK9D7)']
-            imageOptions += ['--icon', 'src/main/deploy/package/macos/sparrow-ltc.icns', '--resource-dir', 'src/main/deploy/package/macos/']
+            imageOptions += ['--icon', "src/main/deploy/package/macos/sparrow-${coin}.icns".toString(), '--resource-dir', 'src/main/deploy/package/macos/']
             installerType = "dmg"
         }
     }
@@ -344,7 +363,7 @@ tasks.register('prepareResourceDir', Copy) {
         if(file.name.equals('control') || file.name.endsWith('.spec')) {
             filter { line ->
                 if(line.contains('${size}')) {
-                    line = line.replace('${size}', getDirectorySize(layout.buildDirectory.dir('jpackage/Sparrow-LTC').get().asFile))
+                    line = line.replace('${size}', getDirectorySize(layout.buildDirectory.dir("jpackage/${appName}").get().asFile))
                 }
                 return line.replace('${version}', "${version}").replace('${arch}', osArch == 'aarch64' ? 'arm64' : 'amd64')
             }
@@ -355,8 +374,8 @@ tasks.register('prepareResourceDir', Copy) {
 tasks.register('copyMimeInfo', Copy) {
     mustRunAfter tasks.jpackageImage
     from('src/main/deploy/package/linux')
-    into(layout.buildDirectory.dir('jpackage/Sparrow-LTC/lib'))
-    include('sparrowltcwallet-Sparrow-LTC-MimeInfo.xml')
+    into(layout.buildDirectory.dir("jpackage/${appName}/lib"))
+    include("${installerBase}wallet-${appName}-MimeInfo.xml")
 }
 
 static def getDirectorySize(File directory) {
@@ -374,26 +393,26 @@ static def getDirectorySize(File directory) {
 }
 
 tasks.register('removeGroupWritePermission', Exec) {
-    commandLine 'chmod', '-R', 'g-w', "$buildDir/jpackage/Sparrow-LTC"
+    commandLine 'chmod', '-R', 'g-w', "$buildDir/jpackage/${appName}"
 }
 
 tasks.register('packageZipDistribution', Zip) {
-    archiveFileName = "Sparrow-LTC-${version}.zip"
+    archiveFileName = "${appName}-${version}.zip"
     destinationDirectory = file("$buildDir/jpackage")
     preserveFileTimestamps = os.macOsX
     from("$buildDir/jpackage/") {
-        include "Sparrow-LTC/**"
-        include "Sparrow-LTC.app/**"
+        include "${appName}/**"
+        include "${appName}.app/**"
     }
 }
 
 tasks.register('packageTarDistribution', Tar) {
     dependsOn removeGroupWritePermission
-    archiveFileName = "sparrowltc${headless ? 'server': 'wallet'}-${version}-${releaseArch}.tar.gz"
+    archiveFileName = "${installerBase}${headless ? 'server': 'wallet'}-${version}-${releaseArch}.tar.gz"
     destinationDirectory = file("$buildDir/jpackage")
     compression = Compression.GZIP
     from("$buildDir/jpackage/") {
-        include "Sparrow-LTC/**"
+        include "${appName}/**"
     }
 }
 

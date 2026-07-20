@@ -19,7 +19,9 @@ import java.util.*;
 
 public class SparrowWallet {
     public static final String APP_ID = "sparrow";
-    public static final String APP_NAME = "Sparrow-LTC";
+    //Reassigned from the active coin in main() once it is selected; the default covers any read before
+    //then. Litecoin resolves to "Sparrow-LTC", preserving existing behaviour.
+    public static String APP_NAME = "Sparrow-LTC";
     public static final String APP_VERSION = "2.4.3";
     public static final String APP_VERSION_SUFFIX = "";
     public static final String APP_HOME_PROPERTY = "sparrow.home";
@@ -43,27 +45,9 @@ public class SparrowWallet {
         Args args = new Args();
         JCommander jCommander = JCommander.newBuilder().addObject(args).programName(APP_NAME.toLowerCase(Locale.ROOT)).acceptUnknownOptions(true).build();
         jCommander.parse(argv);
-        if(args.help) {
-            jCommander.usage();
-            System.exit(0);
-        }
 
-        if(args.version) {
-            System.out.println("Sparrow-LTC Wallet " + APP_VERSION);
-            System.exit(0);
-        }
-
-        if(args.level != null) {
-            Drongo.setRootLogLevel(args.level);
-        }
-
-        if(args.dir != null) {
-            System.setProperty(APP_HOME_PROPERTY, args.dir);
-            getLogger().info("Using configured Sparrow-LTC home folder of " + args.dir);
-        }
-
-        //Set the coin before any chain parameters, home folder or network are resolved. A packaged
-        //flavor bakes -Dscrypto.coin=<name> into its JVM args; the arg and env are for development.
+        //Set the coin before anything reads chain parameters, the app name, home folder or network. A
+        //packaged flavor bakes -Dscrypto.coin=<name> into its JVM args; the arg and env are for development.
         if(args.coin != null) {
             Coin.set(args.coin);
         } else {
@@ -76,9 +60,28 @@ public class SparrowWallet {
                 }
             }
         }
-
+        APP_NAME = "Sparrow-" + Coin.get().getTicker();
         if(Coin.get() != Coin.LITECOIN) {
             getLogger().info("Using " + Coin.get() + " configuration");
+        }
+
+        if(args.help) {
+            jCommander.usage();
+            System.exit(0);
+        }
+
+        if(args.version) {
+            System.out.println(APP_NAME + " Wallet " + APP_VERSION);
+            System.exit(0);
+        }
+
+        if(args.level != null) {
+            Drongo.setRootLogLevel(args.level);
+        }
+
+        if(args.dir != null) {
+            System.setProperty(APP_HOME_PROPERTY, args.dir);
+            getLogger().info("Using configured " + APP_NAME + " home folder of " + args.dir);
         }
 
         if(args.network != null) {
