@@ -194,7 +194,7 @@ public class EsploraClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record EsploraTransaction(String txid, EsploraStatus status, List<EsploraOutput> vout) {
+    public record EsploraTransaction(String txid, EsploraStatus status, Long fee, List<EsploraOutput> vout) {
         public boolean isConfirmed() {
             return status != null && status.confirmed();
         }
@@ -202,6 +202,14 @@ public class EsploraClient {
         public int getHeight() {
             //Electrum convention: 0 for unconfirmed.
             return status != null && status.block_height() != null ? status.block_height() : 0;
+        }
+
+        public long getFee() {
+            return fee != null ? fee : 0L;
+        }
+
+        public long getBlockTime() {
+            return status != null && status.block_time() != null ? status.block_time() : 0L;
         }
     }
 

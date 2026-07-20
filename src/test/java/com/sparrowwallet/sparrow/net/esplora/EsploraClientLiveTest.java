@@ -1,9 +1,13 @@
 package com.sparrowwallet.sparrow.net.esplora;
 
+import com.sparrowwallet.sparrow.net.BlockHeaderTip;
+import com.sparrowwallet.sparrow.net.VerboseTransaction;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Live smoke test against the public Esplora instances the Nintondo-family chains use. Network
@@ -21,6 +25,37 @@ public class EsploraClientLiveTest {
     @Test
     public void pepecoinMempoolSpace() throws EsploraException {
         exercise("Pepecoin", "https://peppool.space/api");
+    }
+
+    /**
+     * Verifies the EsploraServerRpc adapter layer (not just the client): the tip, the sat/vB -> BTC/kB
+     * fee conversion, and VerboseTransaction construction, against live Bellscoin.
+     */
+    @Test
+    public void serverRpcAdapterAgainstBellscoin() throws EsploraException {
+        String baseUrl = "https://api.nintondo.io";
+        EsploraServerRpc rpc = new EsploraServerRpc(baseUrl);
+
+        BlockHeaderTip tip = rpc.subscribeBlockHeaders(null);
+        System.out.println("adapter tip height: " + tip.height);
+        Assertions.assertTrue(tip.height > 0);
+
+        Map<Integer, Double> fees = rpc.getFeeEstimates(null, List.of(1, 3, 6));
+        System.out.println("adapter fee estimates (BTC/kB): " + fees);
+        Assertions.assertNotNull(fees);
+        //Any returned rate must be a plausible BTC/kB value (a few sat/vB converts to a tiny fraction).
+        fees.values().forEach(rate -> Assertions.assertTrue(rate > 0 && rate < 1.0, "fee rate out of range: " + rate));
+
+        //Bootstrap a real txid and verify the verbose transaction is built correctly.
+        EsploraClient client = new EsploraClient(baseUrl);
+        String txid = client.getBlockTxids(client.getTipHash()).getFirst();
+        Map<String, VerboseTransaction> verbose = rpc.getVerboseTransactions(null, Set.of(txid), null);
+        VerboseTransaction vt = verbose.get(txid);
+        Assertions.assertNotNull(vt, "verbose transaction missing");
+        Assertions.assertEquals(txid, vt.txid);
+        Assertions.assertTrue(vt.hex != null && vt.hex.matches("[0-9a-fA-F]+"), "verbose tx hex invalid");
+        Assertions.assertTrue(vt.confirmations >= 0, "confirmations should be non-negative");
+        System.out.println("adapter verbose tx " + txid + ": confirmations=" + vt.confirmations + ", blocktime=" + vt.blocktime);
     }
 
     private void exercise(String coin, String baseUrl) throws EsploraException {
