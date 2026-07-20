@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.net;
 
 import com.google.common.net.HostAndPort;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.sparrow.io.Server;
 
@@ -9,28 +10,37 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public enum PublicElectrumServer {
-    AFTREK_ORG("ltc.aftrek.org", "ssl://ltc.aftrek.org:50002", Network.MAINNET),
-    BYSH_ME("electrum-ltc.bysh.me", "ssl://electrum-ltc.bysh.me:50002", Network.MAINNET),
-    CIPIG_NET("electrum1.cipig.net", "ssl://electrum1.cipig.net:20063", Network.MAINNET),
-    ELECTRUM_LTC_ORG("backup.electrum-ltc.org", "ssl://backup.electrum-ltc.org:443", Network.MAINNET),
-    FEM_SH("l.fem.sh", "ssl://l.fem.sh:50002", Network.MAINNET),
-    FIATFAUCET_COM("fallacy.fiatfaucet.com", "ssl://fallacy.fiatfaucet.com:50002", Network.MAINNET),
-    JHOENICKE_DE("electrum.jhoenicke.de", "ssl://electrum.jhoenicke.de:50091", Network.MAINNET),
-    JOCHEN_HOENICKE_DE("electrum.jochen-hoenicke.de", "ssl://electrum.jochen-hoenicke.de:50091", Network.MAINNET),
-    PETRKR_NET("electrum.petrkr.net", "ssl://electrum.petrkr.net:60002", Network.MAINNET),
-    RENTONISK_COM("ltc.rentonisk.com", "ssl://ltc.rentonisk.com:50002", Network.MAINNET),
-    XURIOUS_COM("electrum.ltc.xurious.com", "ssl://electrum.ltc.xurious.com:50002", Network.MAINNET),
-    TESTNET_BYSH_ME("electrum-ltc.bysh.me", "ssl://electrum-ltc.bysh.me:51002", Network.TESTNET),
-    TESTNET_XURIOUS_COM("electrum.ltc.xurious.com", "ssl://electrum.ltc.xurious.com:51002", Network.TESTNET);
+    AFTREK_ORG("ltc.aftrek.org", "ssl://ltc.aftrek.org:50002", Coin.LITECOIN, Network.MAINNET),
+    BYSH_ME("electrum-ltc.bysh.me", "ssl://electrum-ltc.bysh.me:50002", Coin.LITECOIN, Network.MAINNET),
+    CIPIG_NET("electrum1.cipig.net", "ssl://electrum1.cipig.net:20063", Coin.LITECOIN, Network.MAINNET),
+    ELECTRUM_LTC_ORG("backup.electrum-ltc.org", "ssl://backup.electrum-ltc.org:443", Coin.LITECOIN, Network.MAINNET),
+    FEM_SH("l.fem.sh", "ssl://l.fem.sh:50002", Coin.LITECOIN, Network.MAINNET),
+    FIATFAUCET_COM("fallacy.fiatfaucet.com", "ssl://fallacy.fiatfaucet.com:50002", Coin.LITECOIN, Network.MAINNET),
+    JHOENICKE_DE("electrum.jhoenicke.de", "ssl://electrum.jhoenicke.de:50091", Coin.LITECOIN, Network.MAINNET),
+    JOCHEN_HOENICKE_DE("electrum.jochen-hoenicke.de", "ssl://electrum.jochen-hoenicke.de:50091", Coin.LITECOIN, Network.MAINNET),
+    PETRKR_NET("electrum.petrkr.net", "ssl://electrum.petrkr.net:60002", Coin.LITECOIN, Network.MAINNET),
+    RENTONISK_COM("ltc.rentonisk.com", "ssl://ltc.rentonisk.com:50002", Coin.LITECOIN, Network.MAINNET),
+    XURIOUS_COM("electrum.ltc.xurious.com", "ssl://electrum.ltc.xurious.com:50002", Coin.LITECOIN, Network.MAINNET),
+    TESTNET_BYSH_ME("electrum-ltc.bysh.me", "ssl://electrum-ltc.bysh.me:51002", Coin.LITECOIN, Network.TESTNET),
+    TESTNET_XURIOUS_COM("electrum.ltc.xurious.com", "ssl://electrum.ltc.xurious.com:51002", Coin.LITECOIN, Network.TESTNET),
 
-    PublicElectrumServer(String name, String url, Network network) {
+    //Dogecoin public ElectrumX servers, verified reachable 2026-07-19. Three independent operators
+    //(Komodo/cipig, Stack Wallet, aftrek), all running maintained ElectrumX with AuxPoW support.
+    DOGE_CIPIG_1("doge.electrum1.cipig.net", "ssl://doge.electrum1.cipig.net:20060", Coin.DOGECOIN, Network.MAINNET),
+    DOGE_CIPIG_2("doge.electrum2.cipig.net", "ssl://doge.electrum2.cipig.net:20060", Coin.DOGECOIN, Network.MAINNET),
+    DOGE_STACKWALLET("dogecoin.stackwallet.com", "ssl://dogecoin.stackwallet.com:50022", Coin.DOGECOIN, Network.MAINNET),
+    DOGE_AFTREK("doge.aftrek.org", "ssl://doge.aftrek.org:50002", Coin.DOGECOIN, Network.MAINNET);
+
+    PublicElectrumServer(String name, String url, Coin coin, Network network) {
         this.server = new Server(url, name);
+        this.coin = coin;
         this.network = network;
     }
 
     public static final List<Network> SUPPORTED_NETWORKS = List.of(Network.MAINNET, Network.TESTNET, Network.SIGNET, Network.TESTNET4);
 
     private final Server server;
+    private final Coin coin;
     private final Network network;
 
     public Server getServer() {
@@ -41,16 +51,25 @@ public enum PublicElectrumServer {
         return server.getUrl();
     }
 
+    public Coin getCoin() {
+        return coin;
+    }
+
     public Network getNetwork() {
         return network;
     }
 
     public static List<PublicElectrumServer> getServers() {
-        return Arrays.stream(values()).filter(server -> server.network == Network.get()).collect(Collectors.toList());
+        return Arrays.stream(values()).filter(server -> server.coin == Coin.get() && server.network == Network.get()).collect(Collectors.toList());
     }
 
+    /**
+     * Whether the "Public Server" option applies to the active coin and network. False for chains with
+     * no known public Electrum servers (Pepecoin, Luckycoin), which routes their configuration to a
+     * Core node or a private/self-hosted Electrum server instead.
+     */
     public static boolean supportedNetwork() {
-        return SUPPORTED_NETWORKS.contains(Network.get());
+        return SUPPORTED_NETWORKS.contains(Network.get()) && Arrays.stream(values()).anyMatch(server -> server.coin == Coin.get());
     }
 
     public static PublicElectrumServer fromServer(Server server) {

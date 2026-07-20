@@ -2,6 +2,7 @@ package com.sparrowwallet.sparrow.net;
 
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.event.ExchangeRatesUpdatedEvent;
@@ -60,7 +61,7 @@ public enum ExchangeSource {
         }
 
         private CoinbaseRates getRates() {
-            String url = "https://api.coinbase.com/v2/exchange-rates?currency=LTC";
+            String url = "https://api.coinbase.com/v2/exchange-rates?currency=" + Coin.get().getTicker();
 
             if(log.isInfoEnabled()) {
                 log.info("Requesting exchange rates from " + url);
@@ -96,7 +97,7 @@ public enum ExchangeSource {
                 String startTime = dateFormat.format(fromDate);
                 String endTime = dateFormat.format(toDate);
 
-                String url = "https://api.pro.coinbase.com/products/LTC-" + currency.getCurrencyCode() + "/candles?start=" + startTime + "T12:00:00&end=" + endTime + "T12:00:00&granularity=86400";
+                String url = "https://api.pro.coinbase.com/products/" + Coin.get().getTicker() + "-" + currency.getCurrencyCode() + "/candles?start=" + startTime + "T12:00:00&end=" + endTime + "T12:00:00&granularity=86400";
 
                 if(log.isInfoEnabled()) {
                     log.info("Requesting historical exchange rates from " + url);
@@ -114,7 +115,7 @@ public enum ExchangeSource {
                         log.warn("Error retrieving historical currency rates", e);
                     } else {
                         if(e instanceof HttpResponseException httpException && httpException.getStatusCode() == 404) {
-                            log.warn("Error retrieving historical currency rates (" + e.getMessage() + "). LTC-" + currency.getCurrencyCode() + " may not be supported by " + this);
+                            log.warn("Error retrieving historical currency rates (" + e.getMessage() + "). " + Coin.get().getTicker() + "-" + currency.getCurrencyCode() + " may not be supported by " + this);
                         } else {
                             log.warn("Error retrieving historical currency rates (" + e.getMessage() + ")");
                         }
@@ -135,11 +136,12 @@ public enum ExchangeSource {
         @Override
         public Double getExchangeRate(Currency currency) {
             String currencyCode = currency.getCurrencyCode();
+            String coinCode = Coin.get().getTicker();
             var rates = getRates().rates.entrySet();
             OptionalDouble optRate = rates.stream().filter(rate -> currencyCode.equalsIgnoreCase(rate.getKey())).mapToDouble(rate -> rate.getValue().value).findFirst();
-            OptionalDouble ltcRate = rates.stream().filter(rate -> "ltc".equalsIgnoreCase(rate.getKey())).mapToDouble(rate -> rate.getValue().value).findFirst();
-            if(optRate.isPresent() && ltcRate.isPresent()) {
-                return optRate.getAsDouble() / ltcRate.getAsDouble();
+            OptionalDouble coinRate = rates.stream().filter(rate -> coinCode.equalsIgnoreCase(rate.getKey())).mapToDouble(rate -> rate.getValue().value).findFirst();
+            if(optRate.isPresent() && coinRate.isPresent()) {
+                return optRate.getAsDouble() / coinRate.getAsDouble();
             }
 
             return null;
@@ -175,7 +177,7 @@ public enum ExchangeSource {
             startDate = Math.max(cal.getTimeInMillis() / 1000, startDate);
             endDate = Math.max(cal.getTimeInMillis() / 1000, endDate);
 
-            String url = "https://api.coingecko.com/api/v3/coins/litecoin/market_chart/range?vs_currency=" + currency.getCurrencyCode() + "&from=" + startDate + "&to=" + endDate;
+            String url = "https://api.coingecko.com/api/v3/coins/" + Coin.get().getCoingeckoId() + "/market_chart/range?vs_currency=" + currency.getCurrencyCode() + "&from=" + startDate + "&to=" + endDate;
 
             if(log.isInfoEnabled()) {
                 log.info("Requesting historical exchange rates from " + url);
@@ -219,6 +221,12 @@ public enum ExchangeSource {
         }
 
         private MempoolSpaceRates getRates() {
+            //litecoinspace.org serves Litecoin prices only; offering them on another coin would show a
+            //wrong rate, so this source yields nothing off Litecoin.
+            if(Coin.get() != Coin.LITECOIN) {
+                return new MempoolSpaceRates();
+            }
+
             String url = AppServices.isUsingProxy() ? "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/prices" : "https://litecoinspace.org/api/v1/prices";
 
             if(log.isInfoEnabled()) {
@@ -240,6 +248,10 @@ public enum ExchangeSource {
 
         @Override
         public Map<Date, Double> getHistoricalExchangeRates(Currency currency, Date start, Date end) {
+            if(Coin.get() != Coin.LITECOIN) {
+                return Collections.emptyMap();
+            }
+
             String url = AppServices.isUsingProxy() ? "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/historical-price?currency=" + currency.getCurrencyCode() :
                     "https://litecoinspace.org/api/v1/historical-price?currency=" + currency.getCurrencyCode();
 

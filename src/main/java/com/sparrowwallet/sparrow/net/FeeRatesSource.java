@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.net;
 
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.protocol.Sha256Hash;
@@ -28,6 +29,8 @@ public enum FeeRatesSource {
             return true;
         }
     },
+    //litecoinspace.org estimates Litecoin fees; its rates are meaningless on other chains, so it only
+    //supports Litecoin. Non-Litecoin coins fall back to the Electrum server's own estimatefee.
     MEMPOOL_SPACE("litecoinspace.org", true) {
         @Override
         public Map<Integer, Double> getBlockTargetFeeRates(Map<Integer, Double> defaultblockTargetFeeRates) {
@@ -69,7 +72,8 @@ public enum FeeRatesSource {
 
         @Override
         public boolean supportsNetwork(Network network) {
-            return network == Network.MAINNET || network == Network.TESTNET || network == Network.TESTNET4 || network == Network.SIGNET;
+            return Coin.get() == Coin.LITECOIN &&
+                    (network == Network.MAINNET || network == Network.TESTNET || network == Network.TESTNET4 || network == Network.SIGNET);
         }
     },
     BLOCK_XYZ("block.xyz", true) {
@@ -84,7 +88,9 @@ public enum FeeRatesSource {
 
         @Override
         public boolean supportsNetwork(Network network) {
-            return network == Network.MAINNET;
+            //Bitcoin fee estimator; only used as a Litecoin proxy. Off other chains, whose fees come from
+            //the Electrum server's estimatefee.
+            return Coin.get() == Coin.LITECOIN && network == Network.MAINNET;
         }
 
         @Override
@@ -105,7 +111,9 @@ public enum FeeRatesSource {
 
         @Override
         public boolean supportsNetwork(Network network) {
-            return network == Network.MAINNET;
+            //Bitcoin fee estimator; only used as a Litecoin proxy. Off other chains, whose fees come from
+            //the Electrum server's estimatefee.
+            return Coin.get() == Coin.LITECOIN && network == Network.MAINNET;
         }
     },
     MINIMUM("Minimum (1 sat/vB)", false) {
@@ -133,7 +141,9 @@ public enum FeeRatesSource {
 
         @Override
         public boolean supportsNetwork(Network network) {
-            return network == Network.MAINNET;
+            //Bitcoin fee estimator; only used as a Litecoin proxy. Off other chains, whose fees come from
+            //the Electrum server's estimatefee.
+            return Coin.get() == Coin.LITECOIN && network == Network.MAINNET;
         }
 
         @Override
@@ -185,6 +195,14 @@ public enum FeeRatesSource {
 
     public boolean isExternal() {
         return external;
+    }
+
+    /**
+     * The default fee source for the active coin. Litecoin defaults to litecoinspace.org; other coins
+     * have no external fee estimator, so they use the Electrum server's own estimatefee.
+     */
+    public static FeeRatesSource getDefault() {
+        return Coin.get() == Coin.LITECOIN ? MEMPOOL_SPACE : ELECTRUM_SERVER;
     }
 
     private static Map<Integer, Double> getThreeTierFeeRates(FeeRatesSource feeRatesSource, Map<Integer, Double> defaultblockTargetFeeRates, String url) {

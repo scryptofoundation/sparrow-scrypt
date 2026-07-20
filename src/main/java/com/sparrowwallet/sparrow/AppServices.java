@@ -959,7 +959,7 @@ public class AppServices {
             return;
         }
 
-        Server blockExplorer = Config.get().getBlockExplorer() == null ? BlockExplorer.LITECOINSPACE_ORG.getServer() : Config.get().getBlockExplorer();
+        Server blockExplorer = Config.get().getBlockExplorer() == null ? BlockExplorer.getDefault() : Config.get().getBlockExplorer();
         String url = blockExplorer.getUrl();
         if(url.contains("{0}")) {
             url = url.replace("{0}", txid);
@@ -1281,7 +1281,7 @@ public class AppServices {
         Config.get().addRecentServer();
 
         FeeRatesSource feeRatesSource = Config.get().getFeeRatesSource();
-        feeRatesSource = (feeRatesSource == null ? FeeRatesSource.MEMPOOL_SPACE : feeRatesSource);
+        feeRatesSource = (feeRatesSource == null ? FeeRatesSource.getDefault() : feeRatesSource);
         if(feeRatesSource.supportsNetwork(Network.get()) && feeRatesSource.isExternal()) {
             fetchFeeRates();
         }
