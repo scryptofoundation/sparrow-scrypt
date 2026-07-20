@@ -168,16 +168,16 @@ public class AddressTextFieldSkin extends CustomTextFieldSkin {
         String lower = candidate.toLowerCase(Locale.ROOT);
 
         // Bech32 (segwit v0/v1) partial: starts with HRP, then optional '1', then bech32 data charset.
-        if(lower.startsWith(network.getBech32AddressHRP())) {
+        if(network.hasBech32AddressPrefix(candidate)) {
             return isBech32LikePartial(lower);
         }
 
         // Silent payments partial (bech32-like): starts with its HRP, then optional '1', then bech32 data charset.
-        if(lower.startsWith(network.getSilentPaymentsAddressHrp())) {
+        if(network.hasSilentPaymentsAddressPrefix(candidate)) {
             return isBech32LikePartial(lower);
         }
 
-        if(lower.startsWith(network.getMwebAddressHrp())) {
+        if(network.hasMwebAddressPrefix(candidate)) {
             return isBech32LikePartial(lower);
         }
 
