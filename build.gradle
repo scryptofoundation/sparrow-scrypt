@@ -244,7 +244,11 @@ jlink {
                    'glob:/io.github.doblon8.jzbar/native/**']
     launcher {
         name = 'sparrow'
-        jvmArgs = ["--enable-native-access=com.sparrowwallet.drongo",
+        //Bake the coin into the packaged image. This list (not application.applicationDefaultJvmArgs)
+        //is what populates the jpackage app .cfg, so without it a flavor would launch as the default
+        //Litecoin.
+        jvmArgs = ["-Dscrypto.coin=${coinName}".toString(),
+                   "--enable-native-access=com.sparrowwallet.drongo",
                    "--enable-native-access=com.sun.jna",
                    "--enable-native-access=javafx.graphics",
                    "--enable-native-access=com.sparrowwallet.merged.module",
