@@ -24,10 +24,12 @@ def headless = "true".equals(System.getProperty("java.awt.headless"))
 // Sparrow-LKY. coin=ltc reproduces the historical Sparrow-LTC packaging exactly.
 def coin = (project.findProperty('coin') ?: 'ltc').toString().toLowerCase()
 def coinConfig = [
-    ltc : [ticker: 'LTC',  name: 'litecoin'],
-    doge: [ticker: 'DOGE', name: 'dogecoin'],
-    pep : [ticker: 'PEP',  name: 'pepecoin'],
-    lky : [ticker: 'LKY',  name: 'luckycoin'],
+    ltc  : [ticker: 'LTC',   name: 'litecoin'],
+    doge : [ticker: 'DOGE',  name: 'dogecoin'],
+    pep  : [ticker: 'PEP',   name: 'pepecoin'],
+    lky  : [ticker: 'LKY',   name: 'luckycoin'],
+    bells: [ticker: 'BELLS', name: 'bellscoin'],
+    dingo: [ticker: 'DINGO', name: 'dingocoin'],
 ]
 if(!coinConfig.containsKey(coin)) {
     throw new GradleException("Unknown coin '${coin}'. Use one of: ${coinConfig.keySet().join(', ')}")
