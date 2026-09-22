@@ -49,6 +49,11 @@ public class SignaturesProgressBar extends SegmentedBar<SignaturesProgressBar.Si
             int newNumSegments = Math.max(threshold, newSignedKeystores.size());
             double newSegmentSize = 100d / newNumSegments;
 
+            //Remove any surplus signatures, which a finalized transaction discards once the threshold is met
+            while(getSegments().size() > newNumSegments) {
+                getSegments().remove(getSegments().size() - 1);
+            }
+
             for(int i = 0; i < newNumSegments; i++) {
                 SignatureProgressSegment segment = null;
                 if(i < getSegments().size()) {
@@ -144,6 +149,9 @@ public class SignaturesProgressBar extends SegmentedBar<SignaturesProgressBar.Si
                     );
                     timeline.setCycleCount(1);
                     timeline.play();
+                } else if(newValue == null) {
+                    //A signature discarded on finalization or superseded by a lesser signed input leaves the segment empty
+                    progressBar.setProgress(0.0);
                 }
             });
         }
