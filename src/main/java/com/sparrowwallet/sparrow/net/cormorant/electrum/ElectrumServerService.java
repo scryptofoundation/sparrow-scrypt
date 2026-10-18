@@ -55,13 +55,30 @@ public class ElectrumServerService {
         try {
             FeeInfo feeInfo = bitcoindClient.getBitcoindService().estimateSmartFee(blocks);
             if(feeInfo == null || feeInfo.feerate() == null) {
-                return DEFAULT_FEE_RATE;
+                return getMinimumFeeRate();
             }
 
-            return feeInfo.feerate();
+            return Math.max(feeInfo.feerate(), getMinimumFeeRate());
         } catch(IllegalStateException e) {
             throw new BitcoindIOException(e);
         }
+    }
+
+    /**
+     * The chain's own recommended rate in BTC/kB, as a floor under whatever the node estimates.
+     *
+     * DEFAULT_FEE_RATE is one sat/vB, which is Bitcoin's floor and nobody else's: the Dogecoin-derived
+     * chains will not relay under a hundred and their miners will not include under a thousand. Their
+     * estimatesmartfee usually has nothing to say - too few transactions to estimate from - so this is the
+     * value a Core-backed wallet on those chains would otherwise build every transaction with.
+     */
+    private double getMinimumFeeRate() {
+        com.sparrowwallet.drongo.Coin coin = com.sparrowwallet.drongo.Coin.get();
+        if(coin == com.sparrowwallet.drongo.Coin.LITECOIN) {
+            return DEFAULT_FEE_RATE;
+        }
+
+        return coin.getRecommendedFeeRate() * 1000d / com.sparrowwallet.drongo.protocol.Transaction.SATOSHIS_PER_BITCOIN;
     }
 
     @JsonRpcMethod("mempool.get_fee_histogram")
@@ -126,7 +143,12 @@ public class ElectrumServerService {
     @JsonRpcMethod("server.ping")
     public void ping() throws BitcoindIOException {
         try {
-            bitcoindClient.getBitcoindService().uptime();
+            //uptime is absent on several of the pre-descriptor nodes; getnetworkinfo is the universal probe
+            if(bitcoindClient.isLegacyCore()) {
+                bitcoindClient.getBitcoindService().getNetworkInfo();
+            } else {
+                bitcoindClient.getBitcoindService().uptime();
+            }
         } catch(IllegalStateException e) {
             throw new BitcoindIOException(e);
         }
@@ -178,6 +200,11 @@ public class ElectrumServerService {
                 return bitcoindClient.getBitcoindService().getRawTransaction(tx_hash, true);
             } catch(JsonRpcException e) {
                 try {
+                    if(bitcoindClient.isLegacyCore()) {
+                        //gettransaction gained its verbose parameter in v20, so there is no decoded form to
+                        //fall back to on these nodes - the raw lookup above was the only route
+                        throw new TransactionNotFoundException(e.getErrorMessage());
+                    }
                     Map<String, Object> txInfo = bitcoindClient.getBitcoindService().getTransaction(tx_hash, true, true);
                     Object decoded = txInfo.get("decoded");
                     if(decoded instanceof Map<?, ?>) {
@@ -200,7 +227,9 @@ public class ElectrumServerService {
             }
         } else {
             try {
-                return bitcoindClient.getBitcoindService().getTransaction(tx_hash, true, false).get("hex");
+                return (bitcoindClient.isLegacyCore()
+                        ? bitcoindClient.getBitcoindService().getTransactionLegacy(tx_hash, true)
+                        : bitcoindClient.getBitcoindService().getTransaction(tx_hash, true, false)).get("hex");
             } catch(JsonRpcException e) {
                 try {
                     return bitcoindClient.getBitcoindService().getRawTransaction(tx_hash, false);
@@ -218,7 +247,10 @@ public class ElectrumServerService {
     @JsonRpcMethod("blockchain.transaction.broadcast")
     public String broadcastTransaction(@JsonRpcParam("raw_tx") String rawTx) throws BitcoindIOException, BroadcastFailedException {
         try {
-            return bitcoindClient.getBitcoindService().sendRawTransaction(rawTx, 0d);
+            //maxfeerate replaced the allowhighfees boolean in v0.19; a pre-descriptor node type-errors on it
+            return bitcoindClient.isLegacyCore()
+                    ? bitcoindClient.getBitcoindService().sendRawTransactionLegacy(rawTx)
+                    : bitcoindClient.getBitcoindService().sendRawTransaction(rawTx, 0d);
         } catch(JsonRpcException e) {
             throw new BroadcastFailedException(e.getErrorMessage());
         } catch(IllegalStateException e) {

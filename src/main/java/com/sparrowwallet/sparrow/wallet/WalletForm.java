@@ -455,15 +455,24 @@ public class WalletForm {
 
     @Subscribe
     public void newBlock(NewBlockEvent event) {
-        //Check if wallet is valid to avoid saving wallets in initial setup
-        if(wallet.isValid()) {
+        //Check if wallet is valid to avoid saving wallets in initial setup. The block height comes from the
+        //connected coin's chain - never store another chain's height into this wallet (one app, per-wallet coin).
+        if(wallet.isValid() && ElectrumServer.isConnectedTo(wallet.getCoin())) {
             updateWallet(event.getHeight(), wallet, wallet.copy(), Collections.emptyList());
+
+            //Esplora has no script hash push subscriptions - each new block triggers a history poll instead
+            if(ElectrumServer.isPollingBackend()) {
+                refreshHistory(event.getHeight());
+            }
         }
     }
 
     @Subscribe
     public void connected(ConnectionEvent event) {
-        refreshHistory(event.getBlockHeight());
+        //The connection belongs to one coin's chain - only wallets of that coin refresh from it
+        if(ElectrumServer.isConnectedTo(wallet.getCoin())) {
+            refreshHistory(event.getBlockHeight());
+        }
     }
 
     @Subscribe

@@ -70,6 +70,20 @@ public class WalletController extends WalletFormController implements Initializa
     }
 
     public void initializeView() {
+        //The Transactions tab shows the Litecoin (Ł) cryptofont glyph, the only coin glyph the bundled font
+        //provides. On the other Scrypto coins swap it for a neutral history icon so the sidebar is not
+        //Litecoin-branded. Wrapped defensively: a branding tweak must never stop the wallet view loading.
+        try {
+            if(getWalletForm().getWallet().getCoin() != com.sparrowwallet.drongo.Coin.LITECOIN && !walletMenuBox.getChildren().isEmpty()
+                    && walletMenuBox.getChildren().get(0) instanceof javafx.scene.control.ToggleButton transactionsTab) {
+                org.controlsfx.glyphfont.Glyph glyph = new org.controlsfx.glyphfont.Glyph("Font Awesome 5 Free Solid", "HISTORY");
+                glyph.setFontSize(20);
+                transactionsTab.setGraphic(glyph);
+            }
+        } catch(Exception e) {
+            log.warn("Could not set coin-neutral transactions icon", e);
+        }
+
         walletMenu.selectedToggleProperty().addListener((observable, oldValue, selectedToggle) -> {
             if(selectedToggle == null) {
                 oldValue.setSelected(true);

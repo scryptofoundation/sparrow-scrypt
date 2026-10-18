@@ -201,7 +201,7 @@ class CoinCell extends TreeTableCell<Entry, Number> implements ConfirmationsList
             this.amount = amount;
             getItems().clear();
 
-            MenuItem copySatsValue = new MenuItem("Copy Value in lits");
+            MenuItem copySatsValue = new MenuItem("Copy Value in " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel());
             copySatsValue.setOnAction(AE -> {
                 hide();
                 ClipboardContent content = new ClipboardContent();
@@ -209,7 +209,7 @@ class CoinCell extends TreeTableCell<Entry, Number> implements ConfirmationsList
                 Clipboard.getSystemClipboard().setContent(content);
             });
 
-            MenuItem copyBtcValue = new MenuItem("Copy Value in LTC");
+            MenuItem copyBtcValue = new MenuItem("Copy Value in " + com.sparrowwallet.drongo.BitcoinUnit.BTC.getLabel());
             copyBtcValue.setOnAction(AE -> {
                 hide();
                 ClipboardContent content = new ClipboardContent();

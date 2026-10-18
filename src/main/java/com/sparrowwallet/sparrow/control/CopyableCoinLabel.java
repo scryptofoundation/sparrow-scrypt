@@ -84,8 +84,8 @@ public class CopyableCoinLabel extends CopyableLabel {
             unitFormat = UnitFormat.DOT;
         }
 
-        String satsValue = unitFormat.formatSatsValue(value) + " lits";
-        String btcValue = unitFormat.formatBtcValue(value) + " LTC";
+        String satsValue = unitFormat.formatSatsValue(value) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel();
+        String btcValue = unitFormat.formatBtcValue(value) + " " + com.sparrowwallet.drongo.BitcoinUnit.BTC.getLabel();
 
         BitcoinUnit unit = bitcoinUnit;
         if(unit == null || unit.equals(BitcoinUnit.AUTO)) {
@@ -105,7 +105,7 @@ public class CopyableCoinLabel extends CopyableLabel {
 
     private class CoinContextMenu extends ContextMenu {
         public CoinContextMenu() {
-            MenuItem copySatsValue = new MenuItem("Copy Value in lits");
+            MenuItem copySatsValue = new MenuItem("Copy Value in " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel());
             copySatsValue.setOnAction(AE -> {
                 hide();
                 ClipboardContent content = new ClipboardContent();
@@ -113,7 +113,7 @@ public class CopyableCoinLabel extends CopyableLabel {
                 Clipboard.getSystemClipboard().setContent(content);
             });
 
-            MenuItem copyBtcValue = new MenuItem("Copy Value in LTC");
+            MenuItem copyBtcValue = new MenuItem("Copy Value in " + com.sparrowwallet.drongo.BitcoinUnit.BTC.getLabel());
             copyBtcValue.setOnAction(AE -> {
                 hide();
                 ClipboardContent content = new ClipboardContent();

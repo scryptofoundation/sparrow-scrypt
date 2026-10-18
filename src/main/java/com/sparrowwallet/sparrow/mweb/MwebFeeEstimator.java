@@ -13,6 +13,14 @@ public class MwebFeeEstimator implements FeeEstimator {
     @Override
     public long calcFeeIncrease(Wallet wallet, Map<BlockTransactionHashIndex, WalletNode> utxos,
                                 List<WalletTransaction.Output> outputs, double vSize, double feeRate) {
+        //MWEB peg-in/peg-out fee estimation only applies to Litecoin. On the other Scrypto chains the MWEB
+        //server is never started (its RPC stub is null), and there is no MWEB fee to add, so return no increase.
+        //Without this, every transaction build on those chains NPEs and fails silently, greying out Create Transaction.
+        //Gated on the wallet's own coin, not the focused tab's, so a non-LTC build is safe while an LTC tab has focus.
+        if(!wallet.getCoin().isMwebSupported()) {
+            return 0;
+        }
+
         var tx = MwebServer.get().create(wallet, utxos, outputs, feeRate, true);
         var ins = tx.getInputs().stream().map(TransactionInput::getOutpoint).collect(Collectors.toSet());
         long sumIn = 0, mwebIn = 0;

@@ -530,6 +530,10 @@ public class ReceiveController extends WalletFormController implements Initializ
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        //Only this wallet's own coin's rate applies to its amounts
+        if(event.getCoin() != getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         CurrencyRate currencyRate = event.getCurrencyRate();
         boolean fiatAvailable = currencyRate != null && currencyRate.isAvailable() && Config.get().getExchangeSource() != ExchangeSource.NONE;
         fiatAmount.setDisable(!fiatAvailable);

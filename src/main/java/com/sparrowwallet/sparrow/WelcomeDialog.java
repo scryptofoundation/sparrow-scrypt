@@ -19,6 +19,7 @@ public class WelcomeDialog extends Dialog<Mode> {
             dialogPane.setContent(welcomeLoader.load());
             WelcomeController welcomeController = welcomeLoader.getController();
             welcomeController.initializeView();
+            com.sparrowwallet.sparrow.control.BrandingHelper.apply(dialogPane.getContent());
 
             dialogPane.setPrefWidth(600);
             dialogPane.setPrefHeight(540);

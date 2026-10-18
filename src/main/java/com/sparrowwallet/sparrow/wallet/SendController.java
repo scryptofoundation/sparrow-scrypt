@@ -533,6 +533,7 @@ public class SendController extends WalletFormController implements Initializabl
             PaymentController controller = paymentLoader.getController();
             controller.setSendController(this);
             controller.initializeView();
+            com.sparrowwallet.sparrow.control.BrandingHelper.apply(tab.getContent());
             tab.setUserData(controller);
             return tab;
         } catch (IOException e) {
@@ -638,6 +639,10 @@ public class SendController extends WalletFormController implements Initializabl
                         walletTransactionProperty.setValue(null);
                         if(event.getSource().getException() instanceof InsufficientFundsException) {
                             insufficientInputsProperty.set(true);
+                        } else {
+                            //A non-insufficient-funds failure would otherwise be swallowed silently, leaving Create
+                            //Transaction greyed out with no explanation - log it so the cause is diagnosable.
+                            org.slf4j.LoggerFactory.getLogger(SendController.class).error("Error building wallet transaction", event.getSource().getException());
                         }
                     }
                 });
@@ -893,7 +898,7 @@ public class SendController extends WalletFormController implements Initializabl
 
     private void setFeeRate(Double feeRateAmt) {
         UnitFormat format = Config.get().getUnitFormat() == null ? UnitFormat.DOT : Config.get().getUnitFormat();
-        feeRate.setText(format.getCurrencyFormat().format(feeRateAmt) + (cpfpFeeRate.isVisible() ? "" : " lits/vB"));
+        feeRate.setText(format.getCurrencyFormat().format(feeRateAmt) + (cpfpFeeRate.isVisible() ? "" : " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB"));
         setFeeRatePriority(feeRateAmt);
     }
 
@@ -912,10 +917,10 @@ public class SendController extends WalletFormController implements Initializabl
             if(thisRate > effectiveRate) {
                 UnitFormat format = Config.get().getUnitFormat() == null ? UnitFormat.DOT : Config.get().getUnitFormat();
                 String strEffectiveRate = format.getCurrencyFormat().format(effectiveRate);
-                Tooltip tooltip = new Tooltip("CPFP (Child Pays For Parent)\n" + strEffectiveRate + " lits/vB effective rate");
+                Tooltip tooltip = new Tooltip("CPFP (Child Pays For Parent)\n" + strEffectiveRate + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB effective rate");
                 cpfpFeeRate.setTooltip(tooltip);
                 cpfpFeeRate.setVisible(true);
-                cpfpFeeRate.setText(strEffectiveRate + " lits/vB (CPFP)");
+                cpfpFeeRate.setText(strEffectiveRate + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB (CPFP)");
             } else {
                 cpfpFeeRate.setVisible(false);
             }
@@ -1553,6 +1558,10 @@ public class SendController extends WalletFormController implements Initializabl
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        //Only this wallet's own coin's rate applies to its amounts
+        if(event.getCoin() != getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         setFiatFeeAmount(event.getCurrencyRate(), getFeeValueSats());
         if(paymentTabs.getTabs().size() > 1) {
             updateTransaction();

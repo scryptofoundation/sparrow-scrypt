@@ -637,7 +637,7 @@ public class HeadersController extends TransactionFormController implements Init
     private void updateFee(Long feeAmt) {
         fee.setValue(feeAmt);
         double feeRateAmt = feeAmt.doubleValue() / headersForm.getTransaction().getVirtualSize();
-        feeRate.setText(String.format("%.2f", feeRateAmt) + " lits/vB" + (headersForm.isTransactionFinalized() ? "" : " (non-final)"));
+        feeRate.setText(String.format("%.2f", feeRateAmt) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB" + (headersForm.isTransactionFinalized() ? "" : " (non-final)"));
     }
 
     private WalletTransaction getWalletTransaction(Map<Sha256Hash, BlockTransaction> inputTransactions) {
@@ -968,9 +968,20 @@ public class HeadersController extends TransactionFormController implements Init
     public void openInBlockExplorer(ActionEvent event) {
         openBlockExplorer.setSelected(false);
         String txid = headersForm.getTransaction().calculateTxId(false).toString();
-        //Confidential MWEB transactions go to the MWEB explorer; the tx detail view has no block height handy, so the
-        //MWEB explorer's hash search page is opened (the transaction-list right-click deep-links to the exact block).
-        AppServices.openBlockExplorer(txid, headersForm.getTransaction().isMweb(), 0);
+        //Selecting a transaction tab does not change the active coin, so resolve the explorer against this
+        //transaction's own wallet - otherwise a wallet tab of another coin focused in between would send this
+        //txid to that chain's explorer.
+        Wallet wallet = headersForm.getWallet();
+        com.sparrowwallet.drongo.Coin previousCoin = wallet == null ? null : com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
+        try {
+            //Confidential MWEB transactions go to the MWEB explorer; the tx detail view has no block height handy, so the
+            //MWEB explorer's hash search page is opened (the transaction-list right-click deep-links to the exact block).
+            AppServices.openBlockExplorer(txid, headersForm.getTransaction().isMweb(), 0);
+        } finally {
+            if(wallet != null) {
+                com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+            }
+        }
     }
 
     public void setLocktimeToCurrentHeight(ActionEvent event) {
@@ -1152,7 +1163,7 @@ public class HeadersController extends TransactionFormController implements Init
             //one (e.g. an older imported wallet) cannot have MWEB inputs to sign, so MWEB signing is skipped and the
             //transaction is signed normally - this avoids a null scan key crashing the sign.
             Keystore signingKeystore = unencryptedWallet.getKeystores().getFirst();
-            if(signingKeystore.getMwebScanPrivateKey() != null) {
+            if(signingKeystore.getMwebScanPrivateKey() != null && unencryptedWallet.getCoin().isMwebSupported()) {
                 var psbt = MwebServer.get().psbtSign(headersForm.getPsbt(), signingKeystore);
                 if(psbt.isFinalized()) {
                     headersForm.getTransactionData().setPsbt(psbt);
@@ -1270,7 +1281,7 @@ public class HeadersController extends TransactionFormController implements Init
             double feeRateAmt = fee.getValue() / headersForm.getTransaction().getVirtualSize();
             if(feeRateAmt > AppServices.getLongFeeRatesRange().getLast() || (AppServices.getTargetBlockFeeRates() != null && feeRateAmt > AppServices.getDefaultFeeRate() * FEE_MULTIPLE_LIMIT)) {
                 Optional<ButtonType> optType = AppServices.showWarningDialog("Very high fee rate!",
-                        "This transaction pays a very high fee rate of " + String.format("%.0f", feeRateAmt) + " lits/vB.\n\nBroadcast this transaction?", ButtonType.YES, ButtonType.NO);
+                        "This transaction pays a very high fee rate of " + String.format("%.0f", feeRateAmt) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB.\n\nBroadcast this transaction?", ButtonType.YES, ButtonType.NO);
                 if(optType.isPresent() && optType.get() == ButtonType.NO) {
                     broadcastButton.setDisable(false);
                     return;
@@ -1367,10 +1378,10 @@ public class HeadersController extends TransactionFormController implements Init
             if(failMessage.startsWith("min relay fee not met")) {
                 if(AppServices.getServerMinimumRelayFeeRate() != null && !AppServices.getServerMinimumRelayFeeRate().equals(AppServices.getMinimumRelayFeeRate())) {
                     AppServices.showErrorDialog("Error broadcasting transaction", "The fee rate for the signed transaction is below the minimum configured relay fee rate for the server of " +
-                            format.getCurrencyFormat().format(AppServices.getServerMinimumRelayFeeRate()) + " lits/vB.");
+                            format.getCurrencyFormat().format(AppServices.getServerMinimumRelayFeeRate()) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB.");
                 } else {
                     Double minRelayFeeRate = AppServices.getServerMinimumRelayFeeRate() != null ? AppServices.getServerMinimumRelayFeeRate() : AppServices.getMinimumRelayFeeRate();
-                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee rate for the signed transaction is below the minimum " + format.getCurrencyFormat().format(minRelayFeeRate) + " lits/vB. " +
+                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee rate for the signed transaction is below the minimum " + format.getCurrencyFormat().format(minRelayFeeRate) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB. " +
                             "This usually happens because a keystore has created a signature that is larger than necessary.\n\n" +
                             "You can solve this by recreating the transaction with a slightly increased fee rate.");
                 }
@@ -1382,7 +1393,7 @@ public class HeadersController extends TransactionFormController implements Init
                 Matcher minMempoolMatcher = MIN_MEMPOOL_FEE.matcher(failMessage);
                 if(minMempoolMatcher.matches()) {
                     long requiredFee = Long.parseLong(minMempoolMatcher.group(2));
-                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee for the transaction was insufficient for relay by your connected server. Increase the fee to at least " + requiredFee + " lits to try again.");
+                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee for the transaction was insufficient for relay by your connected server. Increase the fee to at least " + requiredFee + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + " to try again.");
                 } else {
                     AppServices.showErrorDialog("Error broadcasting transaction", "The fee for the transaction was insufficient for relay by your connected server. Increase the fee to try again.");
                 }
@@ -1393,10 +1404,10 @@ public class HeadersController extends TransactionFormController implements Init
                     long currentAdditionalFee = (long)(Double.parseDouble(feeMatcher.group(1)) * Transaction.SATOSHIS_PER_BITCOIN);
                     long requiredAdditionalFee = (long)(Double.parseDouble(feeMatcher.group(2)) * Transaction.SATOSHIS_PER_BITCOIN);
                     long requiredFee = fee.getValue() - currentAdditionalFee + requiredAdditionalFee;
-                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee for the replacement transaction was insufficient. Increase the fee to at least " + requiredFee + " lits to try again.");
+                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee for the replacement transaction was insufficient. Increase the fee to at least " + requiredFee + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + " to try again.");
                 } else if(feeRateMatcher.matches()) {
                     double requiredFeeRate = Double.parseDouble(feeRateMatcher.group(2)) * Transaction.SATOSHIS_PER_BITCOIN / 1000;
-                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee rate for the replacement transaction was insufficient. Increase the fee rate to at least " + format.getCurrencyFormat().format(requiredFeeRate) + " lits/vB to try again.");
+                    AppServices.showErrorDialog("Error broadcasting transaction", "The fee rate for the replacement transaction was insufficient. Increase the fee rate to at least " + format.getCurrencyFormat().format(requiredFeeRate) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB to try again.");
                 } else {
                     AppServices.showErrorDialog("Error broadcasting transaction", "The fee for the replacement transaction was insufficient. Increase the fee to try again.");
                 }

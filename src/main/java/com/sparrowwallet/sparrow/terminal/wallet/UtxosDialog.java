@@ -194,6 +194,9 @@ public class UtxosDialog extends WalletDialog {
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        if(event.getCoin() != getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         SparrowTerminal.get().getGuiThread().invokeLater(() -> {
             WalletUtxosEntry walletUtxosEntry = getWalletForm().getWalletUtxosEntry();
             fiatBalance.setText(formatFiatValue(getFiatValue(walletUtxosEntry.getBalance(), event.getCurrencyRate())));

@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.io;
 
 import com.google.gson.*;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.ExtendedKey;
 import com.sparrowwallet.drongo.FileType;
 import com.sparrowwallet.drongo.IOUtils;
@@ -44,7 +45,7 @@ public class JsonPersistence implements Persistence {
         Wallet wallet;
 
         try(Reader reader = new FileReader(storage.getWalletFile())) {
-            wallet = gson.fromJson(reader, Wallet.class);
+            wallet = readWallet(reader);
             wallet.getPurposeNodes().forEach(purposeNode -> purposeNode.setWallet(wallet));
         }
 
@@ -67,7 +68,7 @@ public class JsonPersistence implements Persistence {
         try(InputStream fileStream = new FileInputStream(storage.getWalletFile())) {
             encryptionKey = getEncryptionKey(password, fileStream, alreadyDerivedKey);
             Reader reader = new InputStreamReader(new InflaterInputStream(new ECIESInputStream(fileStream, encryptionKey, getEncryptionMagic())), StandardCharsets.UTF_8);
-            wallet = gson.fromJson(reader, Wallet.class);
+            wallet = readWallet(reader);
             wallet.getPurposeNodes().forEach(purposeNode -> purposeNode.setWallet(wallet));
         }
 
@@ -98,12 +99,35 @@ public class JsonPersistence implements Persistence {
             try(InputStream fileStream = new FileInputStream(walletFile)) {
                 encryptionKey = getEncryptionKey(null, fileStream, encryptionKey);
                 Reader reader = new InputStreamReader(new InflaterInputStream(new ECIESInputStream(fileStream, encryptionKey, getEncryptionMagic())), StandardCharsets.UTF_8);
-                return gson.fromJson(reader, Wallet.class);
+                return readWallet(reader);
             }
         } else {
             try(Reader reader = new FileReader(walletFile)) {
-                return gson.fromJson(reader, Wallet.class);
+                return readWallet(reader);
             }
+        }
+    }
+
+    //The wallet's coin must be active while its keys and addresses are parsed, but it is stored inside
+    //the JSON being parsed - so read the DOM first, peek the coin, then deserialize under its scope.
+    private Wallet readWallet(Reader reader) {
+        JsonObject walletObject = JsonParser.parseReader(reader).getAsJsonObject();
+        JsonElement coinElement = walletObject.get("coin");
+        Coin coin = coinElement == null || coinElement.isJsonNull() ? Coin.get() : Coin.valueOf(coinElement.getAsString());
+        Coin previousCoin = Coin.beginScope(coin);
+        try {
+            return gson.fromJson(walletObject, Wallet.class);
+        } finally {
+            Coin.endScope(previousCoin);
+        }
+    }
+
+    private void writeWallet(Wallet wallet, Writer writer) {
+        Coin previousCoin = Coin.beginScope(wallet.getCoin());
+        try {
+            gson.toJson(wallet, writer);
+        } finally {
+            Coin.endScope(previousCoin);
         }
     }
 
@@ -140,7 +164,7 @@ public class JsonPersistence implements Persistence {
         }
 
         try(Writer writer = new FileWriter(walletFile)) {
-            gson.toJson(wallet, writer);
+            writeWallet(wallet, writer);
         }
 
         return walletFile;
@@ -167,7 +191,7 @@ public class JsonPersistence implements Persistence {
         try(OutputStream outputStream = new FileOutputStream(walletFile)) {
             writeBinaryHeader(outputStream);
             OutputStreamWriter writer = new OutputStreamWriter(new DeflaterOutputStream(new ECIESOutputStream(outputStream, encryptionPubKey, getEncryptionMagic())), StandardCharsets.UTF_8);
-            gson.toJson(wallet, writer);
+            writeWallet(wallet, writer);
             //Close the writer explicitly as the try-resources block will not do so
             writer.close();
         }

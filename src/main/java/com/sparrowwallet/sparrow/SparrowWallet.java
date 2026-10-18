@@ -18,9 +18,11 @@ import java.io.File;
 import java.util.*;
 
 public class SparrowWallet {
-    public static final String APP_ID = "sparrow";
-    //Reassigned from the active coin in main() once it is selected; the default covers any read before
-    //then. Litecoin resolves to "Sparrow-LTC", preserving existing behaviour.
+    //Both reassigned from the active coin in main() once it is selected; the defaults cover any read
+    //before then. Litecoin keeps "sparrow"/"Sparrow-LTC", preserving existing behaviour; every other coin
+    //gets its own APP_ID so each flavor is a separate single-instance app (e.g. Sparrow-DOGE can run
+    //alongside Sparrow-LTC rather than one launch being forwarded into the other's already-running window).
+    public static String APP_ID = "sparrow";
     public static String APP_NAME = "Sparrow-LTC";
     public static final String APP_VERSION = "2.4.3";
     public static final String APP_VERSION_SUFFIX = "";
@@ -31,6 +33,15 @@ public class SparrowWallet {
     public static final String JPACKAGE_APP_PATH = "jpackage.app-path";
 
     private static Instance instance;
+
+    //True for the unified Sparrow-Scrypt build (no baked coin), false for a single-coin flavor. Read at FX
+    //startup to decide whether resolving a coin off the UI thread without a scope is an error or the norm:
+    //in a flavor there is only one coin and the fallback is always right, in the unified build it is a guess.
+    private static boolean unified;
+
+    public static boolean isUnified() {
+        return unified;
+    }
 
     public static void main(String[] argv) {
         if(System.getProperty(JPACKAGE_APP_PATH) != null) {
@@ -47,23 +58,40 @@ public class SparrowWallet {
         jCommander.parse(argv);
 
         //Set the coin before anything reads chain parameters, the app name, home folder or network. A
-        //packaged flavor bakes -Dscrypto.coin=<name> into its JVM args; the arg and env are for development.
+        //packaged single-coin flavor bakes -Dscrypto.coin=<name> into its JVM args; the arg and env are
+        //for development. The unified multi-coin build bakes NO coin: its identity is Sparrow-Scrypt,
+        //wallets carry their own coins, and the startup default stays Litecoin.
+        boolean flavored = false;
         if(args.coin != null) {
             Coin.set(args.coin);
+            flavored = true;
         } else {
             String coinProperty = System.getProperty(COIN_SYSTEM_PROPERTY, System.getenv(COIN_ENV_PROPERTY));
             if(coinProperty != null) {
                 try {
                     Coin.set(Coin.valueOf(coinProperty.toUpperCase(Locale.ROOT)));
+                    flavored = true;
                 } catch(Exception e) {
                     getLogger().warn("Invalid " + COIN_SYSTEM_PROPERTY + "/" + COIN_ENV_PROPERTY + " value: " + coinProperty);
                 }
             }
         }
-        APP_NAME = "Sparrow-" + Coin.get().getTicker();
-        if(Coin.get() != Coin.LITECOIN) {
-            getLogger().info("Using " + Coin.get() + " configuration");
+        //Normalize so later readers (e.g. per-coin Config server routing) see the resolved startup coin
+        //regardless of whether it came from the arg, the property or the env.
+        System.setProperty(COIN_SYSTEM_PROPERTY, Coin.get().getName());
+        if(flavored) {
+            APP_NAME = "Sparrow-" + Coin.get().getTicker();
+            APP_ID = Coin.get() == Coin.LITECOIN ? "sparrow" : "sparrow-" + Coin.get().getTicker().toLowerCase(Locale.ROOT);
+            if(Coin.get() != Coin.LITECOIN) {
+                getLogger().info("Using " + Coin.get() + " configuration");
+            }
+        } else {
+            APP_NAME = "Sparrow-Scrypt";
+            APP_ID = "sparrow-scrypt";
+            //One-time migration so server settings and recent wallets carry over from the Litecoin app
+            Storage.migrateLegacyConfig("Sparrow-LTC");
         }
+        unified = !flavored;
 
         if(args.help) {
             jCommander.usage();

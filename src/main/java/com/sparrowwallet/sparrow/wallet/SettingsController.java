@@ -316,6 +316,13 @@ public class SettingsController extends WalletFormController implements Initiali
         scanDescriptorQR.setVisible(!walletForm.getWallet().isValid());
         export.setDisable(!walletForm.getWallet().isValid());
         addAccount.setDisable(!walletForm.getWallet().isValid() || walletForm.getWallet().getScriptType() == ScriptType.P2SH);
+        //MWEB is Litecoin-only, so its wallet actions (Enable MWEB, Link Private Wallet) do not exist on the
+        //other Scrypto chains - hide them entirely rather than merely disabling them.
+        boolean mwebSupported = walletForm.getWallet().getCoin().isMwebSupported();
+        enableMweb.setVisible(mwebSupported);
+        enableMweb.setManaged(mwebSupported);
+        linkPrivateWallet.setVisible(mwebSupported);
+        linkPrivateWallet.setManaged(mwebSupported);
         enableMweb.setDisable(!canEnableMweb(walletForm.getWallet()));
         linkPrivateWallet.setDisable(!canLinkPrivateWallet(walletForm.getWallet()));
         revert.setDisable(true);
@@ -738,7 +745,8 @@ public class SettingsController extends WalletFormController implements Initiali
 
     private boolean canEnableMweb(Wallet wallet) {
         Wallet masterWallet = wallet.isMasterWallet() ? wallet : wallet.getMasterWallet();
-        if(!wallet.isValid()
+        if(!wallet.getCoin().isMwebSupported()
+                || !wallet.isValid()
                 || masterWallet.getPolicyType() != PolicyType.SINGLE
                 || masterWallet.getScriptType() == ScriptType.MWEB
                 || masterWallet.getKeystores().stream().noneMatch(ks -> ks.getSource() == KeystoreSource.SW_SEED)) {

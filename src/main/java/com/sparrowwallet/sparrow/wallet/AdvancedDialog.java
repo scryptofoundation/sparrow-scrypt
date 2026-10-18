@@ -23,6 +23,7 @@ public class AdvancedDialog extends Dialog<Boolean> {
             dialogPane.setContent(Borders.wrap(advancedLoader.load()).emptyBorder().buildAll());
             AdvancedController settingsAdvancedController = advancedLoader.getController();
             settingsAdvancedController.initializeView(wallet);
+            com.sparrowwallet.sparrow.control.BrandingHelper.apply(dialogPane.getContent());
 
             boolean noPassword = Storage.NO_PASSWORD_KEY.equals(walletForm.getStorage().getEncryptionPubKey());
             final ButtonType closeButtonType = new javafx.scene.control.ButtonType("Close", ButtonBar.ButtonData.CANCEL_CLOSE);

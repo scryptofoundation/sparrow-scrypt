@@ -64,10 +64,10 @@ public class NewWalletTransactionsEvent {
         }
 
         if(unit == BitcoinUnit.BTC) {
-            return format.formatBtcValue(value) + " LTC";
+            return format.formatBtcValue(value) + " " + com.sparrowwallet.drongo.BitcoinUnit.BTC.getLabel();
         }
 
-        return format.formatSatsValue(value) + " lits";
+        return format.formatSatsValue(value) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel();
     }
 
     public List<BlockTransaction> getUnspentConfirmingWhirlpoolMixTransactions() {

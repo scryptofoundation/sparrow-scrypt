@@ -135,16 +135,32 @@ public enum ExchangeSource {
 
         @Override
         public Double getExchangeRate(Currency currency) {
-            String currencyCode = currency.getCurrencyCode();
-            String coinCode = Coin.get().getTicker();
-            var rates = getRates().rates.entrySet();
-            OptionalDouble optRate = rates.stream().filter(rate -> currencyCode.equalsIgnoreCase(rate.getKey())).mapToDouble(rate -> rate.getValue().value).findFirst();
-            OptionalDouble coinRate = rates.stream().filter(rate -> coinCode.equalsIgnoreCase(rate.getKey())).mapToDouble(rate -> rate.getValue().value).findFirst();
-            if(optRate.isPresent() && coinRate.isPresent()) {
-                return optRate.getAsDouble() / coinRate.getAsDouble();
+            //The BTC-relative /exchange_rates list only carries major coins (Litecoin yes, Dogecoin no),
+            //so price by CoinGecko id instead - every coin in the app has a listing, in any fiat currency
+            String coinId = Coin.get().getCoingeckoId();
+            String currencyCode = currency.getCurrencyCode().toLowerCase(Locale.ROOT);
+            String url = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=" + currencyCode;
+
+            if(log.isInfoEnabled()) {
+                log.info("Requesting exchange rates from " + url);
             }
 
-            return null;
+            HttpClientService httpClientService = AppServices.getHttpClientService();
+            try {
+                Map<?, ?> priceMap = httpClientService.requestJson(url, Map.class, HTTP_HEADERS);
+                Object coinPrices = priceMap.get(coinId);
+                if(coinPrices instanceof Map<?, ?> prices && prices.get(currencyCode) instanceof Number rate) {
+                    return rate.doubleValue();
+                }
+                return null;
+            } catch(Exception e) {
+                if(log.isDebugEnabled()) {
+                    log.warn("Error retrieving currency rates", e);
+                } else {
+                    log.warn("Error retrieving currency rates (" + e.getMessage() + ")");
+                }
+                return null;
+            }
         }
 
         private CoinGeckoRates getRates() {
@@ -300,12 +316,11 @@ public enum ExchangeSource {
     public abstract Map<Date, Double> getHistoricalExchangeRates(Currency currency, Date start, Date end);
 
     /**
-     * The default exchange source for the active coin. CoinGecko's /exchange_rates (BTC-relative) only
-     * lists major coins - Litecoin is present, Dogecoin is not - so non-Litecoin coins default to
-     * Coinbase, which quotes by ticker. Coins Coinbase does not list simply show no rate.
+     * The default exchange source. CoinGecko prices by id, and every coin in the app has a CoinGecko
+     * listing - including the small caps Coinbase does not quote - so it is the default for all coins.
      */
     public static ExchangeSource getDefault() {
-        return Coin.get() == Coin.LITECOIN ? COINGECKO : COINBASE;
+        return COINGECKO;
     }
 
     private static boolean isValidISO4217Code(String code) {
@@ -370,10 +385,19 @@ public enum ExchangeSource {
         }
 
         protected Task<ExchangeRatesUpdatedEvent> createTask() {
+            //Capture the coin this fetch prices on the FX thread (createTask runs there; the worker has no
+            //coin scope), so the event cannot be misapplied to another coin's balances if the focused tab
+            //changes while the request is in flight
+            Coin coin = Coin.get();
             return new Task<>() {
                 protected ExchangeRatesUpdatedEvent call() {
-                    Double rate = exchangeSource.getExchangeRate(selectedCurrency);
-                    return new ExchangeRatesUpdatedEvent(selectedCurrency, rate);
+                    Coin previousCoin = Coin.beginScope(coin);
+                    try {
+                        Double rate = exchangeSource.getExchangeRate(selectedCurrency);
+                        return new ExchangeRatesUpdatedEvent(selectedCurrency, rate, coin);
+                    } finally {
+                        Coin.endScope(previousCoin);
+                    }
                 }
             };
         }

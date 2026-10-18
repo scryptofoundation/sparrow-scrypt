@@ -94,4 +94,28 @@ public interface BitcoindClientService {
 
     @JsonRpcMethod("sendrawtransaction")
     String sendRawTransaction(@JsonRpcParam("hexstring") String rawTx, @JsonRpcParam("maxfeerate") Double maxFeeRate);
+
+    /*
+     * Legacy (Bitcoin 0.13/0.14-era) equivalents, for the Scrypto chains whose nodes predate descriptor
+     * wallets. Two things differ beyond the missing methods: importmulti takes concrete scriptPubKeys
+     * rather than ranged descriptors, and several calls accept fewer positional parameters than modern
+     * Core - these nodes reject a request outright when handed extras, so the shorter forms are declared
+     * separately rather than passing nulls.
+     */
+
+    @JsonRpcMethod("importmulti")
+    List<ImportMultiResult> importMulti(@JsonRpcParam("requests") List<ImportMultiRequest> requests, @JsonRpcParam("options") Map<String, Boolean> options);
+
+    //Modern Core adds include_removed (0.18) and include_change (v23); these nodes accept the first three only
+    @JsonRpcMethod("listsinceblock")
+    ListSinceBlock listSinceBlockLegacy(@JsonRpcParam("blockhash") @JsonRpcOptional String blockhash, @JsonRpcParam("target_confirmations") int targetConfirmations,
+                                        @JsonRpcParam("include_watchonly") boolean includeWatchOnly);
+
+    //The verbose parameter arrived in v20
+    @JsonRpcMethod("gettransaction")
+    Map<String, Object> getTransactionLegacy(@JsonRpcParam("txid") String txid, @JsonRpcParam("include_watchonly") boolean includeWatchOnly);
+
+    //maxfeerate replaced the allowhighfees boolean in v0.19; passing a fee rate to these nodes is a type error
+    @JsonRpcMethod("sendrawtransaction")
+    String sendRawTransactionLegacy(@JsonRpcParam("hexstring") String rawTx);
 }

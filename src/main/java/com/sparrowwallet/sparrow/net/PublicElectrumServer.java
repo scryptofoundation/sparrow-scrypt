@@ -29,7 +29,22 @@ public enum PublicElectrumServer {
     DOGE_CIPIG_1("doge.electrum1.cipig.net", "ssl://doge.electrum1.cipig.net:20060", Coin.DOGECOIN, Network.MAINNET),
     DOGE_CIPIG_2("doge.electrum2.cipig.net", "ssl://doge.electrum2.cipig.net:20060", Coin.DOGECOIN, Network.MAINNET),
     DOGE_STACKWALLET("dogecoin.stackwallet.com", "ssl://dogecoin.stackwallet.com:50022", Coin.DOGECOIN, Network.MAINNET),
-    DOGE_AFTREK("doge.aftrek.org", "ssl://doge.aftrek.org:50002", Coin.DOGECOIN, Network.MAINNET);
+    DOGE_AFTREK("doge.aftrek.org", "ssl://doge.aftrek.org:50002", Coin.DOGECOIN, Network.MAINNET),
+
+    //Dingocoin public ElectrumX 1.19 servers (SSL 3342), verified 2026-10-17: Electrum handshake answers,
+    //tip ~2.8M. Dingocoin shares Dogecoin's genesis hash, so tip height, not genesis, is what tells the
+    //chains apart - never mix these with the Dogecoin entries above.
+    DINGO_SEED1("seed1.dingocoin.com", "ssl://seed1.dingocoin.com:3342", Coin.DINGOCOIN, Network.MAINNET),
+    DINGO_SEED3("seed3.dingocoin.com", "ssl://seed3.dingocoin.com:3342", Coin.DINGOCOIN, Network.MAINNET),
+    DINGO_KMSOFTWARE("elecx2.kmsoftware.org", "ssl://elecx2.kmsoftware.org:3342", Coin.DINGOCOIN, Network.MAINNET),
+
+    //Esplora REST endpoints for the chains with no public Electrum servers - detected by URL scheme and
+    //served via EsploraServerRpc rather than the Electrum protocol (see ElectrumServer.isEsploraServer).
+    //All verified live (tip height responds) on 2026-07-22.
+    BELLS_NINTONDO("api.nintondo.io", "https://api.nintondo.io", Coin.BELLSCOIN, Network.MAINNET),
+    PEPE_PEPPOOL("peppool.space", "https://peppool.space/api", Coin.PEPECOIN, Network.MAINNET),
+    LUCKY_LUCKYSCAN("luckyscan.org", "https://luckyscan.org/api", Coin.LUCKYCOIN, Network.MAINNET),
+    JUNK_EXPLORER("explorer.junk-coin.com", "https://explorer.junk-coin.com/api", Coin.JUNKCOIN, Network.MAINNET);
 
     PublicElectrumServer(String name, String url, Coin coin, Network network) {
         this.server = new Server(url, name);
@@ -65,7 +80,7 @@ public enum PublicElectrumServer {
 
     /**
      * Whether the "Public Server" option applies to the active coin and network. False for chains with
-     * no known public Electrum servers (Pepecoin, Luckycoin), which routes their configuration to a
+     * no known public servers, which routes their configuration to a
      * Core node or a private/self-hosted Electrum server instead.
      */
     public static boolean supportedNetwork() {

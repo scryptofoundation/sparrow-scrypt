@@ -490,6 +490,10 @@ public class TransactionsController extends WalletFormController implements Init
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        //Only this wallet's own coin's rate applies to its balances
+        if(event.getCoin() != getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         setFiatBalance(fiatBalance, event.getCurrencyRate(), getWalletForm().getWalletTransactionsEntry().getBalance());
         setFiatBalance(fiatMempoolBalance, event.getCurrencyRate(), getWalletForm().getWalletTransactionsEntry().getMempoolBalance());
         if(combinedBalanceField.isManaged()) {

@@ -19,11 +19,14 @@ if(System.getProperty("os.arch") == "aarch64") {
 }
 def headless = "true".equals(System.getProperty("java.awt.headless"))
 
-// Coin flavor: -Pcoin=doge|pep|lky (default ltc). Drives the packaged app name, icon and the
-// scrypto.coin runtime property, so one codebase produces Sparrow-LTC / Sparrow-DOGE / Sparrow-PEP /
-// Sparrow-LKY. coin=ltc reproduces the historical Sparrow-LTC packaging exactly.
-def coin = (project.findProperty('coin') ?: 'ltc').toString().toLowerCase()
+// Coin flavor: -Pcoin=scrypt|ltc|doge|pep|lky|bells|dingo (default scrypt). The default 'scrypt' build
+// is the unified multi-coin app (Sparrow-Scrypt): all coins in one binary, per-wallet coin, and NO
+// scrypto.coin property baked - its absence is how the runtime knows it is not a single-coin flavor.
+// The named flavors bake their coin and per-coin branding; coin=ltc reproduces the historical
+// Sparrow-LTC packaging exactly.
+def coin = (project.findProperty('coin') ?: 'scrypt').toString().toLowerCase()
 def coinConfig = [
+    scrypt: [ticker: 'Scrypt', name: null, icon: 'ltc'],
     ltc  : [ticker: 'LTC',   name: 'litecoin'],
     doge : [ticker: 'DOGE',  name: 'dogecoin'],
     pep  : [ticker: 'PEP',   name: 'pepecoin'],
@@ -36,6 +39,8 @@ if(!coinConfig.containsKey(coin)) {
 }
 def coinTicker = coinConfig[coin].ticker
 def coinName = coinConfig[coin].name
+def coinIcon = coinConfig[coin].icon ?: coin
+def iconAppName = "Sparrow-${coinConfig[coinIcon].ticker}"
 def appName = "Sparrow-${coinTicker}"
 def installerBase = "sparrow${coin}"
 
@@ -158,7 +163,6 @@ application {
     mainClass = 'com.sparrowwallet.sparrow.SparrowWallet'
 
     applicationDefaultJvmArgs = ["-XX:+HeapDumpOnOutOfMemoryError",
-                                 "-Dscrypto.coin=${coinName}".toString(),
                                  "--enable-native-access=com.sparrowwallet.drongo",
                                  "--enable-native-access=com.sun.jna",
                                  "--enable-native-access=javafx.graphics",
@@ -182,6 +186,10 @@ application {
                                  "--add-opens=java.smartcardio/sun.security.smartcardio=com.sparrowwallet.sparrow",
                                  "--add-reads=kotlin.stdlib=kotlinx.coroutines.core",
                                  "--add-reads=org.flywaydb.core=java.desktop"]
+
+    if(coinName != null) {
+        applicationDefaultJvmArgs += ["-Dscrypto.coin=${coinName}".toString()]
+    }
 
     if(os.macOsX) {
         applicationDefaultJvmArgs += ["-Dprism.lcdtext=false", "-Xdock:name=${appName}".toString()]
@@ -246,11 +254,9 @@ jlink {
                    'glob:/io.github.doblon8.jzbar/native/**']
     launcher {
         name = 'sparrow'
-        //Bake the coin into the packaged image. This list (not application.applicationDefaultJvmArgs)
-        //is what populates the jpackage app .cfg, so without it a flavor would launch as the default
-        //Litecoin.
-        jvmArgs = ["-Dscrypto.coin=${coinName}".toString(),
-                   "--enable-native-access=com.sparrowwallet.drongo",
+        //This list (not application.applicationDefaultJvmArgs) is what populates the jpackage app .cfg.
+        //Single-coin flavors bake -Dscrypto.coin below; the unified Sparrow-Scrypt build bakes none.
+        jvmArgs = ["--enable-native-access=com.sparrowwallet.drongo",
                    "--enable-native-access=com.sun.jna",
                    "--enable-native-access=javafx.graphics",
                    "--enable-native-access=com.sparrowwallet.merged.module",
@@ -289,6 +295,11 @@ jlink {
                    "--add-reads=kotlin.stdlib=kotlinx.coroutines.core",
                    "--add-reads=org.flywaydb.core=java.desktop"]
 
+        if(coinName != null) {
+            //Bake the coin into the packaged image - without this a flavor would launch as the default
+            jvmArgs += ["-Dscrypto.coin=${coinName}".toString()]
+        }
+
         if(os.windows) {
             jvmArgs += ["-Djavax.accessibility.assistive_technologies", "-Djavax.accessibility.screen_magnifier_present=false"]
         }
@@ -309,7 +320,7 @@ jlink {
         installerOptions = ['--file-associations', 'src/main/deploy/psbt.properties', '--file-associations', 'src/main/deploy/txn.properties', '--file-associations', 'src/main/deploy/asc.properties', '--license-file', 'LICENSE']
         if(os.windows) {
             installerOptions += ['--win-per-user-install', '--win-dir-chooser', '--win-menu', '--win-menu-group', appName, '--win-shortcut', '--resource-dir', 'src/main/deploy/package/windows/']
-            imageOptions += ['--icon', "src/main/deploy/package/windows/sparrow-${coin}.ico".toString()]
+            imageOptions += ['--icon', "src/main/deploy/package/windows/sparrow-${coinIcon}.ico".toString()]
             installerType = "msi"
         }
         if(os.linux) {
@@ -321,11 +332,11 @@ jlink {
                 installerOptions += ['--linux-shortcut', '--linux-menu-group', appName]
             }
             installerOptions += ['--resource-dir', layout.buildDirectory.dir('deploy/package').get().asFile.toString(), '--linux-app-category', 'utils', '--linux-app-release', '1', '--linux-rpm-license-type', 'ASL 2.0', '--linux-deb-maintainer', 'mail@sparrowwallet.com']
-            imageOptions += ['--icon', "src/main/deploy/package/linux/${appName}.png".toString(), '--resource-dir', 'src/main/deploy/package/linux/']
+            imageOptions += ['--icon', "src/main/deploy/package/linux/${iconAppName}.png".toString(), '--resource-dir', 'src/main/deploy/package/linux/']
         }
         if(os.macOsX) {
             installerOptions += ['--mac-sign', '--mac-signing-key-user-name', 'Craig Raw (UPLVMSK9D7)']
-            imageOptions += ['--icon', "src/main/deploy/package/macos/sparrow-${coin}.icns".toString(), '--resource-dir', 'src/main/deploy/package/macos/']
+            imageOptions += ['--icon', "src/main/deploy/package/macos/sparrow-${coinIcon}.icns".toString(), '--resource-dir', 'src/main/deploy/package/macos/']
             installerType = "dmg"
         }
     }

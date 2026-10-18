@@ -43,6 +43,18 @@ public class SparrowDesktop extends Application {
     public void start(Stage stage) throws Exception {
         this.mainStage = stage;
 
+        //Resolving the active coin from the focused wallet tab is correct on this thread and nowhere else.
+        //Register it, then in the unified build make an unscoped resolution on any other thread throw
+        //instead of falling back to the focused coin - that fallback derives a well-formed address on the
+        //wrong chain, and between Dogecoin and Dingocoin the result is indistinguishable from a correct one.
+        //Background work declares its wallet's coin with Coin.beginScope/endScope. A single-coin flavor has
+        //nothing to confuse, so it keeps the fallback. -Dscrypto.lenientScoping=true restores the old
+        //behaviour if an unscoped path turns up in the field before it can be bracketed properly.
+        com.sparrowwallet.drongo.Coin.setForegroundThread(Thread.currentThread());
+        if(SparrowWallet.isUnified() && !Boolean.getBoolean("scrypto.lenientScoping")) {
+            com.sparrowwallet.drongo.Coin.setStrictScoping(true);
+        }
+
         initializeFonts();
         URL.setURLStreamHandlerFactory(protocol -> WalletIcon.PROTOCOL.equals(protocol) ? new WalletIcon.WalletIconStreamHandler() : null);
 

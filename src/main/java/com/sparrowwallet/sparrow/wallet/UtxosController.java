@@ -133,9 +133,9 @@ public class UtxosController extends WalletFormController implements Initializab
                 }
 
                 if(unit.equals(BitcoinUnit.BTC)) {
-                    sendSelected.setText("Send Selected (" + format.formatBtcValue(selectedTotal) + " LTC)");
+                    sendSelected.setText("Send Selected (" + format.formatBtcValue(selectedTotal) + " " + com.sparrowwallet.drongo.BitcoinUnit.BTC.getLabel() + ")");
                 } else {
-                    sendSelected.setText("Send Selected (" + format.formatSatsValue(selectedTotal) + " lits)");
+                    sendSelected.setText("Send Selected (" + format.formatSatsValue(selectedTotal) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + ")");
                 }
             }
         } else {
@@ -357,6 +357,10 @@ public class UtxosController extends WalletFormController implements Initializab
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        //Only this wallet's own coin's rate applies to its balances
+        if(event.getCoin() != getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         setFiatBalance(fiatBalance, event.getCurrencyRate(), getWalletForm().getWalletUtxosEntry().getBalance());
         setFiatBalance(fiatMempoolBalance, event.getCurrencyRate(), getWalletForm().getWalletUtxosEntry().getMempoolBalance());
     }

@@ -147,6 +147,9 @@ public class TransactionsDialog extends WalletDialog {
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        if(event.getCoin() != getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         SparrowTerminal.get().getGuiThread().invokeLater(() -> {
             WalletTransactionsEntry walletTransactionsEntry = getWalletForm().getWalletTransactionsEntry();
             fiatBalance.setText(formatFiatValue(getFiatValue(walletTransactionsEntry.getBalance(), event.getCurrencyRate())));

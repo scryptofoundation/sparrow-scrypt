@@ -2,6 +2,7 @@ package com.sparrowwallet.sparrow.mweb;
 
 import com.google.common.eventbus.Subscribe;
 import com.google.protobuf.ByteString;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.crypto.ChildNumber;
 import com.sparrowwallet.drongo.protocol.*;
@@ -48,6 +49,12 @@ public class MwebServer {
     }
 
     private void start() {
+        //MWEB (Mimblewimble Extension Blocks) is Litecoin-only. On chains without it - every merge-mined
+        //Scrypto chain except Litecoin - never launch the native MWEB daemon or its scanners.
+        if(!Coin.get().isMwebSupported()) {
+            return;
+        }
+
         var chain = Network.get().getName();
         var dataDir = Storage.getSparrowDir().toPath().resolve("mweb");
         try {
@@ -177,11 +184,22 @@ public class MwebServer {
     }
 
     public PSBT psbtAddIO(PSBT psbt, WalletTransaction transaction, double feeRate) {
+        //MWEB is Litecoin-only; on other Scrypto chains the server is never started (stub null) and there is
+        //nothing MWEB to add, so pass the PSBT through unchanged rather than dereferencing the null stub.
+        if(!Coin.get().isMwebSupported()) {
+            return psbt;
+        }
         psbt = psbtAddInputs(psbt, transaction, feeRate);
         return psbtAddOutputs(psbt, transaction, feeRate);
     }
 
     public PSBT psbtSign(PSBT psbt, Keystore keystore) throws MnemonicException, PSBTParseException {
+        //MWEB signing only applies to Litecoin; on other chains there are no MWEB inputs and the server is not
+        //running, so return the PSBT unchanged (the transparent inputs are signed by the normal wallet path).
+        if(!Coin.get().isMwebSupported()) {
+            return psbt;
+        }
+
         var der = new ArrayList<>(keystore.getExtendedPrivateKey().getKey().getPath());
         der.add(new ChildNumber(1, true));
         var spendKey = keystore.getExtendedPrivateKey().getKey(der);

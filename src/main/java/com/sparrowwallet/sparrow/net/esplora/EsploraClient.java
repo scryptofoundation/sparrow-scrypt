@@ -40,12 +40,12 @@ public class EsploraClient {
 
     /** Current chain tip height. */
     public int getTipHeight() throws EsploraException {
-        return Integer.parseInt(getString("/blocks/tip/height").trim());
+        return Integer.parseInt(getPlainString("/blocks/tip/height"));
     }
 
     /** Current chain tip block hash. */
     public String getTipHash() throws EsploraException {
-        return getString("/blocks/tip/hash").trim();
+        return getPlainString("/blocks/tip/hash");
     }
 
     /** Confirmed and mempool transactions affecting an address, newest first (Esplora returns up to 50). */
@@ -60,7 +60,28 @@ public class EsploraClient {
 
     /** Raw transaction hex. */
     public String getTransactionHex(String txid) throws EsploraException {
-        return getString("/tx/" + txid + "/hex").trim();
+        return getPlainString("/tx/" + txid + "/hex");
+    }
+
+    /**
+     * A response Esplora defines as bare text, tolerant of an instance returning it as a JSON string.
+     *
+     * explorer.junk-coin.com quotes these: its tip hash arrives as 66 characters and its raw transactions
+     * with a leading quote, which makes every one of them unparseable hex. Stripping one wrapping pair here
+     * costs nothing on the instances that answer correctly - a bare hash or hex string never starts with a
+     * quote. Only the text routes go through this; JSON responses are parsed by {@link #get} untouched.
+     */
+    private String getPlainString(String path) throws EsploraException {
+        return unquote(getString(path));
+    }
+
+    private static String unquote(String value) {
+        String trimmed = value.trim();
+        if(trimmed.length() > 1 && trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+            return trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+
+        return trimmed;
     }
 
     /** Verbose transaction (includes confirmation status and block height). */
@@ -80,10 +101,11 @@ public class EsploraClient {
     }
 
     /**
-     * Fee estimates as a map of target-blocks to sat/vB. Handles both dialects: Blockstream-esplora
-     * serves /fee-estimates (target-blocks -> sat/vB), mempool.space serves /v1/fees/recommended
-     * (named tiers). Never throws - fees are advisory and the caller falls back to a minimum relay fee
-     * when this is empty.
+     * Fee estimates as a map of target-blocks to sat/vB. Handles all three dialects seen on these chains:
+     * Blockstream-esplora serves /fee-estimates (target-blocks -> sat/vB), mempool.space serves
+     * /v1/fees/recommended (named tiers), and the Nintondo-family forks serve the same tiers unversioned
+     * at /fees/recommended (peppool.space, luckyscan.org). Never throws - fees are advisory and the caller
+     * floors them at the chain's own rates when this is empty.
      */
     public java.util.Map<Integer, Double> getFeeEstimates() {
         java.util.Map<Integer, Double> estimates = new java.util.TreeMap<>();
@@ -97,25 +119,30 @@ public class EsploraClient {
                 return estimates;
             }
         } catch(Exception e) {
-            //Fall through to the mempool.space endpoint.
+            //Fall through to the mempool.space endpoints.
         }
 
-        try {
-            MempoolRecommendedFees fees = get("/v1/fees/recommended", MempoolRecommendedFees.class);
-            if(fees.fastestFee != null) {
-                estimates.put(1, (double)fees.fastestFee);
+        for(String path : List.of("/v1/fees/recommended", "/fees/recommended")) {
+            try {
+                MempoolRecommendedFees fees = get(path, MempoolRecommendedFees.class);
+                if(fees.fastestFee != null) {
+                    estimates.put(1, (double)fees.fastestFee);
+                }
+                if(fees.halfHourFee != null) {
+                    estimates.put(3, (double)fees.halfHourFee);
+                }
+                if(fees.hourFee != null) {
+                    estimates.put(6, (double)fees.hourFee);
+                }
+                if(fees.economyFee != null) {
+                    estimates.put(25, (double)fees.economyFee);
+                }
+                if(!estimates.isEmpty()) {
+                    return estimates;
+                }
+            } catch(Exception e) {
+                //Try the next dialect; if none answer the caller uses the chain's own rates.
             }
-            if(fees.halfHourFee != null) {
-                estimates.put(3, (double)fees.halfHourFee);
-            }
-            if(fees.hourFee != null) {
-                estimates.put(6, (double)fees.hourFee);
-            }
-            if(fees.economyFee != null) {
-                estimates.put(25, (double)fees.economyFee);
-            }
-        } catch(Exception e) {
-            //No fee source available; caller falls back to the minimum relay fee.
         }
 
         return estimates;
@@ -144,15 +171,70 @@ public class EsploraClient {
                     .POST(HttpRequest.BodyPublishers.ofString(txHex))
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if(response.statusCode() != 200) {
-                throw new EsploraException("Broadcast failed (HTTP " + response.statusCode() + "): " + response.body());
+            if(response.statusCode() == 404 || response.statusCode() == 405) {
+                //Not every public instance exposes the write half of the API - explorer.junk-coin.com serves
+                //the whole read path but has no POST /tx, so a wallet on it can sync but never send.
+                throw new EsploraException("The server at " + baseUrl + " does not accept transaction broadcasts. " +
+                        "Configure a server that does in order to send from this wallet.");
             }
-            return response.body().trim();
+            if(response.statusCode() != 200) {
+                throw new EsploraException(extractRejectReason(response.body()));
+            }
+            //The returned txid is subject to the same quoting as the other text responses
+            return unquote(response.body());
         } catch(EsploraException e) {
             throw e;
         } catch(Exception e) {
             throw new EsploraException("Broadcast request failed", e);
         }
+    }
+
+    /**
+     * The node's own reject reason, dug out of the wrapping the instance put around it.
+     *
+     * Each dialect wraps differently and peppool.space wraps twice - the node's RPC error JSON arrives
+     * embedded in the message field of the instance's own JSON error. Unwrapping matters beyond
+     * readability: the send flow recognises a failure by the reason's leading text ("min relay fee not
+     * met", "dust"), which it never sees while the reason is buried in two layers of JSON.
+     */
+    String extractRejectReason(String body) {
+        String reason = body == null ? "" : body.trim();
+        for(int i = 0; i < 4; i++) {
+            String unwrapped = unwrapJsonMessage(reason);
+            if(unwrapped == null || unwrapped.equals(reason)) {
+                break;
+            }
+            reason = unwrapped;
+        }
+
+        return reason.isEmpty() ? "Broadcast rejected" : reason;
+    }
+
+    /** One layer: the message or error of the outermost JSON object in the given text, else null. */
+    String unwrapJsonMessage(String text) {
+        int start = text.indexOf('{');
+        int end = text.lastIndexOf('}');
+        if(start < 0 || end <= start) {
+            return null;
+        }
+
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(text.substring(start, end + 1));
+            com.fasterxml.jackson.databind.JsonNode error = node.get("error");
+            if(error != null && error.isObject() && error.get("message") != null) {
+                return error.get("message").asText().trim();
+            }
+            if(node.get("message") != null) {
+                return node.get("message").asText().trim();
+            }
+            if(error != null && error.isTextual()) {
+                return error.asText().trim();
+            }
+        } catch(Exception e) {
+            //Not JSON - some instances return the node's error as plain text, which is already the reason
+        }
+
+        return null;
     }
 
     private String getString(String path) throws EsploraException {

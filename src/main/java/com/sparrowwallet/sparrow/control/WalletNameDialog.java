@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.control;
 
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
 import com.sparrowwallet.sparrow.io.Config;
@@ -14,6 +15,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.util.StringConverter;
 import org.controlsfx.control.textfield.CustomTextField;
 import org.controlsfx.control.textfield.TextFields;
 import org.controlsfx.glyphfont.Glyph;
@@ -28,6 +30,7 @@ import java.util.Date;
 
 public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> {
     private final CustomTextField name;
+    private final ComboBox<Coin> coinCombo;
     private final CheckBox existingCheck;
     private final DatePicker existingPicker;
 
@@ -57,7 +60,7 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
         dialogPane.getStylesheets().add(AppServices.class.getResource("general.css").toExternalForm());
         dialogPane.getButtonTypes().addAll(ButtonType.CANCEL);
         dialogPane.setPrefWidth(460);
-        dialogPane.setPrefHeight(requestBirthDate ? 250 : 200);
+        dialogPane.setPrefHeight((requestBirthDate ? 250 : 200) + (rename ? 0 : 50));
         dialogPane.getScene().addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
                 WalletNameDialog.this.close();
@@ -77,6 +80,28 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
             return change;
         }));
         content.getChildren().add(name);
+
+        HBox coinBox = new HBox(10);
+        Label coinLabel = new Label("Coin:");
+        coinLabel.setTranslateY(4);
+        coinCombo = new ComboBox<>();
+        coinCombo.getItems().addAll(Coin.values());
+        coinCombo.setValue(Coin.get());
+        coinCombo.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(Coin coin) {
+                return coin == null ? "" : coin.toDisplayString() + " (" + coin.getTicker() + ")";
+            }
+
+            @Override
+            public Coin fromString(String string) {
+                throw new UnsupportedOperationException();
+            }
+        });
+        coinBox.getChildren().addAll(coinLabel, coinCombo);
+        if(!rename) {
+            content.getChildren().add(coinBox);
+        }
 
         HBox existingBox = new HBox(10);
         existingCheck = new CheckBox("Has existing transactions");
@@ -141,16 +166,31 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
 
         name.setPromptText("Wallet Name");
         Platform.runLater(name::requestFocus);
-        setResultConverter(dialogButton -> dialogButton == okButtonType ? new NameAndBirthDate(name.getText().trim(), existingPicker.getValue()) : null);
+        setResultConverter(dialogButton -> dialogButton == okButtonType ? new NameAndBirthDate(name.getText().trim(), existingPicker.getValue(), coinCombo.getValue()) : null);
+    }
+
+    /**
+     * Shows the coin but does not let it change - for a wallet whose keys were already derived under that coin
+     * (imports), where picking another coin would only relabel keys from the wrong chain.
+     */
+    public void setFixedCoin(Coin coin) {
+        coinCombo.setValue(coin);
+        coinCombo.setDisable(true);
     }
 
     public static class NameAndBirthDate {
         private final String name;
         private final Date birthDate;
+        private final Coin coin;
 
         public NameAndBirthDate(String name, LocalDate birthLocalDate) {
+            this(name, birthLocalDate, Coin.get());
+        }
+
+        public NameAndBirthDate(String name, LocalDate birthLocalDate, Coin coin) {
             this.name = name;
             this.birthDate = (birthLocalDate == null ? null : Date.from(birthLocalDate.atStartOfDay().atZone(ZoneId.systemDefault()).toInstant()));
+            this.coin = coin;
         }
 
         public String getName() {
@@ -159,6 +199,10 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
 
         public Date getBirthDate() {
             return birthDate;
+        }
+
+        public Coin getCoin() {
+            return coin;
         }
     }
 }

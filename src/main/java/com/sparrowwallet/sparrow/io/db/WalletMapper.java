@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.io.db;
 
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.policy.Miniscript;
 import com.sparrowwallet.drongo.policy.Policy;
@@ -19,6 +20,8 @@ public class WalletMapper implements RowMapper<Wallet> {
         wallet.setId(rs.getLong("wallet.id"));
         wallet.setLabel(rs.getString("wallet.label"));
         wallet.setNetwork(Network.values()[rs.getInt("wallet.network")]);
+        String coin = rs.getString("wallet.coin");
+        wallet.setCoin(coin == null ? null : Coin.valueOf(coin));
         wallet.setPolicyType(PolicyType.values()[rs.getInt("wallet.policyType")]);
         wallet.setScriptType(ScriptType.values()[rs.getInt("wallet.scriptType")]);
 

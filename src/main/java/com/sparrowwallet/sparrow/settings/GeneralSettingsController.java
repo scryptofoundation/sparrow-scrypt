@@ -80,10 +80,15 @@ public class GeneralSettingsController extends SettingsDetailController {
 
     @Override
     public void initializeView(Config config) {
+        //MEMPOOL_SPACE (litecoinspace.org) only estimates Litecoin fees; it is not an option on other coins,
+        //which fall back to the Electrum server's own estimatefee.
+        if(com.sparrowwallet.drongo.Coin.get() != com.sparrowwallet.drongo.Coin.LITECOIN) {
+            feeRatesSource.getItems().remove(FeeRatesSource.MEMPOOL_SPACE);
+        }
         if(config.getFeeRatesSource() != null) {
             feeRatesSource.setValue(config.getFeeRatesSource());
         } else {
-            feeRatesSource.getSelectionModel().select(1);
+            feeRatesSource.setValue(FeeRatesSource.getDefault());
             config.setFeeRatesSource(feeRatesSource.getValue());
         }
 
@@ -131,16 +136,16 @@ public class GeneralSettingsController extends SettingsDetailController {
             }
         });
 
-        if(config.getBlockExplorer() != null) {
-            blockExplorers.setValue(config.getBlockExplorer());
-        } else {
-            blockExplorers.getSelectionModel().select(0);
-        }
+        //Show the explorer that will actually be opened for the active coin, which is not necessarily the
+        //stored one - see BlockExplorer.getConfigured
+        blockExplorers.setValue(BlockExplorer.getConfigured(config.getBlockExplorer()));
 
         if(config.getExchangeSource() != null) {
             exchangeSource.setValue(config.getExchangeSource());
         } else {
-            exchangeSource.getSelectionModel().select(2);
+            //Coin-aware default: Litecoin uses Coingecko, other Scrypto coins use Coinbase (Coingecko's
+            ///exchange_rates has no key for them and rate-limits, leaving the fiat value blank).
+            exchangeSource.setValue(ExchangeSource.getDefault());
             config.setExchangeSource(exchangeSource.getValue());
         }
 
@@ -198,9 +203,14 @@ public class GeneralSettingsController extends SettingsDetailController {
     }
 
     private ObservableList<Server> getBlockExplorerList() {
-        List<Server> servers = Arrays.stream(BlockExplorer.values()).map(BlockExplorer::getServer).collect(Collectors.toList());
-        if(Config.get().getBlockExplorer() != null && !servers.contains(Config.get().getBlockExplorer())) {
-            servers.add(Config.get().getBlockExplorer());
+        //Only explorers that index the active coin are offered - litecoinspace.org serves Litecoin alone,
+        //and the coins with their own explorer have no business showing another chain's
+        List<Server> servers = Arrays.stream(BlockExplorer.values())
+                .filter(be -> be.supportsCoin(com.sparrowwallet.drongo.Coin.get()))
+                .map(BlockExplorer::getServer).collect(Collectors.toList());
+        Server configured = Config.get().getBlockExplorer();
+        if(configured != null && BlockExplorer.fromServer(configured) == null && !servers.contains(configured)) {
+            servers.add(configured);
         }
         servers.add(CUSTOM_BLOCK_EXPLORER);
         return FXCollections.observableList(servers);
@@ -262,7 +272,7 @@ public class GeneralSettingsController extends SettingsDetailController {
         @Override
         protected void updateItem(Server server, boolean empty) {
             super.updateItem(server, empty);
-            if(empty || server == null || server == BlockExplorer.NONE.getServer()) {
+            if(empty || server == null || BlockExplorer.NONE.getServer().equals(server)) {
                 setText("None");
                 setGraphic(null);
             } else if(server == CUSTOM_BLOCK_EXPLORER) {

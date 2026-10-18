@@ -20,6 +20,7 @@ import com.sparrowwallet.sparrow.io.Server;
 import com.sparrowwallet.sparrow.mweb.MwebServer;
 import com.sparrowwallet.sparrow.net.cormorant.Cormorant;
 import com.sparrowwallet.sparrow.net.cormorant.bitcoind.CormorantBitcoindException;
+import com.sparrowwallet.sparrow.net.esplora.EsploraServerRpc;
 import com.sparrowwallet.sparrow.paynym.PayNym;
 import com.sparrowwallet.sparrow.paynym.PayNymService;
 import io.grpc.StatusRuntimeException;
@@ -91,9 +92,24 @@ public class ElectrumServer {
 
     private static ServerCapability serverCapability;
 
+    //The coin whose configured server the current transport is connected to (the connection follows the
+    //focused wallet's coin). Wallet services compare against this so a wallet never syncs against another
+    //chain's server - P2PKH scriptPubKeys are byte-identical across the Scrypto chains, so without this a
+    //reused key could silently ingest wrong-chain history.
+    private static volatile com.sparrowwallet.drongo.Coin connectedCoin;
+
+    //Esplora is stateless HTTP with no persistent transport, so isConnected() cannot derive its answer
+    //from the transport - this tracks whether the Esplora backend answered its last connect/ping.
+    private static volatile boolean esploraConnected;
+
     private static final Pattern RPC_WALLET_LOADING_PATTERN = Pattern.compile(".*\"(Wallet loading failed[:.][^\"]*)\".*");
 
     private static synchronized CloseableTransport getTransport() throws ServerException {
+        if(electrumServerRpc instanceof EsploraServerRpc) {
+            //Esplora is stateless HTTP - there is no persistent transport, and EsploraServerRpc ignores it
+            return null;
+        }
+
         if(transport == null) {
             try {
                 Server electrumServer = null;
@@ -184,6 +200,10 @@ public class ElectrumServer {
     }
 
     public static synchronized boolean isConnected() {
+        if(electrumServerRpc instanceof EsploraServerRpc) {
+            return esploraConnected;
+        }
+
         if(transport != null) {
             TcpTransport tcpTransport = (TcpTransport)transport;
             return tcpTransport.isConnected();
@@ -192,7 +212,33 @@ public class ElectrumServer {
         return false;
     }
 
+    public static boolean isConnectedTo(com.sparrowwallet.drongo.Coin coin) {
+        return isConnected() && connectedCoin == coin;
+    }
+
+    public static com.sparrowwallet.drongo.Coin getConnectedCoin() {
+        return connectedCoin;
+    }
+
+    /** Whether the given server is an Esplora REST endpoint (http/https URL) rather than an Electrum protocol server. */
+    public static boolean isEsploraServer(Server server) {
+        Protocol protocol = server == null ? null : Protocol.getProtocol(server.getUrl());
+        return protocol == Protocol.HTTP || protocol == Protocol.HTTPS;
+    }
+
+    private static boolean isEsploraConfigured() {
+        ServerType serverType = Config.get().getServerType();
+        return (serverType == ServerType.ELECTRUM_SERVER || serverType == ServerType.PUBLIC_ELECTRUM_SERVER)
+                && isEsploraServer(Config.get().getServer());
+    }
+
+    /** True when the connected backend has no push notifications, so clients must poll (Esplora). */
+    public static boolean isPollingBackend() {
+        return electrumServerRpc instanceof EsploraServerRpc;
+    }
+
     public static synchronized void closeActiveConnection() throws ServerException {
+        esploraConnected = false;
         if(transport != null) {
             closeConnection(transport);
             transport = null;
@@ -1336,10 +1382,17 @@ public class ElectrumServer {
     public static class ServerVersionService extends Service<List<String>> {
         @Override
         protected Task<List<String>> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<List<String>>() {
                 protected List<String> call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    return electrumServer.getServerVersion();
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        return electrumServer.getServerVersion();
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -1348,10 +1401,17 @@ public class ElectrumServer {
     public static class ServerBannerService extends Service<String> {
         @Override
         protected Task<String> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected String call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    return electrumServer.getServerBanner();
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        return electrumServer.getServerBanner();
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -1364,6 +1424,7 @@ public class ElectrumServer {
         private boolean firstCall = true;
         private Thread reader;
         private long feeRatesRetrievedAt;
+        private int esploraTipHeight;
         private final Bwt bwt = new Bwt();
         private final ReentrantLock bwtStartLock = new ReentrantLock();
         private final Condition bwtStartCondition = bwtStartLock.newCondition();
@@ -1380,139 +1441,215 @@ public class ElectrumServer {
 
         @Override
         protected Task<FeeRatesUpdatedEvent> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected FeeRatesUpdatedEvent call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
 
-                    if(Config.get().getServerType() == ServerType.BITCOIN_CORE) {
-                        try {
-                            if(Config.get().isUseLegacyCoreWallet()) {
-                                throw new CormorantBitcoindException("Legacy wallet configured");
-                            }
-                            if(ElectrumServer.cormorant == null) {
-                                ElectrumServer.cormorant = new Cormorant(subscribe);
-                                ElectrumServer.coreElectrumServer = cormorant.start();
-                            }
-                        } catch(CormorantBitcoindException e) {
-                            ElectrumServer.cormorant = null;
-                            log.debug("Cannot start cormorant: " + e.getMessage() + ". Starting BWT...");
+                        if(isEsploraConfigured()) {
+                            return esploraCall(electrumServer);
+                        }
 
-                            Bwt.initialize();
+                        if(Config.get().getServerType() == ServerType.BITCOIN_CORE) {
+                            try {
+                                if(Config.get().isUseLegacyCoreWallet()) {
+                                    throw new CormorantBitcoindException("Legacy wallet configured");
+                                }
+                                if(ElectrumServer.cormorant == null) {
+                                    ElectrumServer.cormorant = new Cormorant(subscribe);
+                                    ElectrumServer.coreElectrumServer = cormorant.start();
+                                }
+                            } catch(CormorantBitcoindException e) {
+                                ElectrumServer.cormorant = null;
+                                log.debug("Cannot start cormorant: " + e.getMessage() + ". Starting BWT...");
 
-                            if(!bwt.isRunning()) {
-                                Bwt.ConnectionService bwtConnectionService = bwt.getConnectionService(subscribe);
-                                bwtStartException = null;
-                                bwtConnectionService.setOnFailed(workerStateEvent -> {
-                                    log.error("Failed to start BWT", workerStateEvent.getSource().getException());
-                                    bwtStartException = workerStateEvent.getSource().getException();
+                                Bwt.initialize();
+
+                                if(!bwt.isRunning()) {
+                                    Bwt.ConnectionService bwtConnectionService = bwt.getConnectionService(subscribe);
+                                    bwtStartException = null;
+                                    bwtConnectionService.setOnFailed(workerStateEvent -> {
+                                        log.error("Failed to start BWT", workerStateEvent.getSource().getException());
+                                        bwtStartException = workerStateEvent.getSource().getException();
+                                        try {
+                                            bwtStartLock.lock();
+                                            bwtStartCondition.signal();
+                                        } finally {
+                                            bwtStartLock.unlock();
+                                        }
+                                    });
+                                    Platform.runLater(bwtConnectionService::start);
+
                                     try {
                                         bwtStartLock.lock();
-                                        bwtStartCondition.signal();
+                                        bwtStartCondition.await();
+
+                                        if(!bwt.isReady()) {
+                                            if(bwtStartException != null) {
+                                                Matcher walletLoadingMatcher = RPC_WALLET_LOADING_PATTERN.matcher(bwtStartException.getMessage());
+                                                if(bwtStartException.getMessage().contains("Wallet file not specified")) {
+                                                    throw new ServerException("Litecoin Core requires Multi-Wallet to be enabled in the Server Settings");
+                                                } else if(bwtStartException.getMessage().contains("Upgrade Litecoin Core to v24 or later for Taproot wallet support")) {
+                                                    throw new ServerException(bwtStartException.getMessage());
+                                                } else if(bwtStartException.getMessage().contains("Wallet file verification failed. Refusing to load database.")) {
+                                                    throw new ServerException("Litecoin Core wallet file verification failed. Try restarting Litecoin Core.");
+                                                } else if(bwtStartException.getMessage().contains("This error could be caused by pruning or data corruption")) {
+                                                    throw new ServerException("Scanning failed. Litecoin Core is pruned to a date after the wallet birthday.");
+                                                } else if(walletLoadingMatcher.matches() && walletLoadingMatcher.group(1) != null) {
+                                                    throw new ServerException(walletLoadingMatcher.group(1));
+                                                }
+                                            }
+
+                                            throw new ServerException("Check if Litecoin Core is running, and the authentication details are correct.");
+                                        }
+                                    } catch(InterruptedException ex) {
+                                        Thread.currentThread().interrupt();
+                                        return null;
                                     } finally {
                                         bwtStartLock.unlock();
                                     }
-                                });
-                                Platform.runLater(bwtConnectionService::start);
-
-                                try {
-                                    bwtStartLock.lock();
-                                    bwtStartCondition.await();
-
-                                    if(!bwt.isReady()) {
-                                        if(bwtStartException != null) {
-                                            Matcher walletLoadingMatcher = RPC_WALLET_LOADING_PATTERN.matcher(bwtStartException.getMessage());
-                                            if(bwtStartException.getMessage().contains("Wallet file not specified")) {
-                                                throw new ServerException("Litecoin Core requires Multi-Wallet to be enabled in the Server Settings");
-                                            } else if(bwtStartException.getMessage().contains("Upgrade Litecoin Core to v24 or later for Taproot wallet support")) {
-                                                throw new ServerException(bwtStartException.getMessage());
-                                            } else if(bwtStartException.getMessage().contains("Wallet file verification failed. Refusing to load database.")) {
-                                                throw new ServerException("Litecoin Core wallet file verification failed. Try restarting Litecoin Core.");
-                                            } else if(bwtStartException.getMessage().contains("This error could be caused by pruning or data corruption")) {
-                                                throw new ServerException("Scanning failed. Litecoin Core is pruned to a date after the wallet birthday.");
-                                            } else if(walletLoadingMatcher.matches() && walletLoadingMatcher.group(1) != null) {
-                                                throw new ServerException(walletLoadingMatcher.group(1));
-                                            }
-                                        }
-
-                                        throw new ServerException("Check if Litecoin Core is running, and the authentication details are correct.");
-                                    }
-                                } catch(InterruptedException ex) {
-                                    Thread.currentThread().interrupt();
-                                    return null;
-                                } finally {
-                                    bwtStartLock.unlock();
+                                }
+                            } catch(IllegalStateException e) {
+                                if(e.getCause() instanceof SSLHandshakeException) {
+                                    throw new TlsServerException(Config.get().getCoreServer().getHostAndPort(), e.getCause());
+                                } else {
+                                    throw e;
                                 }
                             }
-                        } catch(IllegalStateException e) {
-                            if(e.getCause() instanceof SSLHandshakeException) {
-                                throw new TlsServerException(Config.get().getCoreServer().getHostAndPort(), e.getCause());
+                        }
+
+                        if(firstCall) {
+                            electrumServer.connect();
+
+                            //The reader lives exactly as long as this connection, which belongs to taskCoin
+                            ReadRunnable readRunnable = new ReadRunnable();
+                            reader = new Thread(() -> {
+                                com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                                readRunnable.run();
+                            }, "ElectrumServerReadThread");
+                            reader.setDaemon(true);
+                            reader.setUncaughtExceptionHandler(ConnectionService.this);
+                            reader.start();
+
+                            //Start with simple RPC for maximum compatibility
+                            electrumServerRpc = new SimpleElectrumServerRpc();
+
+                            List<String> serverVersion = electrumServer.getServerVersion();
+                            firstCall = false;
+
+                            //If electrumx is detected, we can upgrade to batched RPC. Electrs/EPS do not support batching.
+                            serverCapability = getServerCapability(serverVersion);
+                            if(serverCapability.supportsBatching()) {
+                                log.debug("Upgrading to batched JSON-RPC");
+                                electrumServerRpc = new BatchedElectrumServerRpc(electrumServerRpc.getIdCounterValue(), serverCapability.getMaxTargetBlocks());
+                            }
+
+                            //This connection was configured from (and belongs to) the active coin's server settings
+                            connectedCoin = com.sparrowwallet.drongo.Coin.get();
+
+                            BlockHeaderTip tip;
+                            if(subscribe) {
+                                tip = electrumServer.subscribeBlockHeaders();
+                                subscribedScriptHashes.clear();
                             } else {
-                                throw e;
+                                tip = new BlockHeaderTip();
+                            }
+
+                            String banner = electrumServer.getServerBanner();
+
+                            Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, true);
+                            Set<MempoolRateSize> mempoolRateSizes = electrumServer.getMempoolRateSizes();
+                            feeRatesRetrievedAt = System.currentTimeMillis();
+
+                            Double minimumRelayFeeRate = electrumServer.getMinimumRelayFee();
+                            for(Integer blockTarget : blockTargetFeeRates.keySet()) {
+                                blockTargetFeeRates.computeIfPresent(blockTarget, (blocks, feeRate) -> feeRate < minimumRelayFeeRate ? minimumRelayFeeRate : feeRate);
+                            }
+
+                            return new ConnectionEvent(serverVersion, banner, tip.height, tip.getBlockHeader(), blockTargetFeeRates, mempoolRateSizes, minimumRelayFeeRate);
+                        } else {
+                            if(reader.isAlive()) {
+                                electrumServer.ping();
+
+                                long elapsed = System.currentTimeMillis() - feeRatesRetrievedAt;
+                                if(elapsed > FEE_RATES_PERIOD) {
+                                    Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, false);
+                                    Set<MempoolRateSize> mempoolRateSizes = electrumServer.getMempoolRateSizes();
+                                    Double nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
+                                    feeRatesRetrievedAt = System.currentTimeMillis();
+                                    return new FeeRatesUpdatedEvent(blockTargetFeeRates, mempoolRateSizes, nextBlockMedianFeeRate);
+                                }
+                            } else {
+                                closeConnection();
                             }
                         }
+
+                        return null;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                     }
-
-                    if(firstCall) {
-                        electrumServer.connect();
-
-                        reader = new Thread(new ReadRunnable(), "ElectrumServerReadThread");
-                        reader.setDaemon(true);
-                        reader.setUncaughtExceptionHandler(ConnectionService.this);
-                        reader.start();
-
-                        //Start with simple RPC for maximum compatibility
-                        electrumServerRpc = new SimpleElectrumServerRpc();
-
-                        List<String> serverVersion = electrumServer.getServerVersion();
-                        firstCall = false;
-
-                        //If electrumx is detected, we can upgrade to batched RPC. Electrs/EPS do not support batching.
-                        serverCapability = getServerCapability(serverVersion);
-                        if(serverCapability.supportsBatching()) {
-                            log.debug("Upgrading to batched JSON-RPC");
-                            electrumServerRpc = new BatchedElectrumServerRpc(electrumServerRpc.getIdCounterValue(), serverCapability.getMaxTargetBlocks());
-                        }
-
-                        BlockHeaderTip tip;
-                        if(subscribe) {
-                            tip = electrumServer.subscribeBlockHeaders();
-                            subscribedScriptHashes.clear();
-                        } else {
-                            tip = new BlockHeaderTip();
-                        }
-
-                        String banner = electrumServer.getServerBanner();
-
-                        Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, true);
-                        Set<MempoolRateSize> mempoolRateSizes = electrumServer.getMempoolRateSizes();
-                        feeRatesRetrievedAt = System.currentTimeMillis();
-
-                        Double minimumRelayFeeRate = electrumServer.getMinimumRelayFee();
-                        for(Integer blockTarget : blockTargetFeeRates.keySet()) {
-                            blockTargetFeeRates.computeIfPresent(blockTarget, (blocks, feeRate) -> feeRate < minimumRelayFeeRate ? minimumRelayFeeRate : feeRate);
-                        }
-
-                        return new ConnectionEvent(serverVersion, banner, tip.height, tip.getBlockHeader(), blockTargetFeeRates, mempoolRateSizes, minimumRelayFeeRate);
-                    } else {
-                        if(reader.isAlive()) {
-                            electrumServer.ping();
-
-                            long elapsed = System.currentTimeMillis() - feeRatesRetrievedAt;
-                            if(elapsed > FEE_RATES_PERIOD) {
-                                Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, false);
-                                Set<MempoolRateSize> mempoolRateSizes = electrumServer.getMempoolRateSizes();
-                                Double nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
-                                feeRatesRetrievedAt = System.currentTimeMillis();
-                                return new FeeRatesUpdatedEvent(blockTargetFeeRates, mempoolRateSizes, nextBlockMedianFeeRate);
-                            }
-                        } else {
-                            closeConnection();
-                        }
-                    }
-
-                    return null;
                 }
             };
+        }
+
+        /**
+         * Esplora is stateless HTTP: no transport, no reader thread, no push subscriptions. The first call
+         * establishes the RPC adapter and reports a synthetic ConnectionEvent; subsequent calls poll the
+         * tip height (a change is the new-block signal - see WalletForm.newBlock's polling refresh) and
+         * refresh fee rates on the usual period.
+         */
+        private FeeRatesUpdatedEvent esploraCall(ElectrumServer electrumServer) throws ServerException {
+            if(firstCall) {
+                Server server = Config.get().getServer();
+                electrumServerRpc = new EsploraServerRpc(server.getUrl());
+                List<String> serverVersion = electrumServerRpc.getServerVersion(null, "Sparrow", SUPPORTED_VERSIONS);
+                serverCapability = getServerCapability(serverVersion);
+
+                //This connection was configured from (and belongs to) the active coin's server settings
+                connectedCoin = com.sparrowwallet.drongo.Coin.get();
+                esploraConnected = true;
+                firstCall = false;
+
+                BlockHeaderTip tip = electrumServer.subscribeBlockHeaders();
+                esploraTipHeight = tip.height;
+                if(subscribe) {
+                    subscribedScriptHashes.clear();
+                }
+
+                Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, true);
+                Set<MempoolRateSize> mempoolRateSizes = electrumServer.getMempoolRateSizes();
+                feeRatesRetrievedAt = System.currentTimeMillis();
+
+                Double minimumRelayFeeRate = electrumServer.getMinimumRelayFee();
+                for(Integer blockTarget : blockTargetFeeRates.keySet()) {
+                    blockTargetFeeRates.computeIfPresent(blockTarget, (blocks, feeRate) -> feeRate < minimumRelayFeeRate ? minimumRelayFeeRate : feeRate);
+                }
+
+                return new ConnectionEvent(serverVersion, electrumServerRpc.getServerBanner(null), tip.height, tip.getBlockHeader(), blockTargetFeeRates, mempoolRateSizes, minimumRelayFeeRate);
+            } else {
+                //Poll: a tip height increase is the new-block signal
+                BlockHeaderTip tip = electrumServer.subscribeBlockHeaders();
+                if(tip.height > esploraTipHeight) {
+                    esploraTipHeight = tip.height;
+                    if(subscribe) {
+                        Platform.runLater(() -> EventManager.get().post(new NewBlockEvent(tip.height, tip.getBlockHeader())));
+                    }
+                }
+
+                long elapsed = System.currentTimeMillis() - feeRatesRetrievedAt;
+                if(elapsed > FEE_RATES_PERIOD) {
+                    Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, false);
+                    Set<MempoolRateSize> mempoolRateSizes = electrumServer.getMempoolRateSizes();
+                    Double nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
+                    feeRatesRetrievedAt = System.currentTimeMillis();
+                    return new FeeRatesUpdatedEvent(blockTargetFeeRates, mempoolRateSizes, nextBlockMedianFeeRate);
+                }
+
+                return null;
+            }
         }
 
         public void closeConnection() {
@@ -1695,20 +1832,32 @@ public class ElectrumServer {
         protected Task<Boolean> createTask() {
             return new Task<>() {
                 protected Boolean call() throws ServerException {
-                    if(ElectrumServer.cormorant != null) {
-                        if(!ElectrumServer.cormorant.checkWalletImport(mainWallet)) {
-                            return true;
+                    //Scope crypto to this wallet's coin so a background sync always resolves its own chain's
+                    //addresses/script hashes, even while a different-coin wallet tab is focused (see Coin.beginScope).
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(mainWallet.getCoin());
+                    try {
+                        //Never sync a wallet against another chain's server (the connection follows the focused coin)
+                        if(!ElectrumServer.isConnectedTo(mainWallet.getCoin())) {
+                            return false;
                         }
-                    }
 
-                    boolean historyFetched = getTransactionHistory(mainWallet);
-                    for(Wallet childWallet : new ArrayList<>(mainWallet.getChildWallets())) {
-                        if(childWallet.isNested()) {
-                            historyFetched |= getTransactionHistory(childWallet);
+                        if(ElectrumServer.cormorant != null) {
+                            if(!ElectrumServer.cormorant.checkWalletImport(mainWallet)) {
+                                return true;
+                            }
                         }
-                    }
 
-                    return historyFetched;
+                        boolean historyFetched = getTransactionHistory(mainWallet);
+                        for(Wallet childWallet : new ArrayList<>(mainWallet.getChildWallets())) {
+                            if(childWallet.isNested()) {
+                                historyFetched |= getTransactionHistory(childWallet);
+                            }
+                        }
+
+                        return historyFetched;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -1825,15 +1974,26 @@ public class ElectrumServer {
         protected Task<Set<String>> createTask() {
             return new Task<>() {
                 protected Set<String> call() throws ServerException {
-                    if(ElectrumServer.cormorant != null) {
-                        if(!ElectrumServer.cormorant.checkWalletImport(wallet)) {
+                    //Scope crypto to this wallet's coin so mempool script hashes resolve on its own chain (see Coin.beginScope).
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
+                    try {
+                        //Never sync a wallet against another chain's server (the connection follows the focused coin)
+                        if(!ElectrumServer.isConnectedTo(wallet.getCoin())) {
                             return Collections.emptySet();
                         }
-                    }
 
-                    iterationCount.set(iterationCount.get() + 1);
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    return electrumServer.getMempoolScriptHashes(wallet, txId, nodes);
+                        if(ElectrumServer.cormorant != null) {
+                            if(!ElectrumServer.cormorant.checkWalletImport(wallet)) {
+                                return Collections.emptySet();
+                            }
+                        }
+
+                        iterationCount.set(iterationCount.get() + 1);
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        return electrumServer.getMempoolScriptHashes(wallet, txId, nodes);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -1862,32 +2022,39 @@ public class ElectrumServer {
 
         @Override
         protected Task<Map<Sha256Hash, BlockTransaction>> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected Map<Sha256Hash, BlockTransaction> call() throws ServerException {
-                    Map<Sha256Hash, BlockTransaction> transactionMap = new HashMap<>();
-                    for(Sha256Hash ref : references) {
-                        if(retrievedTransactions.containsKey(ref)) {
-                            transactionMap.put(ref, retrievedTransactions.get(ref));
-                        }
-                    }
-
-                    Set<Sha256Hash> fetchReferences = new HashSet<>(references);
-                    fetchReferences.removeAll(transactionMap.keySet());
-
-                    if(!fetchReferences.isEmpty()) {
-                        ElectrumServer electrumServer = new ElectrumServer();
-                        Map<Sha256Hash, BlockTransaction> fetchedTransactions = electrumServer.getReferencedTransactions(fetchReferences, scriptHash);
-                        transactionMap.putAll(fetchedTransactions);
-
-                        for(Map.Entry<Sha256Hash, BlockTransaction> fetchedEntry : fetchedTransactions.entrySet()) {
-                            if(fetchedEntry.getValue() != null && !Sha256Hash.ZERO_HASH.equals(fetchedEntry.getValue().getBlockHash()) &&
-                                    AppServices.getCurrentBlockHeight() != null && fetchedEntry.getValue().getConfirmations(AppServices.getCurrentBlockHeight()) >= BlockTransactionHash.BLOCKS_TO_CONFIRM) {
-                                retrievedTransactions.put(fetchedEntry.getKey(), fetchedEntry.getValue());
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Map<Sha256Hash, BlockTransaction> transactionMap = new HashMap<>();
+                        for(Sha256Hash ref : references) {
+                            if(retrievedTransactions.containsKey(ref)) {
+                                transactionMap.put(ref, retrievedTransactions.get(ref));
                             }
                         }
-                    }
 
-                    return transactionMap;
+                        Set<Sha256Hash> fetchReferences = new HashSet<>(references);
+                        fetchReferences.removeAll(transactionMap.keySet());
+
+                        if(!fetchReferences.isEmpty()) {
+                            ElectrumServer electrumServer = new ElectrumServer();
+                            Map<Sha256Hash, BlockTransaction> fetchedTransactions = electrumServer.getReferencedTransactions(fetchReferences, scriptHash);
+                            transactionMap.putAll(fetchedTransactions);
+
+                            for(Map.Entry<Sha256Hash, BlockTransaction> fetchedEntry : fetchedTransactions.entrySet()) {
+                                if(fetchedEntry.getValue() != null && !Sha256Hash.ZERO_HASH.equals(fetchedEntry.getValue().getBlockHash()) &&
+                                        AppServices.getCurrentBlockHeight() != null && fetchedEntry.getValue().getConfirmations(AppServices.getCurrentBlockHeight()) >= BlockTransactionHash.BLOCKS_TO_CONFIRM) {
+                                    retrievedTransactions.put(fetchedEntry.getKey(), fetchedEntry.getValue());
+                                }
+                            }
+                        }
+
+                        return transactionMap;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -1921,53 +2088,58 @@ public class ElectrumServer {
 
         @Override
         protected Task<List<BlockTransaction>> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected List<BlockTransaction> call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    List<Set<BlockTransactionHash>> outputTransactionReferences = electrumServer.getOutputTransactionReferences(transaction, indexStart, indexEnd, blockTransactionHashes);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        List<Set<BlockTransactionHash>> outputTransactionReferences = electrumServer.getOutputTransactionReferences(transaction, indexStart, indexEnd, blockTransactionHashes);
 
-                    Map<BlockTransactionHash, Transaction> setReferences = new HashMap<>();
-                    for(Set<BlockTransactionHash> outputReferences : outputTransactionReferences) {
-                        if(outputReferences != null) {
-                            for(BlockTransactionHash outputReference : outputReferences) {
-                                setReferences.put(outputReference, null);
+                        Map<BlockTransactionHash, Transaction> setReferences = new HashMap<>();
+                        for(Set<BlockTransactionHash> outputReferences : outputTransactionReferences) {
+                            if(outputReferences != null) {
+                                for(BlockTransactionHash outputReference : outputReferences) {
+                                    setReferences.put(outputReference, null);
+                                }
                             }
                         }
-                    }
-                    setReferences.remove(null);
-                    setReferences.remove(UNFETCHABLE_BLOCK_TRANSACTION);
-                    setReferences.keySet().removeIf(ref -> transactionMap.get(ref.getHash()) != null);
+                        setReferences.remove(null);
+                        setReferences.remove(UNFETCHABLE_BLOCK_TRANSACTION);
+                        setReferences.keySet().removeIf(ref -> transactionMap.get(ref.getHash()) != null);
 
-                    List<BlockTransaction> blockTransactions = new ArrayList<>(transaction.getOutputs().size());
-                    for(int i = 0; i < transaction.getOutputs().size(); i++) {
-                        blockTransactions.add(null);
-                    }
+                        List<BlockTransaction> blockTransactions = new ArrayList<>(transaction.getOutputs().size());
+                        for(int i = 0; i < transaction.getOutputs().size(); i++) {
+                            blockTransactions.add(null);
+                        }
 
-                    if(!setReferences.isEmpty()) {
-                        Map<Integer, BlockHeader> blockHeaderMap = electrumServer.getBlockHeaders(null, setReferences.keySet());
-                        transactionMap.putAll(electrumServer.getTransactions(null, setReferences, blockHeaderMap));
-                    }
+                        if(!setReferences.isEmpty()) {
+                            Map<Integer, BlockHeader> blockHeaderMap = electrumServer.getBlockHeaders(null, setReferences.keySet());
+                            transactionMap.putAll(electrumServer.getTransactions(null, setReferences, blockHeaderMap));
+                        }
 
-                    for(int i = 0; i < outputTransactionReferences.size(); i++) {
-                        Set<BlockTransactionHash> outputReferences = outputTransactionReferences.get(i);
-                        if(outputReferences != null) {
-                            for(BlockTransactionHash reference : outputReferences) {
-                                if(reference == UNFETCHABLE_BLOCK_TRANSACTION) {
-                                    if(blockTransactions.get(i) == null) {
-                                        blockTransactions.set(i, UNFETCHABLE_BLOCK_TRANSACTION);
-                                    }
-                                } else {
-                                    BlockTransaction blockTransaction = transactionMap.get(reference.getHash());
-                                    if(blockTransaction.equals(UNFETCHABLE_BLOCK_TRANSACTION)) {
+                        for(int i = 0; i < outputTransactionReferences.size(); i++) {
+                            Set<BlockTransactionHash> outputReferences = outputTransactionReferences.get(i);
+                            if(outputReferences != null) {
+                                for(BlockTransactionHash reference : outputReferences) {
+                                    if(reference == UNFETCHABLE_BLOCK_TRANSACTION) {
                                         if(blockTransactions.get(i) == null) {
                                             blockTransactions.set(i, UNFETCHABLE_BLOCK_TRANSACTION);
                                         }
                                     } else {
-                                        for(TransactionInput input : blockTransaction.getTransaction().getInputs()) {
-                                            if(input.getOutpoint().getHash().equals(transaction.getTxId()) && input.getOutpoint().getIndex() == i) {
-                                                BlockTransaction previousTx = blockTransactions.set(i, blockTransaction);
-                                                if(previousTx != null && !previousTx.equals(UNFETCHABLE_BLOCK_TRANSACTION)) {
-                                                    throw new IllegalStateException("Double spend detected for output #" + i + " on hash " + reference.getHash());
+                                        BlockTransaction blockTransaction = transactionMap.get(reference.getHash());
+                                        if(blockTransaction.equals(UNFETCHABLE_BLOCK_TRANSACTION)) {
+                                            if(blockTransactions.get(i) == null) {
+                                                blockTransactions.set(i, UNFETCHABLE_BLOCK_TRANSACTION);
+                                            }
+                                        } else {
+                                            for(TransactionInput input : blockTransaction.getTransaction().getInputs()) {
+                                                if(input.getOutpoint().getHash().equals(transaction.getTxId()) && input.getOutpoint().getIndex() == i) {
+                                                    BlockTransaction previousTx = blockTransactions.set(i, blockTransaction);
+                                                    if(previousTx != null && !previousTx.equals(UNFETCHABLE_BLOCK_TRANSACTION)) {
+                                                        throw new IllegalStateException("Double spend detected for output #" + i + " on hash " + reference.getHash());
+                                                    }
                                                 }
                                             }
                                         }
@@ -1975,9 +2147,11 @@ public class ElectrumServer {
                                 }
                             }
                         }
-                    }
 
-                    return blockTransactions;
+                        return blockTransactions;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -1994,10 +2168,17 @@ public class ElectrumServer {
 
         @Override
         protected Task<Sha256Hash> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected Sha256Hash call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    return electrumServer.broadcastTransaction(transaction, fee);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        return electrumServer.broadcastTransaction(transaction, fee);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -2006,12 +2187,19 @@ public class ElectrumServer {
     public static class FeeRatesService extends Service<FeeRatesUpdatedEvent> {
         @Override
         protected Task<FeeRatesUpdatedEvent> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected FeeRatesUpdatedEvent call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, false);
-                    Double nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
-                    return new FeeRatesUpdatedEvent(blockTargetFeeRates, null, nextBlockMedianFeeRate);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        Map<Integer, Double> blockTargetFeeRates = electrumServer.getFeeEstimates(AppServices.TARGET_BLOCKS_RANGE, false);
+                        Double nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
+                        return new FeeRatesUpdatedEvent(blockTargetFeeRates, null, nextBlockMedianFeeRate);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -2026,46 +2214,53 @@ public class ElectrumServer {
 
         @Override
         protected Task<BlockSummaryEvent> createTask() {
+            //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected BlockSummaryEvent call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    Map<Integer, BlockSummary> blockSummaryMap = new LinkedHashMap<>();
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        Map<Integer, BlockSummary> blockSummaryMap = new LinkedHashMap<>();
 
-                    int maxHeight = AppServices.getBlockSummaries().keySet().stream().mapToInt(Integer::intValue).max().orElse(0);
-                    int startHeight = newBlockEvents.stream().mapToInt(NewBlockEvent::getHeight).min().orElse(0);
-                    int endHeight = newBlockEvents.stream().mapToInt(NewBlockEvent::getHeight).max().orElse(0);
-                    int totalBlocks = Math.max(0, endHeight - maxHeight);
+                        int maxHeight = AppServices.getBlockSummaries().keySet().stream().mapToInt(Integer::intValue).max().orElse(0);
+                        int startHeight = newBlockEvents.stream().mapToInt(NewBlockEvent::getHeight).min().orElse(0);
+                        int endHeight = newBlockEvents.stream().mapToInt(NewBlockEvent::getHeight).max().orElse(0);
+                        int totalBlocks = Math.max(0, endHeight - maxHeight);
 
-                    if(startHeight == 0 || totalBlocks > 1 || startHeight > maxHeight + 1) {
-                        if(isBlockstorm(totalBlocks)) {
-                            int start = Math.max(maxHeight + 1, endHeight - 15);
-                            for(int height = start; height <= endHeight; height++) {
-                                blockSummaryMap.put(height, new BlockSummary(height, new Date(), 1.0d, 0, 0));
+                        if(startHeight == 0 || totalBlocks > 1 || startHeight > maxHeight + 1) {
+                            if(isBlockstorm(totalBlocks)) {
+                                int start = Math.max(maxHeight + 1, endHeight - 15);
+                                for(int height = start; height <= endHeight; height++) {
+                                    blockSummaryMap.put(height, new BlockSummary(height, new Date(), 1.0d, 0, 0));
+                                }
+                            } else {
+                                blockSummaryMap.putAll(electrumServer.getRecentBlockSummaryMap());
                             }
-                        } else {
-                            blockSummaryMap.putAll(electrumServer.getRecentBlockSummaryMap());
                         }
-                    }
 
-                    List<NewBlockEvent> events = new ArrayList<>(newBlockEvents);
-                    events.removeIf(event -> blockSummaryMap.containsKey(event.getHeight()));
-                    if(!events.isEmpty()) {
-                        for(NewBlockEvent event : newBlockEvents) {
-                            blockSummaryMap.putAll(electrumServer.getBlockSummaryMap(event.getHeight(), event.getBlockHeader()));
+                        List<NewBlockEvent> events = new ArrayList<>(newBlockEvents);
+                        events.removeIf(event -> blockSummaryMap.containsKey(event.getHeight()));
+                        if(!events.isEmpty()) {
+                            for(NewBlockEvent event : newBlockEvents) {
+                                blockSummaryMap.putAll(electrumServer.getBlockSummaryMap(event.getHeight(), event.getBlockHeader()));
+                            }
                         }
-                    }
 
-                    Config config = Config.get();
-                    if(!isBlockstorm(totalBlocks) && !AppServices.isUsingProxy() && config.getServer().getProtocol().equals(Protocol.SSL)
-                            && (config.getServerType() == ServerType.PUBLIC_ELECTRUM_SERVER || config.getServerType() == ServerType.ELECTRUM_SERVER)) {
-                        subscribeRecent(electrumServer, AppServices.getCurrentBlockHeight() == null ? endHeight : AppServices.getCurrentBlockHeight());
-                    }
+                        Config config = Config.get();
+                        if(!isBlockstorm(totalBlocks) && !AppServices.isUsingProxy() && config.getServer().getProtocol().equals(Protocol.SSL)
+                                && (config.getServerType() == ServerType.PUBLIC_ELECTRUM_SERVER || config.getServerType() == ServerType.ELECTRUM_SERVER)) {
+                            subscribeRecent(electrumServer, AppServices.getCurrentBlockHeight() == null ? endHeight : AppServices.getCurrentBlockHeight());
+                        }
 
-                    Double nextBlockMedianFeeRate = null;
-                    if(!isBlockstorm(totalBlocks)) {
-                        nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
+                        Double nextBlockMedianFeeRate = null;
+                        if(!isBlockstorm(totalBlocks)) {
+                            nextBlockMedianFeeRate = electrumServer.getNextBlockMedianFeeRate();
+                        }
+                        return new BlockSummaryEvent(blockSummaryMap, nextBlockMedianFeeRate);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                     }
-                    return new BlockSummaryEvent(blockSummaryMap, nextBlockMedianFeeRate);
                 }
             };
         }
@@ -2128,20 +2323,27 @@ public class ElectrumServer {
             ScheduledService<Void> broadcastService = new ScheduledService<>() {
                 @Override
                 protected Task<Void> createTask() {
+                    //createTask runs on the FX thread: capture the focused coin here and scope the worker to it (strict scoping)
+                    com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
                     return new Task<>() {
                         @Override
                         protected Void call() throws Exception {
-                            if(!recentTransactions.isEmpty()) {
-                                Random random = new Random();
-                                if(random.nextBoolean()) {
-                                    BlockTransaction blkTx = recentTransactions.get(random.nextInt(recentTransactions.size()));
-                                    String scriptHash = getScriptHash(blkTx.getTransaction().getOutputs().getFirst());
-                                    String status = getScriptHashStatus(List.of(new ScriptHashTx(0, blkTx.getHashAsString(), blkTx.getFee())));
-                                    broadcastRecent.put(scriptHash, status);
-                                    electrumServer.broadcastTransaction(blkTx.getTransaction());
+                            com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                            try {
+                                if(!recentTransactions.isEmpty()) {
+                                    Random random = new Random();
+                                    if(random.nextBoolean()) {
+                                        BlockTransaction blkTx = recentTransactions.get(random.nextInt(recentTransactions.size()));
+                                        String scriptHash = getScriptHash(blkTx.getTransaction().getOutputs().getFirst());
+                                        String status = getScriptHashStatus(List.of(new ScriptHashTx(0, blkTx.getHashAsString(), blkTx.getFee())));
+                                        broadcastRecent.put(scriptHash, status);
+                                        electrumServer.broadcastTransaction(blkTx.getTransaction());
+                                    }
                                 }
+                                return null;
+                            } finally {
+                                com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                             }
-                            return null;
                         }
                     };
                 }
@@ -2167,49 +2369,59 @@ public class ElectrumServer {
                 protected Optional<List<Wallet>> call() throws ServerException {
                     ElectrumServer electrumServer = new ElectrumServer();
 
+                    if(!wallets.isEmpty() && !ElectrumServer.isConnectedTo(wallets.getFirst().getCoin())) {
+                        throw new ServerException("The connected server is for a different coin than the wallet being discovered");
+                    }
+
                     List<Wallet> discoveredWallets = new ArrayList<>();
                     for(int i = 0; i < wallets.size(); i++) {
                         Wallet wallet = wallets.get(i);
-                        updateProgress(i, wallets.size() + StandardAccount.DISCOVERY_ACCOUNTS.size());
-                        Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = new TreeMap<>();
-                        electrumServer.getReferences(wallet, wallet.getNode(KeyPurpose.RECEIVE).getChildren(), nodeTransactionMap, 0);
-                        boolean found = nodeTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty());
+                        //Each candidate wallet carries its own coin - scope derivation per wallet (see Coin.beginScope).
+                        com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
+                        try {
+                            updateProgress(i, wallets.size() + StandardAccount.DISCOVERY_ACCOUNTS.size());
+                            Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = new TreeMap<>();
+                            electrumServer.getReferences(wallet, wallet.getNode(KeyPurpose.RECEIVE).getChildren(), nodeTransactionMap, 0);
+                            boolean found = nodeTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty());
 
-                        for(Iterator<Wallet> iterator = wallet.getChildWallets().iterator(); iterator.hasNext(); ) {
-                            Wallet childWallet = iterator.next();
-                            Map<WalletNode, Set<BlockTransactionHash>> childTransactionMap = new TreeMap<>();
-                            electrumServer.getReferences(childWallet, childWallet.getNode(KeyPurpose.RECEIVE).getChildren(), childTransactionMap, 0);
-                            if(childTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty())) {
-                                found = true;
-                            } else {
-                                iterator.remove();
-                            }
-                        }
-
-                        if(found) {
-                            Wallet masterWalletCopy = wallet.copy();
-                            List<StandardAccount> searchAccounts = getStandardAccounts(wallet);
-                            Set<StandardAccount> foundAccounts = new LinkedHashSet<>();
-                            for(int j = 0; j < searchAccounts.size(); j++) {
-                                StandardAccount standardAccount = searchAccounts.get(j);
-                                Wallet childWallet = masterWalletCopy.addChildWallet(standardAccount);
+                            for(Iterator<Wallet> iterator = wallet.getChildWallets().iterator(); iterator.hasNext(); ) {
+                                Wallet childWallet = iterator.next();
                                 Map<WalletNode, Set<BlockTransactionHash>> childTransactionMap = new TreeMap<>();
                                 electrumServer.getReferences(childWallet, childWallet.getNode(KeyPurpose.RECEIVE).getChildren(), childTransactionMap, 0);
                                 if(childTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty())) {
-                                    if(StandardAccount.isWhirlpoolAccount(standardAccount)) {
-                                        foundAccounts.addAll(StandardAccount.WHIRLPOOL_ACCOUNTS);
-                                    } else {
-                                        foundAccounts.add(standardAccount);
-                                    }
+                                    found = true;
+                                } else {
+                                    iterator.remove();
                                 }
-                                updateProgress(i + j, wallets.size() + StandardAccount.DISCOVERY_ACCOUNTS.size());
                             }
 
-                            for(StandardAccount standardAccount : foundAccounts) {
-                                wallet.addChildWallet(standardAccount);
-                            }
+                            if(found) {
+                                Wallet masterWalletCopy = wallet.copy();
+                                List<StandardAccount> searchAccounts = getStandardAccounts(wallet);
+                                Set<StandardAccount> foundAccounts = new LinkedHashSet<>();
+                                for(int j = 0; j < searchAccounts.size(); j++) {
+                                    StandardAccount standardAccount = searchAccounts.get(j);
+                                    Wallet childWallet = masterWalletCopy.addChildWallet(standardAccount);
+                                    Map<WalletNode, Set<BlockTransactionHash>> childTransactionMap = new TreeMap<>();
+                                    electrumServer.getReferences(childWallet, childWallet.getNode(KeyPurpose.RECEIVE).getChildren(), childTransactionMap, 0);
+                                    if(childTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty())) {
+                                        if(StandardAccount.isWhirlpoolAccount(standardAccount)) {
+                                            foundAccounts.addAll(StandardAccount.WHIRLPOOL_ACCOUNTS);
+                                        } else {
+                                            foundAccounts.add(standardAccount);
+                                        }
+                                    }
+                                    updateProgress(i + j, wallets.size() + StandardAccount.DISCOVERY_ACCOUNTS.size());
+                                }
 
-                            discoveredWallets.add(wallet);
+                                for(StandardAccount standardAccount : foundAccounts) {
+                                    wallet.addChildWallet(standardAccount);
+                                }
+
+                                discoveredWallets.add(wallet);
+                            }
+                        } finally {
+                            com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                         }
                     }
 
@@ -2255,24 +2467,34 @@ public class ElectrumServer {
         protected Task<List<StandardAccount>> createTask() {
             return new Task<>() {
                 protected List<StandardAccount> call() throws ServerException {
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    List<StandardAccount> discoveredAccounts = new ArrayList<>();
-
-                    for(StandardAccount standardAccount : standardAccounts) {
-                        Wallet wallet = masterWalletCopy.addChildWallet(standardAccount);
-                        if(importedKeystores.containsKey(standardAccount)) {
-                            wallet.getKeystores().clear();
-                            wallet.getKeystores().add(importedKeystores.get(standardAccount));
+                    //Discovery derives this wallet's addresses, so scope crypto to its coin (see Coin.beginScope).
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(masterWalletCopy.getCoin());
+                    try {
+                        if(!ElectrumServer.isConnectedTo(masterWalletCopy.getCoin())) {
+                            throw new ServerException("The connected server is for a different coin than the wallet being discovered");
                         }
 
-                        Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = new TreeMap<>();
-                        electrumServer.getReferences(wallet, wallet.getNode(KeyPurpose.RECEIVE).getChildren(), nodeTransactionMap, 0);
-                        if(nodeTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty())) {
-                            discoveredAccounts.add(standardAccount);
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        List<StandardAccount> discoveredAccounts = new ArrayList<>();
+
+                        for(StandardAccount standardAccount : standardAccounts) {
+                            Wallet wallet = masterWalletCopy.addChildWallet(standardAccount);
+                            if(importedKeystores.containsKey(standardAccount)) {
+                                wallet.getKeystores().clear();
+                                wallet.getKeystores().add(importedKeystores.get(standardAccount));
+                            }
+
+                            Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = new TreeMap<>();
+                            electrumServer.getReferences(wallet, wallet.getNode(KeyPurpose.RECEIVE).getChildren(), nodeTransactionMap, 0);
+                            if(nodeTransactionMap.values().stream().anyMatch(blockTransactionHashes -> !blockTransactionHashes.isEmpty())) {
+                                discoveredAccounts.add(standardAccount);
+                            }
                         }
+
+                        return discoveredAccounts;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                     }
-
-                    return discoveredAccounts;
                 }
             };
         }
@@ -2281,23 +2503,36 @@ public class ElectrumServer {
     public static class AddressUtxosService extends Service<List<TransactionOutput>> {
         private final Address address;
         private final Date since;
+        private final com.sparrowwallet.drongo.Coin coin;
 
         public AddressUtxosService(Address address, Date since) {
             this.address = address;
             this.since = since;
+            //No wallet here (private key sweep) - capture the coin the address was parsed under, as Address
+            //holds only hash bytes and re-resolves its version byte from the active coin when stringified.
+            this.coin = com.sparrowwallet.drongo.Coin.get();
         }
 
         @Override
         protected Task<List<TransactionOutput>> createTask() {
             return new Task<>() {
                 protected List<TransactionOutput> call() throws ServerException {
-                    if(ElectrumServer.cormorant != null) {
-                        updateProgress(-1, 0);
-                        ElectrumServer.cormorant.checkAddressImport(address, since);
-                    }
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(coin);
+                    try {
+                        if(!ElectrumServer.isConnectedTo(coin)) {
+                            throw new ServerException("The connected server is for a different coin than the address being swept");
+                        }
 
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    return electrumServer.getUtxos(address);
+                        if(ElectrumServer.cormorant != null) {
+                            updateProgress(-1, 0);
+                            ElectrumServer.cormorant.checkAddressImport(address, since);
+                        }
+
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        return electrumServer.getUtxos(address);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -2316,66 +2551,77 @@ public class ElectrumServer {
         protected Task<List<Wallet>> createTask() {
             return new Task<>() {
                 protected List<Wallet> call() throws ServerException {
-                    if(ElectrumServer.cormorant != null) {
-                        if(!ElectrumServer.cormorant.checkWalletImport(wallet)) {
+                    //Scope crypto to this wallet's coin - notification wallet derivation and script hashes (see Coin.beginScope).
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
+                    try {
+                        //Never sync a wallet against another chain's server (the connection follows the focused coin)
+                        if(!ElectrumServer.isConnectedTo(wallet.getCoin())) {
                             return Collections.emptyList();
                         }
-                    }
 
-                    Wallet notificationWallet = wallet.getNotificationWallet();
-                    WalletNode notificationNode = notificationWallet.getNode(KeyPurpose.NOTIFICATION);
-
-                    for(Wallet childWallet : wallet.getChildWallets()) {
-                        if(childWallet.isBip47()) {
-                            WalletNode savedNotificationNode = childWallet.getNode(KeyPurpose.NOTIFICATION);
-                            notificationNode.getTransactionOutputs().addAll(savedNotificationNode.getTransactionOutputs());
-                            notificationWallet.updateTransactions(childWallet.getTransactions());
-                        }
-                    }
-
-                    addCalculatedScriptHashes(notificationNode);
-
-                    ElectrumServer electrumServer = new ElectrumServer();
-                    Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = electrumServer.getHistory(notificationWallet, List.of(notificationNode));
-                    electrumServer.getReferencedTransactions(notificationWallet, nodeTransactionMap);
-                    electrumServer.calculateNodeHistory(notificationWallet, nodeTransactionMap);
-
-                    List<Wallet> addedWallets = new ArrayList<>();
-                    if(!nodeTransactionMap.isEmpty()) {
-                        Set<PaymentCode> paymentCodes = new LinkedHashSet<>();
-                        for(BlockTransactionHashIndex output : notificationNode.getTransactionOutputs()) {
-                            BlockTransaction blkTx = notificationWallet.getTransactions().get(output.getHash());
-                            try {
-                                PaymentCode paymentCode = PaymentCode.getPaymentCode(blkTx.getTransaction(), notificationWallet.getKeystores().get(0));
-                                if(paymentCodes.add(paymentCode)) {
-                                    if(getExistingChildWallet(paymentCode) == null) {
-                                        PayNym payNym = Config.get().isUsePayNym() ? getPayNym(paymentCode) : null;
-                                        List<ScriptType> scriptTypes = payNym == null || wallet.getScriptType() != ScriptType.P2PKH ? PayNym.getSegwitScriptTypes() : payNym.getScriptTypes();
-                                        for(ScriptType childScriptType : scriptTypes) {
-                                            String label = (payNym == null ? paymentCode.toAbbreviatedString() : payNym.nymName()) + " " + childScriptType.getName();
-                                            Wallet addedWallet = wallet.addChildWallet(paymentCode, childScriptType, output, blkTx, label);
-                                            //Check this is a valid payment code, will throw IllegalArgumentException if not
-                                            try {
-                                                WalletNode receiveNode = new WalletNode(addedWallet, KeyPurpose.RECEIVE, 0);
-                                                receiveNode.getPubKey();
-                                            } catch(IllegalArgumentException e) {
-                                                wallet.getChildWallets().remove(addedWallet);
-                                                throw e;
-                                            }
-
-                                            addedWallets.add(addedWallet);
-                                        }
-                                    }
-                                }
-                            } catch(InvalidPaymentCodeException e) {
-                                log.info("Could not determine payment code for notification transaction", e);
-                            } catch(IllegalArgumentException e) {
-                                log.info("Invalid notification transaction creates illegal payment code", e);
+                        if(ElectrumServer.cormorant != null) {
+                            if(!ElectrumServer.cormorant.checkWalletImport(wallet)) {
+                                return Collections.emptyList();
                             }
                         }
-                    }
 
-                    return addedWallets;
+                        Wallet notificationWallet = wallet.getNotificationWallet();
+                        WalletNode notificationNode = notificationWallet.getNode(KeyPurpose.NOTIFICATION);
+
+                        for(Wallet childWallet : wallet.getChildWallets()) {
+                            if(childWallet.isBip47()) {
+                                WalletNode savedNotificationNode = childWallet.getNode(KeyPurpose.NOTIFICATION);
+                                notificationNode.getTransactionOutputs().addAll(savedNotificationNode.getTransactionOutputs());
+                                notificationWallet.updateTransactions(childWallet.getTransactions());
+                            }
+                        }
+
+                        addCalculatedScriptHashes(notificationNode);
+
+                        ElectrumServer electrumServer = new ElectrumServer();
+                        Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = electrumServer.getHistory(notificationWallet, List.of(notificationNode));
+                        electrumServer.getReferencedTransactions(notificationWallet, nodeTransactionMap);
+                        electrumServer.calculateNodeHistory(notificationWallet, nodeTransactionMap);
+
+                        List<Wallet> addedWallets = new ArrayList<>();
+                        if(!nodeTransactionMap.isEmpty()) {
+                            Set<PaymentCode> paymentCodes = new LinkedHashSet<>();
+                            for(BlockTransactionHashIndex output : notificationNode.getTransactionOutputs()) {
+                                BlockTransaction blkTx = notificationWallet.getTransactions().get(output.getHash());
+                                try {
+                                    PaymentCode paymentCode = PaymentCode.getPaymentCode(blkTx.getTransaction(), notificationWallet.getKeystores().get(0));
+                                    if(paymentCodes.add(paymentCode)) {
+                                        if(getExistingChildWallet(paymentCode) == null) {
+                                            PayNym payNym = Config.get().isUsePayNym() ? getPayNym(paymentCode) : null;
+                                            List<ScriptType> scriptTypes = payNym == null || wallet.getScriptType() != ScriptType.P2PKH ? PayNym.getSegwitScriptTypes() : payNym.getScriptTypes();
+                                            for(ScriptType childScriptType : scriptTypes) {
+                                                String label = (payNym == null ? paymentCode.toAbbreviatedString() : payNym.nymName()) + " " + childScriptType.getName();
+                                                Wallet addedWallet = wallet.addChildWallet(paymentCode, childScriptType, output, blkTx, label);
+                                                //Check this is a valid payment code, will throw IllegalArgumentException if not
+                                                try {
+                                                    WalletNode receiveNode = new WalletNode(addedWallet, KeyPurpose.RECEIVE, 0);
+                                                    receiveNode.getPubKey();
+                                                } catch(IllegalArgumentException e) {
+                                                    wallet.getChildWallets().remove(addedWallet);
+                                                    throw e;
+                                                }
+
+                                                addedWallets.add(addedWallet);
+                                            }
+                                        }
+                                    }
+                                } catch(InvalidPaymentCodeException e) {
+                                    log.info("Could not determine payment code for notification transaction", e);
+                                } catch(IllegalArgumentException e) {
+                                    log.info("Invalid notification transaction creates illegal payment code", e);
+                                }
+                            }
+                        }
+
+                        return addedWallets;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }

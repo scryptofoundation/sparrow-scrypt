@@ -408,10 +408,10 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
             fee = (long)Math.ceil(noFeeTransaction.getVirtualSize() * feeRate) + (feeRate > 0d ? 1 : 0);
 
             if(total - fee <= dustThreshold) {
-                AppServices.showErrorDialog("Insufficient funds", "The unspent outputs for this private key contain insufficient funds to spend (" + total + " lits).");
+                AppServices.showErrorDialog("Insufficient funds", "The unspent outputs for this private key contain insufficient funds to spend (" + total + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + ").");
                 return;
             } else {
-                Optional<ButtonType> optType = AppServices.showWarningDialog("Insufficient funds", "The unspent outputs for this private key contain insufficient funds (" + total + " lits) for a transaction at this fee rate." +
+                Optional<ButtonType> optType = AppServices.showWarningDialog("Insufficient funds", "The unspent outputs for this private key contain insufficient funds (" + total + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + ") for a transaction at this fee rate." +
                         "\n\nContinue with a minimum fee rate transaction?", ButtonType.YES, ButtonType.NO);
                 if(optType.isPresent() && optType.get() == ButtonType.NO) {
                     return;
@@ -476,7 +476,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
 
     private void updateFeeRate() {
         UnitFormat format = Config.get().getUnitFormat() == null ? UnitFormat.DOT : Config.get().getUnitFormat();
-        feeRate.setText(format.getCurrencyFormat().format(feeRange.getFeeRate()) + " lits/vB");
+        feeRate.setText(format.getCurrencyFormat().format(feeRange.getFeeRate()) + " " + com.sparrowwallet.drongo.BitcoinUnit.SATOSHIS.getLabel() + "/vB");
     }
 
     @Subscribe

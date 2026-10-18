@@ -10,10 +10,13 @@ import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
 import com.sparrowwallet.drongo.BitcoinUnit;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.address.InvalidAddressException;
 import com.sparrowwallet.drongo.address.P2PKHAddress;
+import com.sparrowwallet.drongo.address.P2SHAddress;
 import com.sparrowwallet.drongo.bip47.InvalidPaymentCodeException;
 import com.sparrowwallet.drongo.bip47.PaymentCode;
 import com.sparrowwallet.drongo.crypto.ECKey;
@@ -618,7 +621,14 @@ public class PaymentController extends WalletFormController implements Initializ
         this.validationSupport = validationSupport;
 
         validationSupport.registerValidator(address, Validator.combine(
-                (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Invalid Address", !newValue.isEmpty() && !isValidRecipientAddress())
+                (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Invalid Address", !newValue.isEmpty() && !isValidRecipientAddress()),
+                (Control c, String newValue) -> {
+                    List<Coin> sharing = getCoinsSharingRecipientAddress();
+                    return ValidationResult.fromWarningIf( c, "Also a valid "
+                                    + sharing.stream().map(Coin::toDisplayString).collect(Collectors.joining(" and "))
+                                    + " address - check this is meant for " + getWalletForm().getWallet().getCoin().toDisplayString(),
+                            !sharing.isEmpty());
+                }
         ));
         validationSupport.registerValidator(label, Validator.combine(
                 Validator.createEmptyValidator("Label is required")
@@ -627,6 +637,37 @@ public class PaymentController extends WalletFormController implements Initializ
                 (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Insufficient Inputs", getRecipientValueSats() != null && sendController.isInsufficientInputs()),
                 (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Insufficient Value", getRecipientValueSats() != null && getRecipientValueSats() < getRecipientDustThreshold())
         ));
+    }
+
+    /**
+     * The other chains this recipient address is also a well-formed address on.
+     *
+     * These chains were forked from one another and several kept the version bytes they inherited, so one
+     * address string can be valid on more than one of them with nothing in it saying which was meant -
+     * Dogecoin and Dingocoin share their whole address identity. Parsing cannot resolve that, so the only
+     * authority is the sending wallet's own coin and the user is warned rather than reassured by a clean
+     * parse. Empty whenever the address pins its chain down, which is the normal case.
+     */
+    private List<Coin> getCoinsSharingRecipientAddress() {
+        try {
+            Address recipientAddress = getRecipientAddress();
+            Coin coin = getWalletForm().getWallet().getCoin();
+            Coin.ChainParams params = coin.params(Network.get());
+
+            //Only base58 addresses collide: the version byte is the whole of what they carry about their
+            //chain. The segwit and MWEB types are namespaced by an HRP, which none of these chains define.
+            if(recipientAddress instanceof P2PKHAddress) {
+                return Coin.coinsSharingAddressEncoding(coin, params.p2pkhAddressHeader(), Network.get());
+            }
+            if(recipientAddress instanceof P2SHAddress) {
+                return Coin.coinsSharingAddressEncoding(coin, params.p2shAddressHeader(), Network.get());
+            }
+
+            return List.of();
+        } catch(Exception e) {
+            //An address that will not parse is already reported by the Invalid Address validator above.
+            return List.of();
+        }
     }
 
     private boolean isValidRecipientAddress() {
@@ -1109,6 +1150,10 @@ public class PaymentController extends WalletFormController implements Initializ
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
+        //Only this wallet's own coin's rate applies to its amounts
+        if(event.getCoin() != sendController.getWalletForm().getWallet().getCoin()) {
+            return;
+        }
         CurrencyRate currencyRate = event.getCurrencyRate();
         if(currencyRate != null && currencyRate.isAvailable() && Config.get().getExchangeSource() != ExchangeSource.NONE) {
             fiatAmount.setDisable(false);

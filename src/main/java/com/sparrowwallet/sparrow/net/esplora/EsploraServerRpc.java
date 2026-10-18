@@ -41,13 +41,19 @@ import java.util.TreeMap;
 public class EsploraServerRpc implements ElectrumServerRpc {
     private static final Logger log = LoggerFactory.getLogger(EsploraServerRpc.class);
 
-    //Litecoin Core's default minimum relay fee, expressed in BTC/kB as the Electrum protocol reports it.
-    private static final double DEFAULT_MIN_RELAY_FEE_BTC_KB = 0.00001;
-
     private final EsploraClient client;
+    //The coin this connection was opened for. Captured here rather than read per call: the fee refresh runs
+    //later on the polling thread, and a coin change tears this connection down and builds a new adapter.
+    private final com.sparrowwallet.drongo.Coin coin;
 
     public EsploraServerRpc(String baseUrl) {
         this.client = new EsploraClient(baseUrl);
+        this.coin = com.sparrowwallet.drongo.Coin.get();
+    }
+
+    /** sat/vB as the chain measures it, converted to the BTC/kB the Electrum protocol reports. */
+    private static double toBtcPerKb(double satPerVb) {
+        return satPerVb * 1000.0 / Transaction.SATOSHIS_PER_BITCOIN;
     }
 
     @Override
@@ -243,12 +249,14 @@ public class EsploraServerRpc implements ElectrumServerRpc {
     public Map<Integer, Double> getFeeEstimates(Transport transport, List<Integer> targetBlocks) {
         //Esplora reports sat/vB; the Electrum protocol (and Sparrow) expect BTC/kB.
         Map<Integer, Double> satPerVb = client.getFeeEstimates();
+        //Floored at the chain's recommended rate, which is also its miners' blockmintxfee: these instances
+        //report Bitcoin-scale rates (peppool.space advertises 1 sat/vB against a chain whose own mempool
+        //runs at ~1000), and a transaction built under blockmintxfee relays but is never mined.
+        double minimum = coin.getRecommendedFeeRate();
         Map<Integer, Double> btcPerKb = new TreeMap<>();
         for(Integer target : targetBlocks) {
             Double rate = nearestEstimate(satPerVb, target);
-            if(rate != null) {
-                btcPerKb.put(target, rate * 1000.0 / Transaction.SATOSHIS_PER_BITCOIN);
-            }
+            btcPerKb.put(target, toBtcPerKb(rate == null ? minimum : Math.max(rate, minimum)));
         }
         return btcPerKb;
     }
@@ -276,7 +284,9 @@ public class EsploraServerRpc implements ElectrumServerRpc {
 
     @Override
     public Double getMinimumRelayFee(Transport transport) {
-        return DEFAULT_MIN_RELAY_FEE_BTC_KB;
+        //Esplora has no relayfee route, so the chain's own DEFAULT_MIN_RELAY_TX_FEE stands in. This is a
+        //hundred times Bitcoin's floor on the Dogecoin-derived chains.
+        return toBtcPerKb(coin.getMinRelayFeeRate());
     }
 
     @Override

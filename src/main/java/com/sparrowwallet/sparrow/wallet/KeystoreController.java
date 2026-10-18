@@ -297,7 +297,13 @@ public class KeystoreController extends WalletFormController implements Initiali
                 Validator.createEmptyValidator("Derivation is required"),
                 (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Derivation is invalid", !KeyDerivation.isValid(newValue)),
                 (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Derivation matches another script type", walletForm.getWallet().derivationMatchesAnotherScriptType(newValue)),
-                (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Derivation matches another network", walletForm.getWallet().derivationMatchesAnotherNetwork(newValue))
+                (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Derivation matches another network", walletForm.getWallet().derivationMatchesAnotherNetwork(newValue)),
+                //Luckycoin and Junkcoin derive at Bitcoin's coin type 0, matching their shipping wallets. A
+                //seed reused from a Bitcoin wallet therefore puts the identical keys on both chains, and the
+                //xpub here is a Bitcoin xpub. Correct, but not what seed reuse is usually assumed to mean.
+                (Control c, String newValue) -> ValidationResult.fromWarningIf( c,
+                        "Derives at Bitcoin's m/44'/0' - this seed controls the same keys on Bitcoin",
+                        walletForm.getWallet().getCoin().sharesBitcoinDerivation())
         ));
 
         validationSupport.registerValidator(fingerprint, Validator.combine(

@@ -273,10 +273,17 @@ public class Hwi {
 
         @Override
         protected Task<List<Device>> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected List<Device> call() throws ImportException {
-                    Hwi hwi = new Hwi();
-                    return hwi.enumerate(passphrase);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        return hwi.enumerate(passphrase);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -291,14 +298,21 @@ public class Hwi {
 
         @Override
         protected Task<List<Device>> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected List<Device> call() throws ImportException {
-                    if(!isPromptActive) {
-                        Hwi hwi = new Hwi();
-                        return hwi.enumerate(passphrase);
-                    }
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        if(!isPromptActive) {
+                            Hwi hwi = new Hwi();
+                            return hwi.enumerate(passphrase);
+                        }
 
-                    return null;
+                        return null;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -313,10 +327,17 @@ public class Hwi {
 
         @Override
         protected Task<Boolean> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected Boolean call() throws ImportException {
-                    Hwi hwi = new Hwi();
-                    return hwi.promptPin(device);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        return hwi.promptPin(device);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -333,10 +354,17 @@ public class Hwi {
 
         @Override
         protected Task<Boolean> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected Boolean call() throws ImportException {
-                    Hwi hwi = new Hwi();
-                    return hwi.sendPin(device, pin);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        return hwi.sendPin(device, pin);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -351,10 +379,17 @@ public class Hwi {
 
         @Override
         protected Task<Boolean> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected Boolean call() throws ImportException {
-                    Hwi hwi = new Hwi();
-                    return hwi.togglePassphrase(device);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        return hwi.togglePassphrase(device);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -386,12 +421,19 @@ public class Hwi {
 
         @Override
         protected Task<String> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected String call() throws DisplayAddressException {
-                    Hwi hwi = new Hwi();
-                    String address = hwi.displayAddress(device, passphrase, scriptType, addressDescriptor, walletDescriptor, walletName, walletRegistration);
-                    newDeviceRegistrations.addAll(hwi.newDeviceRegistrations);
-                    return address;
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        String address = hwi.displayAddress(device, passphrase, scriptType, addressDescriptor, walletDescriptor, walletName, walletRegistration);
+                        newDeviceRegistrations.addAll(hwi.newDeviceRegistrations);
+                        return address;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -412,10 +454,17 @@ public class Hwi {
 
         @Override
         protected Task<String> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected String call() throws SignMessageException {
-                    Hwi hwi = new Hwi();
-                    return hwi.signMessage(device, passphrase, message, derivationPath);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        return hwi.signMessage(device, passphrase, message, derivationPath);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -434,10 +483,17 @@ public class Hwi {
 
         @Override
         protected Task<String> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected String call() throws ImportException {
-                    Hwi hwi = new Hwi();
-                    return hwi.getXpub(device, passphrase, derivationPath);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        return hwi.getXpub(device, passphrase, derivationPath);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -456,13 +512,20 @@ public class Hwi {
 
         @Override
         protected Task<Map<WalletType, String>> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected Map<WalletType, String> call() throws ImportException {
-                    Hwi hwi = new Hwi();
-                    updateProgress(0, accountDerivationPaths.size());
-                    ObservableMap<WalletType, String> accountXpubs = FXCollections.observableMap(new LinkedHashMap<>());
-                    accountXpubs.addListener((MapChangeListener<? super WalletType, ? super String>) _ -> updateProgress(accountXpubs.size(), accountDerivationPaths.size()));
-                    return hwi.getXpubs(device, passphrase, accountDerivationPaths, accountXpubs);
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        updateProgress(0, accountDerivationPaths.size());
+                        ObservableMap<WalletType, String> accountXpubs = FXCollections.observableMap(new LinkedHashMap<>());
+                        accountXpubs.addListener((MapChangeListener<? super WalletType, ? super String>) _ -> updateProgress(accountXpubs.size(), accountDerivationPaths.size()));
+                        return hwi.getXpubs(device, passphrase, accountDerivationPaths, accountXpubs);
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }
@@ -492,12 +555,19 @@ public class Hwi {
 
         @Override
         protected Task<PSBT> createTask() {
+            //createTask runs on the FX thread: capture the focused wallet's coin for the device worker (strict scoping)
+            com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
             return new Task<>() {
                 protected PSBT call() throws SignTransactionException {
-                    Hwi hwi = new Hwi();
-                    PSBT signed = hwi.signPSBT(device, passphrase, psbt, walletDescriptor, walletName, walletRegistration);
-                    newDeviceRegistrations.addAll(hwi.newDeviceRegistrations);
-                    return signed;
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
+                    try {
+                        Hwi hwi = new Hwi();
+                        PSBT signed = hwi.signPSBT(device, passphrase, psbt, walletDescriptor, walletName, walletRegistration);
+                        newDeviceRegistrations.addAll(hwi.newDeviceRegistrations);
+                        return signed;
+                    } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                    }
                 }
             };
         }

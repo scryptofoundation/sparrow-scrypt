@@ -81,6 +81,7 @@ public class SettingsController implements Initializable {
         try {
             FXMLLoader settingsDetailLoader = new FXMLLoader(AppServices.class.getResource("settings/" + fxmlName + ".fxml"));
             Node preferenceGroupNode = settingsDetailLoader.load();
+            com.sparrowwallet.sparrow.control.BrandingHelper.apply(preferenceGroupNode);
             SettingsDetailController controller = settingsDetailLoader.getController();
             controller.setMasterController(this);
             controller.initializeView(config);

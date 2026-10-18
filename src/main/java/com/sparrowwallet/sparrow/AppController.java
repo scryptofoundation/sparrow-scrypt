@@ -276,7 +276,7 @@ public class AppController implements Initializable {
             closeTab.setDisable(tabs.getTabs().isEmpty());
             if(tabs.getTabs().isEmpty()) {
                 Stage tabStage = (Stage) tabs.getScene().getWindow();
-                tabStage.setTitle("Sparrow-LTC");
+                tabStage.setTitle(SparrowWallet.APP_NAME);
                 saveTransaction.setVisible(true);
                 saveTransaction.setDisable(true);
                 exportWallet.setDisable(true);
@@ -561,6 +561,7 @@ public class AppController implements Initializable {
             FXMLLoader loader = new FXMLLoader(AppController.class.getResource("about.fxml"));
             StackPane root = loader.load();
             AboutController controller = loader.getController();
+            com.sparrowwallet.sparrow.control.BrandingHelper.apply(root);
 
             if(OsType.getCurrent() == OsType.WINDOWS) {
                 root.setBorder(new Border(new BorderStroke(Color.DARKGRAY, BorderStrokeStyle.SOLID, CornerRadii.EMPTY, BorderWidths.DEFAULT)));
@@ -1100,7 +1101,7 @@ public class AppController implements Initializable {
 
         Stage window = new Stage();
         DirectoryChooser directoryChooser = new DirectoryChooser();
-        directoryChooser.setTitle("Choose Sparrow-LTC Home Folder");
+        directoryChooser.setTitle("Choose " + SparrowWallet.APP_NAME + " Home Folder");
         directoryChooser.setInitialDirectory(initialDir == null || !initialDir.exists() ? Storage.getSparrowHome() : initialDir);
         File newHome = directoryChooser.showDialog(window);
 
@@ -1188,7 +1189,10 @@ public class AppController implements Initializable {
             WalletNameDialog.NameAndBirthDate nameAndBirthDate = optNameAndBirthDate.get();
             File walletFile = Storage.getWalletFile(nameAndBirthDate.getName());
             Storage storage = new Storage(walletFile);
-            Wallet wallet = new Wallet(nameAndBirthDate.getName(), PolicyType.SINGLE, ScriptType.P2WPKH, nameAndBirthDate.getBirthDate());
+            //The segwit default is invalid on chains without segwit - use the legacy equivalent there
+            ScriptType scriptType = nameAndBirthDate.getCoin().supports(ScriptType.P2WPKH) ? ScriptType.P2WPKH : ScriptType.P2PKH;
+            Wallet wallet = new Wallet(nameAndBirthDate.getName(), PolicyType.SINGLE, scriptType, nameAndBirthDate.getBirthDate());
+            wallet.setCoin(nameAndBirthDate.getCoin());
             addWalletTabOrWindow(storage, wallet, false);
         }
     }
@@ -1395,7 +1399,16 @@ public class AppController implements Initializable {
             return;
         }
 
+        //An importer that knows its coin (e.g. Cake Wallet) has set it. Otherwise the keys were derived under the
+        //coin active right now - the focused tab's - so record that, rather than leaving the wallet to follow
+        //whatever is focused later. The name dialog shows it locked: choosing another coin there would only
+        //relabel keys that were derived for this one.
+        if(wallet.coin() == null) {
+            wallet.setCoin(com.sparrowwallet.drongo.Coin.get());
+        }
+
         WalletNameDialog nameDlg = new WalletNameDialog(wallet.getName(), true, wallet.getBirthDate());
+        nameDlg.setFixedCoin(wallet.getCoin());
         nameDlg.initOwner(rootStack.getScene().getWindow());
         Optional<WalletNameDialog.NameAndBirthDate> optNameAndBirthDate = nameDlg.showAndWait();
         if(optNameAndBirthDate.isPresent()) {
@@ -1446,6 +1459,10 @@ public class AppController implements Initializable {
         Optional<SecureString> password = dlg.showAndWait();
         if(password.isPresent()) {
             if(password.get().length() == 0) {
+                //Saving and restoring public keys derive addresses, so scope them to the imported wallet's coin.
+                //Only these synchronous sections: no dialog may open inside a scope on the FX thread, since its
+                //nested event loop would run unrelated UI work under this coin.
+                com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
                 try {
                     storage.setEncryptionPubKey(Storage.NO_PASSWORD_KEY);
                     storage.saveWallet(wallet);
@@ -1460,6 +1477,8 @@ public class AppController implements Initializable {
                     Platform.runLater(() -> selectTab(wallet));
                 } catch(IOException | StorageException | MnemonicException e) {
                     log.error("Error saving imported wallet", e);
+                } finally {
+                    com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                 }
             } else {
                 keyDerivationService = new Storage.KeyDerivationService(storage, password.get());
@@ -1468,6 +1487,7 @@ public class AppController implements Initializable {
                     ECKey encryptionFullKey = keyDerivationService.getValue();
                     Key key = null;
 
+                    com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
                     try {
                         ECKey encryptionPubKey = ECKey.fromPublicOnly(encryptionFullKey);
                         key = new Key(encryptionFullKey.getPrivKeyBytes(), storage.getKeyDeriver().getSalt(), EncryptionType.Deriver.ARGON2);
@@ -1489,6 +1509,7 @@ public class AppController implements Initializable {
                     } catch(IOException | StorageException | MnemonicException e) {
                         log.error("Error saving imported wallet", e);
                     } finally {
+                        com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                         encryptionFullKey.clear();
                         if(key != null) {
                             key.clear();
@@ -1788,6 +1809,17 @@ public class AppController implements Initializable {
     }
 
     public void addWalletTab(Storage storage, Wallet wallet) {
+        //Build the tab UI under this wallet's coin so script types and addresses resolve on its own chain,
+        //before tab selection makes it the active coin (see Coin.beginScope).
+        com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(wallet.getCoin());
+        try {
+            doAddWalletTab(storage, wallet);
+        } finally {
+            com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+        }
+    }
+
+    private void doAddWalletTab(Storage storage, Wallet wallet) {
         if(wallet.isMasterWallet()) {
             //A separately-seeded MWEB (private) wallet linked to an already-open public wallet is shown as a sub-tab
             //under that public wallet (in a distinct colour) rather than as its own top-level tab
@@ -2488,6 +2520,30 @@ public class AppController implements Initializable {
                 EventManager.get().post(new WalletLockEvent(walletTabData.getWallet()));
             });
             contextMenu.getItems().addAll(lock);
+
+            //Escape hatch for wallets whose coin cannot be inferred (flavor-era wallets copied out of
+            //their home dir, and the deliberate Dogecoin/Dingocoin identity collision)
+            MenuItem setCoin = new MenuItem("Set Wallet Coin...");
+            setCoin.setOnAction(event -> {
+                Wallet masterWallet = walletTabData.getWalletForm().getMasterWallet();
+                ChoiceDialog<com.sparrowwallet.drongo.Coin> coinDialog = new ChoiceDialog<>(masterWallet.getCoin(), com.sparrowwallet.drongo.Coin.values());
+                coinDialog.setTitle("Set Wallet Coin");
+                coinDialog.setHeaderText("Set the coin for " + masterWallet.getName());
+                coinDialog.setContentText("Coin:");
+                coinDialog.initOwner(tabs.getScene().getWindow());
+                Optional<com.sparrowwallet.drongo.Coin> optCoin = coinDialog.showAndWait();
+                if(optCoin.isPresent() && optCoin.get() != masterWallet.getCoin()) {
+                    masterWallet.setCoin(optCoin.get());
+                    try {
+                        walletTabData.getWalletForm().getStorage().saveWallet(masterWallet);
+                        AppServices.showWarningDialog("Reopen wallet to apply", "The wallet coin has been set to " + optCoin.get().toDisplayString() + " and saved.\n\nClose and reopen the wallet to apply the change.");
+                    } catch(Exception e) {
+                        log.error("Error saving wallet coin", e);
+                        showErrorDialog("Error Saving Wallet", e.getMessage());
+                    }
+                }
+            });
+            contextMenu.getItems().addAll(setCoin);
         }
 
         MenuItem moveRight = new MenuItem("Move Right");
@@ -2939,12 +2995,25 @@ public class AppController implements Initializable {
     }
 
     @Subscribe
+    public void activeCoinChanged(ActiveCoinChangedEvent event) {
+        //Server config resolves per coin - refresh the toggle to the newly focused coin's settings
+        configureSwitchServer();
+        setServerType(Config.get().getServerType());
+        serverToggle.setDisable(!Config.get().hasServer());
+    }
+
+    @Subscribe
     public void tabSelected(TabSelectedEvent event) {
         if(tabs.getTabs().contains(event.getTab())) {
             String tabName = event.getTabName();
             if(tabs.getScene() != null) {
                 Stage tabStage = (Stage)tabs.getScene().getWindow();
-                tabStage.setTitle("Sparrow-LTC - " + tabName);
+                //Brand the window for the focused wallet's coin, not the process default (one app, per-wallet coin)
+                String appName = SparrowWallet.APP_NAME;
+                if(event instanceof WalletTabSelectedEvent walletEvent && walletEvent.getWalletTabData().getWallet() != null) {
+                    appName = "Sparrow-" + walletEvent.getWalletTabData().getWallet().getCoin().getTicker();
+                }
+                tabStage.setTitle(appName + " - " + tabName);
             }
 
             if(event instanceof TransactionTabSelectedEvent) {
@@ -2964,6 +3033,18 @@ public class AppController implements Initializable {
             } else if(event instanceof WalletTabSelectedEvent) {
                 WalletTabSelectedEvent walletTabEvent = (WalletTabSelectedEvent)event;
                 WalletTabData walletTabData = walletTabEvent.getWalletTabData();
+                if(walletTabData.getWallet() != null) {
+                    //Focusing a wallet tab makes its coin the active coin so the foreground UI reflects that
+                    //wallet's chain (one app, one tab per coin). Backward compatible: single-coin flavor
+                    //wallets resolve getCoin() to the process coin, so this is a no-op there. Background sync
+                    //must set each wallet's own coin separately - the focused-tab coin only drives the foreground.
+                    //Compare against the global coin, not Coin.get() - this can fire inside addWalletTab's scope.
+                    com.sparrowwallet.drongo.Coin walletCoin = walletTabData.getWallet().getCoin();
+                    if(walletCoin != com.sparrowwallet.drongo.Coin.getGlobal()) {
+                        com.sparrowwallet.drongo.Coin.set(walletCoin);
+                        EventManager.get().post(new ActiveCoinChangedEvent(walletCoin));
+                    }
+                }
                 saveTransaction.setVisible(true);
                 saveTransaction.setDisable(true);
                 lockWallet.setDisable(walletTabData.getWalletForm().lockedProperty().get());
@@ -3225,7 +3306,14 @@ public class AppController implements Initializable {
 
     @Subscribe
     public void connection(ConnectionEvent event) {
-        String status = "Connected to " + Config.get().getServerDisplayName() + " at height " + event.getBlockHeight();
+        //An Esplora REST instance serves no merkle proofs, so nothing it reports can be checked against the
+        //chain - balances, history and confirmation depth are that one host's word, and a compromised or
+        //hostile instance can invent a payment or hide one. The Electrum protocol offers
+        //blockchain.transaction.get_merkle and can be verified. Which of the two this is must be visible
+        //rather than implied by the URL, since it is the whole basis for trusting what the wallet shows.
+        String status = "Connected to " + Config.get().getServerDisplayName()
+                + (com.sparrowwallet.sparrow.net.ElectrumServer.isPollingBackend() ? " (unverified - no merkle proofs)" : "")
+                + " at height " + event.getBlockHeight();
         statusUpdated(new StatusEvent(status));
         setServerToggleTooltip(event.getBlockHeight());
         serverToggleStopAnimation();

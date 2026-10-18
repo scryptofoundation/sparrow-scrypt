@@ -25,8 +25,11 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
 
     @Override
     protected Task<VersionUpdatedEvent> createTask() {
+        //createTask runs on the FX thread; the worker needs an explicit coin scope to parse the signing address
+        com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
         return new Task<>() {
             protected VersionUpdatedEvent call() {
+                com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
                 try {
                     VersionCheck versionCheck = getVersionCheck();
                     version = versionCheck.version;
@@ -35,6 +38,8 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
                     }
                 } catch(IOException e) {
                     log.error("Error retrieving version check file", e);
+                } finally {
+                    com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                 }
 
                 return null;

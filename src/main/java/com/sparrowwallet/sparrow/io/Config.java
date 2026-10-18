@@ -2,7 +2,9 @@ package com.sparrowwallet.sparrow.io;
 
 import com.google.gson.*;
 import com.sparrowwallet.drongo.BitcoinUnit;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.protocol.Transaction;
+import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.UnitFormat;
 import com.sparrowwallet.sparrow.Mode;
 import com.sparrowwallet.sparrow.Theme;
@@ -84,6 +86,8 @@ public class Config {
     private Server electrumServer;
     private List<Server> recentElectrumServers;
     private File electrumServerCert;
+    private Map<String, ServerSettings> coinServers;
+    private Map<String, Server> coinBlockExplorers;
     private boolean useProxy;
     private String proxyServer;
     private boolean autoSwitchProxy = true;
@@ -168,15 +172,28 @@ public class Config {
     }
 
     public boolean isBlockExplorerDisabled() {
-        return BlockExplorer.NONE.getServer().equals(blockExplorer);
+        return BlockExplorer.NONE.getServer().equals(getBlockExplorer());
     }
 
+    //The block explorer is chosen per coin, like the server settings above: each chain has its own explorer,
+    //so one selection cannot serve them all. The flat field remains the startup coin's choice.
     public Server getBlockExplorer() {
-        return blockExplorer;
+        if(useFlatCoinSettings()) {
+            return blockExplorer;
+        }
+
+        return coinBlockExplorers == null ? null : coinBlockExplorers.get(Coin.get().getName());
     }
 
     public void setBlockExplorer(Server blockExplorer) {
-        this.blockExplorer = blockExplorer;
+        if(useFlatCoinSettings()) {
+            this.blockExplorer = blockExplorer;
+        } else {
+            if(coinBlockExplorers == null) {
+                coinBlockExplorers = new LinkedHashMap<>();
+            }
+            coinBlockExplorers.put(Coin.get().getName(), blockExplorer);
+        }
         flush();
     }
 
@@ -511,12 +528,74 @@ public class Config {
         flush();
     }
 
+    //Server connection settings for one coin (one app, per-wallet coin). The flat fields on Config remain
+    //the store for the coin the process started as, so existing configs keep working unchanged; every other
+    //coin gets an entry here, keyed by Coin name. All server accessors resolve against the active coin -
+    //the focused wallet's coin on the FX thread, the syncing wallet's coin inside Coin.beginScope.
+    private static class ServerSettings {
+        private ServerType serverType;
+        private Server publicElectrumServer;
+        private Server coreServer;
+        private List<Server> recentCoreServers;
+        private CoreAuthType coreAuthType;
+        private File coreDataDir;
+        private String coreAuth;
+        private boolean useLegacyCoreWallet;
+        private boolean legacyServer;
+        private Server electrumServer;
+        private List<Server> recentElectrumServers;
+        private File electrumServerCert;
+    }
+
+    static Coin getStartupCoin() {
+        String coinProperty = System.getProperty(SparrowWallet.COIN_SYSTEM_PROPERTY, System.getenv(SparrowWallet.COIN_ENV_PROPERTY));
+        if(coinProperty != null) {
+            try {
+                return Coin.valueOf(coinProperty.toUpperCase(Locale.ROOT));
+            } catch(Exception e) {
+                //Invalid value already warned about at startup
+            }
+        }
+
+        return Coin.LITECOIN;
+    }
+
+    private boolean useFlatCoinSettings() {
+        return Coin.get() == getStartupCoin();
+    }
+
+    private ServerSettings coinSettings() {
+        return coinServers == null ? null : coinServers.get(Coin.get().getName());
+    }
+
+    private ServerSettings editCoinSettings() {
+        if(coinServers == null) {
+            coinServers = new LinkedHashMap<>();
+        }
+
+        return coinServers.computeIfAbsent(Coin.get().getName(), name -> new ServerSettings());
+    }
+
     public ServerType getServerType() {
-        return serverType;
+        if(useFlatCoinSettings()) {
+            return serverType;
+        }
+        ServerSettings settings = coinSettings();
+        ServerType type = settings == null ? null : settings.serverType;
+        if(type == null && PublicElectrumServer.supportedNetwork()) {
+            //A coin with built-in public servers connects out of the box - no per-coin setup required.
+            //The startup coin keeps its stored value so the first-run flow is unchanged.
+            return ServerType.PUBLIC_ELECTRUM_SERVER;
+        }
+        return type;
     }
 
     public void setServerType(ServerType serverType) {
-        this.serverType = serverType;
+        if(useFlatCoinSettings()) {
+            this.serverType = serverType;
+        } else {
+            editCoinSettings().serverType = serverType;
+        }
         flush();
     }
 
@@ -549,11 +628,28 @@ public class Config {
     }
 
     public Server getPublicElectrumServer() {
-        return publicElectrumServer;
+        if(useFlatCoinSettings()) {
+            return publicElectrumServer;
+        }
+        ServerSettings settings = coinSettings();
+        Server server = settings == null ? null : settings.publicElectrumServer;
+        if(server == null) {
+            //Auto-select the first built-in public server for this coin (failure rotation via
+            //changePublicServer still applies once connections are attempted)
+            List<PublicElectrumServer> servers = PublicElectrumServer.getServers();
+            if(!servers.isEmpty()) {
+                return servers.getFirst().getServer();
+            }
+        }
+        return server;
     }
 
     public void setPublicElectrumServer(Server publicElectrumServer) {
-        this.publicElectrumServer = publicElectrumServer;
+        if(useFlatCoinSettings()) {
+            this.publicElectrumServer = publicElectrumServer;
+        } else {
+            editCoinSettings().publicElectrumServer = publicElectrumServer;
+        }
         flush();
     }
 
@@ -565,27 +661,53 @@ public class Config {
     }
 
     public Server getCoreServer() {
-        return coreServer;
+        if(useFlatCoinSettings()) {
+            return coreServer;
+        }
+        ServerSettings settings = coinSettings();
+        return settings == null ? null : settings.coreServer;
     }
 
     public void setCoreServer(Server coreServer) {
-        this.coreServer = coreServer;
+        if(useFlatCoinSettings()) {
+            this.coreServer = coreServer;
+        } else {
+            editCoinSettings().coreServer = coreServer;
+        }
         flush();
     }
 
     public List<Server> getRecentCoreServers() {
-        return recentCoreServers == null ? new ArrayList<>() : recentCoreServers;
+        List<Server> recent;
+        if(useFlatCoinSettings()) {
+            recent = recentCoreServers;
+        } else {
+            ServerSettings settings = coinSettings();
+            recent = settings == null ? null : settings.recentCoreServers;
+        }
+        return recent == null ? new ArrayList<>() : recent;
+    }
+
+    private List<Server> editRecentCoreServers() {
+        if(useFlatCoinSettings()) {
+            if(recentCoreServers == null) {
+                recentCoreServers = new ArrayList<>();
+            }
+            return recentCoreServers;
+        }
+        ServerSettings settings = editCoinSettings();
+        if(settings.recentCoreServers == null) {
+            settings.recentCoreServers = new ArrayList<>();
+        }
+        return settings.recentCoreServers;
     }
 
     public boolean addRecentCoreServer(Server coreServer) {
-        if(recentCoreServers == null) {
-            recentCoreServers = new ArrayList<>();
-        }
-
-        int index = getRecentCoreServers().indexOf(coreServer);
+        List<Server> recent = editRecentCoreServers();
+        int index = recent.indexOf(coreServer);
         if(index < 0) {
-            recentCoreServers.removeIf(server -> server.getHost().equals(coreServer.getHost()) && server.getAlias() == null);
-            recentCoreServers.add(coreServer);
+            recent.removeIf(server -> server.getHost().equals(coreServer.getHost()) && server.getAlias() == null);
+            recent.add(coreServer);
             flush();
             return true;
         }
@@ -594,98 +716,166 @@ public class Config {
     }
 
     public void removeRecentCoreServer(Server server) {
-        int index = getRecentCoreServers().indexOf(server);
+        List<Server> recent = editRecentCoreServers();
+        int index = recent.indexOf(server);
         if(index >= 0) {
-            recentCoreServers.remove(index);
+            recent.remove(index);
             flush();
         }
     }
 
     public void setCoreServerAlias(Server server) {
-        int index = getRecentCoreServers().indexOf(server);
+        List<Server> recent = editRecentCoreServers();
+        int index = recent.indexOf(server);
         if(index >= 0) {
-            recentCoreServers.set(index, server);
+            recent.set(index, server);
             flush();
         }
     }
 
     public CoreAuthType getCoreAuthType() {
-        return coreAuthType;
+        if(useFlatCoinSettings()) {
+            return coreAuthType;
+        }
+        ServerSettings settings = coinSettings();
+        return settings == null ? null : settings.coreAuthType;
     }
 
     public void setCoreAuthType(CoreAuthType coreAuthType) {
-        this.coreAuthType = coreAuthType;
+        if(useFlatCoinSettings()) {
+            this.coreAuthType = coreAuthType;
+        } else {
+            editCoinSettings().coreAuthType = coreAuthType;
+        }
         flush();
     }
 
     public File getCoreDataDir() {
-        return coreDataDir;
+        if(useFlatCoinSettings()) {
+            return coreDataDir;
+        }
+        ServerSettings settings = coinSettings();
+        return settings == null ? null : settings.coreDataDir;
     }
 
     public void setCoreDataDir(File coreDataDir) {
-        this.coreDataDir = coreDataDir;
+        if(useFlatCoinSettings()) {
+            this.coreDataDir = coreDataDir;
+        } else {
+            editCoinSettings().coreDataDir = coreDataDir;
+        }
         flush();
     }
 
     public String getCoreAuth() {
-        return coreAuth;
+        if(useFlatCoinSettings()) {
+            return coreAuth;
+        }
+        ServerSettings settings = coinSettings();
+        return settings == null ? null : settings.coreAuth;
     }
 
     public void setCoreAuth(String coreAuth) {
-        this.coreAuth = coreAuth;
+        if(useFlatCoinSettings()) {
+            this.coreAuth = coreAuth;
+        } else {
+            editCoinSettings().coreAuth = coreAuth;
+        }
         flush();
     }
 
     public boolean isUseLegacyCoreWallet() {
-        return useLegacyCoreWallet;
+        if(useFlatCoinSettings()) {
+            return useLegacyCoreWallet;
+        }
+        ServerSettings settings = coinSettings();
+        return settings != null && settings.useLegacyCoreWallet;
     }
 
     public void setUseLegacyCoreWallet(boolean useLegacyCoreWallet) {
-        this.useLegacyCoreWallet = useLegacyCoreWallet;
+        if(useFlatCoinSettings()) {
+            this.useLegacyCoreWallet = useLegacyCoreWallet;
+        } else {
+            editCoinSettings().useLegacyCoreWallet = useLegacyCoreWallet;
+        }
         flush();
     }
 
     public boolean isLegacyServer() {
-        return legacyServer;
+        if(useFlatCoinSettings()) {
+            return legacyServer;
+        }
+        ServerSettings settings = coinSettings();
+        return settings != null && settings.legacyServer;
     }
 
     public void setLegacyServer(boolean legacyServer) {
-        this.legacyServer = legacyServer;
+        if(useFlatCoinSettings()) {
+            this.legacyServer = legacyServer;
+        } else {
+            editCoinSettings().legacyServer = legacyServer;
+        }
         flush();
     }
 
     public Server getElectrumServer() {
-        return electrumServer;
+        if(useFlatCoinSettings()) {
+            return electrumServer;
+        }
+        ServerSettings settings = coinSettings();
+        return settings == null ? null : settings.electrumServer;
     }
 
     public void setElectrumServer(Server electrumServer) {
-        this.electrumServer = electrumServer;
+        if(useFlatCoinSettings()) {
+            this.electrumServer = electrumServer;
+        } else {
+            editCoinSettings().electrumServer = electrumServer;
+        }
         flush();
     }
 
     public List<Server> getRecentElectrumServers() {
-        return recentElectrumServers == null ? new ArrayList<>() : recentElectrumServers;
+        List<Server> recent;
+        if(useFlatCoinSettings()) {
+            recent = recentElectrumServers;
+        } else {
+            ServerSettings settings = coinSettings();
+            recent = settings == null ? null : settings.recentElectrumServers;
+        }
+        return recent == null ? new ArrayList<>() : recent;
+    }
+
+    private List<Server> editRecentElectrumServers() {
+        if(useFlatCoinSettings()) {
+            if(recentElectrumServers == null) {
+                recentElectrumServers = new ArrayList<>();
+            }
+            return recentElectrumServers;
+        }
+        ServerSettings settings = editCoinSettings();
+        if(settings.recentElectrumServers == null) {
+            settings.recentElectrumServers = new ArrayList<>();
+        }
+        return settings.recentElectrumServers;
     }
 
     public boolean addRecentServer() {
-        if(serverType == ServerType.BITCOIN_CORE && coreServer != null) {
-            return addRecentCoreServer(coreServer);
-        } else if(serverType == ServerType.ELECTRUM_SERVER && electrumServer != null) {
-            return addRecentElectrumServer(electrumServer);
+        if(getServerType() == ServerType.BITCOIN_CORE && getCoreServer() != null) {
+            return addRecentCoreServer(getCoreServer());
+        } else if(getServerType() == ServerType.ELECTRUM_SERVER && getElectrumServer() != null) {
+            return addRecentElectrumServer(getElectrumServer());
         }
 
         return false;
     }
 
     public boolean addRecentElectrumServer(Server electrumServer) {
-        if(recentElectrumServers == null) {
-            recentElectrumServers = new ArrayList<>();
-        }
-
-        int index = getRecentElectrumServers().indexOf(electrumServer);
+        List<Server> recent = editRecentElectrumServers();
+        int index = recent.indexOf(electrumServer);
         if(index < 0) {
-            recentElectrumServers.removeIf(server -> server.getHost().equals(electrumServer.getHost()) && server.getAlias() == null);
-            recentElectrumServers.add(electrumServer);
+            recent.removeIf(server -> server.getHost().equals(electrumServer.getHost()) && server.getAlias() == null);
+            recent.add(electrumServer);
             flush();
 
             return true;
@@ -695,27 +885,37 @@ public class Config {
     }
 
     public void removeRecentElectrumServer(Server server) {
-        int index = getRecentElectrumServers().indexOf(server);
+        List<Server> recent = editRecentElectrumServers();
+        int index = recent.indexOf(server);
         if(index >= 0) {
-            recentElectrumServers.remove(index);
+            recent.remove(index);
             flush();
         }
     }
 
     public void setElectrumServerAlias(Server server) {
-        int index = getRecentElectrumServers().indexOf(server);
+        List<Server> recent = editRecentElectrumServers();
+        int index = recent.indexOf(server);
         if(index >= 0) {
-            recentElectrumServers.set(index, server);
+            recent.set(index, server);
             flush();
         }
     }
 
     public File getElectrumServerCert() {
-        return electrumServerCert;
+        if(useFlatCoinSettings()) {
+            return electrumServerCert;
+        }
+        ServerSettings settings = coinSettings();
+        return settings == null ? null : settings.electrumServerCert;
     }
 
     public void setElectrumServerCert(File electrumServerCert) {
-        this.electrumServerCert = electrumServerCert;
+        if(useFlatCoinSettings()) {
+            this.electrumServerCert = electrumServerCert;
+        } else {
+            editCoinSettings().electrumServerCert = electrumServerCert;
+        }
         flush();
     }
 

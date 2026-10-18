@@ -135,20 +135,28 @@ public class TcpOverTlsTransport extends TcpTransport {
     }
 
     protected void startHandshake(SSLSocket sslSocket) throws IOException {
+        //The JDK notifies on its own HandshakeCompletedNotify thread, which has no coin scope. Certificate
+        //storage resolves per-coin server settings, so carry the connecting thread's coin across.
+        com.sparrowwallet.drongo.Coin handshakeCoin = com.sparrowwallet.drongo.Coin.get();
         sslSocket.addHandshakeCompletedListener(event -> {
-            if(shouldSaveCertificate()) {
-                try {
-                    Certificate[] certs = event.getPeerCertificates();
-                    if(certs.length > 0) {
-                        if(isCaSigned(certs)) {
-                            Storage.saveCaCertificate(server.getHost(), certs[0]);
-                        } else {
-                            Storage.saveCertificate(server.getHost(), certs[0]);
+            com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(handshakeCoin);
+            try {
+                if(shouldSaveCertificate()) {
+                    try {
+                        Certificate[] certs = event.getPeerCertificates();
+                        if(certs.length > 0) {
+                            if(isCaSigned(certs)) {
+                                Storage.saveCaCertificate(server.getHost(), certs[0]);
+                            } else {
+                                Storage.saveCertificate(server.getHost(), certs[0]);
+                            }
                         }
+                    } catch(SSLPeerUnverifiedException e) {
+                        log.warn("Attempting to retrieve certificate for unverified peer", e);
                     }
-                } catch(SSLPeerUnverifiedException e) {
-                    log.warn("Attempting to retrieve certificate for unverified peer", e);
                 }
+            } finally {
+                com.sparrowwallet.drongo.Coin.endScope(previousCoin);
             }
         });
 

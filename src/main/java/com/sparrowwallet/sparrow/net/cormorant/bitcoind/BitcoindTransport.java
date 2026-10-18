@@ -47,9 +47,11 @@ public class BitcoindTransport implements Transport {
             if(!bitcoindServer.getHostAndPort().hasPort()) {
                 serverUrl += ":" + Network.get().getDefaultPort();
             }
-            this.bitcoindUrl = new URI(serverUrl + "/wallet/" + bitcoindWallet).toURL();
+            //A null wallet addresses the RPC root. The /wallet/<name> endpoint arrived with multiwallet in
+            //Core 0.15, so on the pre-descriptor Scrypto nodes every call to it would 404 regardless of method.
+            this.bitcoindUrl = new URI(serverUrl + (bitcoindWallet == null ? "" : "/wallet/" + bitcoindWallet)).toURL();
         } catch(MalformedURLException | URISyntaxException e) {
-            log.error("Malformed Litecoin Core RPC URL", e);
+            log.error("Malformed " + com.sparrowwallet.drongo.Coin.get().getCoreName() + " RPC URL", e);
         }
     }
 

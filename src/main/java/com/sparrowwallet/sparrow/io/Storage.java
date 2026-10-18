@@ -93,15 +93,122 @@ public class Storage {
     }
 
     public WalletAndKey loadUnencryptedWallet() throws IOException, StorageException {
-        WalletAndKey masterWalletAndKey = persistence.loadWallet(this);
-        encryptionPubKey = NO_PASSWORD_KEY;
-        return migrateToDb(masterWalletAndKey);
+        Coin previousCoin = Coin.beginScope(getLoadCoin());
+        try {
+            WalletAndKey masterWalletAndKey = persistence.loadWallet(this);
+            encryptionPubKey = NO_PASSWORD_KEY;
+            inferLegacyCoin(masterWalletAndKey.getWallet());
+            Coin.beginScope(masterWalletAndKey.getWallet().getCoin());
+            return migrateToDb(masterWalletAndKey);
+        } finally {
+            Coin.endScope(previousCoin);
+        }
     }
 
     public WalletAndKey loadEncryptedWallet(CharSequence password) throws IOException, StorageException {
-        WalletAndKey masterWalletAndKey = persistence.loadWallet(this, password);
-        encryptionPubKey = ECKey.fromPublicOnly(masterWalletAndKey.getEncryptionKey());
-        return migrateToDb(masterWalletAndKey);
+        Coin previousCoin = Coin.beginScope(getLoadCoin());
+        try {
+            WalletAndKey masterWalletAndKey = persistence.loadWallet(this, password);
+            encryptionPubKey = ECKey.fromPublicOnly(masterWalletAndKey.getEncryptionKey());
+            inferLegacyCoin(masterWalletAndKey.getWallet());
+            Coin.beginScope(masterWalletAndKey.getWallet().getCoin());
+            return migrateToDb(masterWalletAndKey);
+        } finally {
+            Coin.endScope(previousCoin);
+        }
+    }
+
+    /**
+     * The coin a wallet is read under before its own stored coin is known. Loading runs off the FX thread,
+     * so under strict scoping it needs an explicit scope, and a wallet with no stored coin (flavor era)
+     * resolves Wallet.getCoin() through it. The file path is the strongest signal available without
+     * reading the wallet; failing that, the startup coin - which is what an unstamped wallet has always
+     * meant, and unlike the focused tab's coin does not change with what the user happens to be looking at.
+     * A stored coin still wins: WalletDao re-scopes to it once the wallet row is read.
+     */
+    private Coin getLoadCoin() {
+        Coin pathCoin = inferCoinFromPath();
+        return pathCoin != null ? pathCoin : Config.getStartupCoin();
+    }
+
+    /**
+     * Wallets created before the per-wallet coin field (the single-coin flavor era) have no stored coin
+     * and would fall back to the process coin - mis-branding e.g. a Dogecoin wallet opened in the
+     * Litecoin app and gating it off its own server. Child wallets follow the master via Wallet.getCoin().
+     */
+    private void inferLegacyCoin(Wallet wallet) {
+        Coin pathCoin = inferCoinFromPath();
+
+        if(wallet.coin() == null) {
+            Coin inferred = pathCoin != null ? pathCoin : inferCoinFromDerivation(wallet);
+            if(inferred != null) {
+                log.info("Inferred coin " + inferred + " for legacy wallet " + wallet.getName() + " (" + walletFile.getAbsolutePath() + ")");
+                wallet.setCoin(inferred);
+            }
+        } else if(wallet.coin() == Coin.LITECOIN && pathCoin != null && pathCoin != Coin.LITECOIN) {
+            //Repair: interim 2026-07-22 builds could stamp LITECOIN into a legacy flavor wallet via the
+            //derivation-based inference (all flavor wallets derive at Litecoin's 2'). The flavor home
+            //dir the wallet lives in is authoritative over a stored LITECOIN that contradicts it.
+            log.warn("Correcting stamped coin LITECOIN -> " + pathCoin + " for wallet " + wallet.getName() + " (" + walletFile.getAbsolutePath() + ")");
+            wallet.setCoin(pathCoin);
+        }
+    }
+
+    /**
+     * Flavor-era wallets live in per-coin home dirs (%APPDATA%\Sparrow-DOGE, ~/.sparrow-doge). This is
+     * the strongest signal for them, because the flavors created ALL wallets at Litecoin's m/44'/2' -
+     * the coin type was not wired into ScriptType derivation until 2026-07-22 - so for those wallets the
+     * derivation path identifies nothing.
+     */
+    private Coin inferCoinFromPath() {
+        String path = walletFile.getAbsolutePath().toLowerCase(Locale.ROOT);
+        for(Coin coin : Coin.values()) {
+            if(path.contains("sparrow-" + coin.getTicker().toLowerCase(Locale.ROOT))) {
+                return coin;
+            }
+        }
+
+        //Wallets copied out of their flavor home often live in user folders named after the coin
+        //(e.g. Desktop\Sparrow\Doge\wallet.mv.db). Match whole directory names only, deepest first so
+        //the most specific folder wins; the filename itself is excluded.
+        String[] segments = path.split("[/\\\\]");
+        for(int i = segments.length - 2; i >= 0; i--) {
+            for(Coin coin : Coin.values()) {
+                if(segments[i].equals(coin.getTicker().toLowerCase(Locale.ROOT)) || segments[i].equals(coin.getName())) {
+                    return coin;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Ecosystem imports and post-2026-07-22 wallets derive at their coin's own slot. Only unambiguous,
+     * non-Litecoin coin types are mapped: 2 is what every legacy flavor wallet carries regardless of its
+     * actual coin, 0 is shared by Luckycoin/Junkcoin (and arbitrary imports), and Dingocoin deliberately
+     * shares Dogecoin's 3 - so 3 maps to Dogecoin as the overwhelmingly common case.
+     */
+    private static Coin inferCoinFromDerivation(Wallet wallet) {
+        for(Keystore keystore : wallet.getKeystores()) {
+            if(keystore.getKeyDerivation() != null && keystore.getKeyDerivation().getDerivation() != null) {
+                List<ChildNumber> derivation = keystore.getKeyDerivation().getDerivation();
+                if(derivation.size() >= 2 && derivation.get(0).isHardened() && derivation.get(1).isHardened()) {
+                    Coin inferred = switch(derivation.get(1).num()) {
+                        case 3 -> Coin.DOGECOIN;
+                        case 3434 -> Coin.PEPECOIN;
+                        case 762 -> Coin.BELLSCOIN;
+                        default -> null;
+                    };
+
+                    if(inferred != null) {
+                        return inferred;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     public void saveWallet(Wallet wallet) throws IOException, StorageException {
@@ -611,10 +718,11 @@ public class Storage {
             return new File(System.getProperty(SparrowWallet.APP_HOME_PROPERTY));
         }
 
-        //Home folder follows the coin so wallets and config of different chains never share a directory.
-        //Litecoin resolves to the historical "Sparrow-LTC" / ".sparrow-ltc" exactly, preserving existing
-        //installs; a Dogecoin flavor uses "Sparrow-DOGE" / ".sparrow-doge".
-        String appName = "Sparrow-" + Coin.get().getTicker();
+        //Home folder follows the app identity, fixed at startup: the historical "Sparrow-LTC" for the
+        //Litecoin flavor, "Sparrow-DOGE" etc. for the other flavors, and "Sparrow-Scrypt" for the
+        //unified multi-coin build. Deliberately NOT derived from the active coin, which changes with the
+        //focused wallet tab - the home must never wander mid-session.
+        String appName = SparrowWallet.APP_NAME;
         if(isWindows()) {
             return new File(getHomeDir(), appName);
         }
@@ -628,6 +736,33 @@ public class Storage {
         }
 
         return new File(System.getProperty("user.home"));
+    }
+
+    /**
+     * One-time migration for the unified app: if this app's home has no config yet but the given legacy
+     * app's home does, copy it so server settings, preferences and recent wallets carry over.
+     */
+    public static void migrateLegacyConfig(String legacyAppName) {
+        try {
+            File home = getSparrowHome();
+            File config = new File(home, Config.CONFIG_FILENAME);
+            if(config.exists()) {
+                return;
+            }
+
+            File legacyHome = isWindows() ? new File(getHomeDir(), legacyAppName)
+                    : new File(getHomeDir(), "." + legacyAppName.toLowerCase(Locale.ROOT));
+            File legacyConfig = new File(legacyHome, Config.CONFIG_FILENAME);
+            if(legacyConfig.exists()) {
+                if(!home.exists() && !createOwnerOnlyDirectory(home)) {
+                    return;
+                }
+                Files.copy(legacyConfig.toPath(), config.toPath());
+                log.info("Migrated config from " + legacyConfig.getAbsolutePath() + " to " + config.getAbsolutePath());
+            }
+        } catch(Exception e) {
+            log.warn("Could not migrate legacy config", e);
+        }
     }
 
     public static boolean createOwnerOnlyDirectory(File directory) {

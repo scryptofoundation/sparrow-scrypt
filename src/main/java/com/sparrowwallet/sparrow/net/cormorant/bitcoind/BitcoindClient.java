@@ -95,26 +95,81 @@ public class BitcoindClient {
     private MempoolEntriesState mempoolEntriesState = MempoolEntriesState.UNINITIALIZED;
     private long timerTaskCount;
 
+    //Set for the pre-descriptor Scrypto nodes, which are watched through importmulti - see isLegacyCore
+    private final boolean legacyCore;
+    //Addresses already handed to importmulti, so repeat imports do not trigger repeat rescans
+    private final Set<String> importedAddresses = Collections.synchronizedSet(new HashSet<>());
+    //Wallets whose initial rescan has been requested - see importWalletAddresses
+    private final Set<String> importedWallets = Collections.synchronizedSet(new HashSet<>());
+
     public BitcoindClient(boolean useWallets) {
         BitcoindTransport bitcoindTransport;
 
         Config config = Config.get();
+        this.legacyCore = isLegacyCore(com.sparrowwallet.drongo.Coin.get());
+        //A legacy node has one wallet and no /wallet/<name> endpoint, so it is addressed at the RPC root
+        String walletName = legacyCore ? null : CORE_WALLET_NAME;
         if((config.getCoreAuthType() == CoreAuthType.COOKIE || config.getCoreAuth() == null || config.getCoreAuth().length() < 2) && config.getCoreDataDir() != null) {
-            bitcoindTransport = new BitcoindTransport(config.getCoreServer(), CORE_WALLET_NAME, config.getCoreDataDir());
+            bitcoindTransport = new BitcoindTransport(config.getCoreServer(), walletName, config.getCoreDataDir());
         } else if(config.getCoreAuth() != null) {
-            bitcoindTransport = new BitcoindTransport(config.getCoreServer(), CORE_WALLET_NAME, config.getCoreAuth());
+            bitcoindTransport = new BitcoindTransport(config.getCoreServer(), walletName, config.getCoreAuth());
         } else {
-            throw new ConfigurationException("Litecoin Core data folder or user and password is required");
+            throw new ConfigurationException(com.sparrowwallet.drongo.Coin.get().getCoreName() + " data folder or user and password is required");
         }
 
         this.jsonRpcClient = new JsonRpcClient(bitcoindTransport);
         this.useWallets = useWallets;
     }
 
+    /**
+     * Whether this coin's node predates descriptor wallets, requiring the watch-only importmulti path.
+     *
+     * Verified against each chain's own RPC registration tables: these five register importmulti and
+     * importaddress but none of createwallet, loadwallet, listdescriptors or importdescriptors. Litecoin
+     * Core and the Bellscoin V3 rebase carry the full descriptor surface and take the standard path.
+     */
+    public static boolean isLegacyCore(com.sparrowwallet.drongo.Coin coin) {
+        return switch(coin) {
+            case LITECOIN, BELLSCOIN -> false;
+            case DOGECOIN, PEPECOIN, LUCKYCOIN, DINGOCOIN, JUNKCOIN -> true;
+        };
+    }
+
+    /**
+     * The lowest node version Cormorant can drive for this coin, in the node's own CLIENT_VERSION numbering
+     * (10000 * major + 100 * minor + build).
+     *
+     * Cormorant needs descriptor wallets - createwallet, importdescriptors, listdescriptors - which Bitcoin
+     * Core gained progressively and Litecoin Core exposes from v24. The Scrypto chains number their own
+     * releases: Bellscoin V3 is a modern Core rebase carrying the full descriptor surface, yet reports 30000
+     * from major version 3, so a bare comparison against Litecoin's threshold rejects a capable node. The
+     * remaining chains are Bitcoin 0.13/0.14-era wallets with no descriptor support at any version, so they
+     * are refused outright rather than failing later on a missing createwallet.
+     */
+    private static int getMinimumCoreVersion(com.sparrowwallet.drongo.Coin coin) {
+        return switch(coin) {
+            case LITECOIN -> 240000;
+            case BELLSCOIN -> 30000;
+            //The legacy chains are driven through importmulti instead, which every one of them has always
+            //had, so there is no descriptor-era floor to enforce
+            case DOGECOIN, PEPECOIN, LUCKYCOIN, DINGOCOIN, JUNKCOIN -> 0;
+        };
+    }
+
+    private static String getMinimumCoreVersionName(com.sparrowwallet.drongo.Coin coin) {
+        return switch(coin) {
+            case LITECOIN -> "v24";
+            case BELLSCOIN -> "v3";
+            case DOGECOIN, PEPECOIN, LUCKYCOIN, DINGOCOIN, JUNKCOIN -> "any version";
+        };
+    }
+
     public void initialize() throws CormorantBitcoindException {
         networkInfo = getBitcoindService().getNetworkInfo();
-        if(networkInfo.version() < 240000) {
-            throw new CormorantBitcoindException("Litecoin Core versions older than v24 are not supported");
+        com.sparrowwallet.drongo.Coin coin = com.sparrowwallet.drongo.Coin.get();
+        if(networkInfo.version() < getMinimumCoreVersion(coin)) {
+            throw new CormorantBitcoindException(coin.getCoreName() + " " + networkInfo.subversion() + " is not supported. " +
+                    "A descriptor wallet is required, which " + coin.getCoreName() + " provides from " + getMinimumCoreVersionName(coin) + ".");
         }
 
         BlockchainInfo blockchainInfo = getBitcoindService().getBlockchainInfo();
@@ -146,29 +201,42 @@ public class BitcoindClient {
             tip = blockHeader.getBlockHeader();
         }
 
-        List<String> loadedWallets;
-        try {
-            loadedWallets = getBitcoindService().listWallets();
-            if(loadedWallets == null) {
-                throw new BitcoinRPCException("Wallet support must be enabled in Litecoin Core");
-            }
-            legacyWalletExists = loadedWallets.contains(Bwt.DEFAULT_CORE_WALLET);
-        } catch(JsonRpcException e) {
-            if(e.getErrorMessage().getCode() == RPC_METHOD_NOT_FOUND) {
-                throw new BitcoinRPCException("Wallet support must be enabled in Litecoin Core");
-            } else {
+        if(legacyCore) {
+            //A single-wallet node: there is nothing to enumerate, load or create, and getwalletinfo is the
+            //only way to establish that it was built with wallet support at all
+            try {
+                getBitcoindService().getWalletInfo();
+            } catch(JsonRpcException e) {
+                if(e.getErrorMessage() != null && e.getErrorMessage().getCode() == RPC_METHOD_NOT_FOUND) {
+                    throw new BitcoinRPCException("Wallet support must be enabled in " + coin.getCoreName());
+                }
                 throw e;
             }
-        }
-
-        if(!loadedWallets.contains(CORE_WALLET_NAME)) {
+        } else {
+            List<String> loadedWallets;
             try {
-                getBitcoindService().loadWallet(CORE_WALLET_NAME, true);
+                loadedWallets = getBitcoindService().listWallets();
+                if(loadedWallets == null) {
+                    throw new BitcoinRPCException("Wallet support must be enabled in " + coin.getCoreName());
+                }
+                legacyWalletExists = loadedWallets.contains(Bwt.DEFAULT_CORE_WALLET);
             } catch(JsonRpcException e) {
-                if(e.getErrorMessage().getCode() == RPC_WALLET_NOT_FOUND) {
-                    getBitcoindService().createWallet(CORE_WALLET_NAME, true, true, "", true, true, true, false);
-                } else if(!WALLET_ALREADY_LOADING_MESSAGE.equals(e.getErrorMessage().getMessage())) {
+                if(e.getErrorMessage().getCode() == RPC_METHOD_NOT_FOUND) {
+                    throw new BitcoinRPCException("Wallet support must be enabled in " + coin.getCoreName());
+                } else {
                     throw e;
+                }
+            }
+
+            if(!loadedWallets.contains(CORE_WALLET_NAME)) {
+                try {
+                    getBitcoindService().loadWallet(CORE_WALLET_NAME, true);
+                } catch(JsonRpcException e) {
+                    if(e.getErrorMessage().getCode() == RPC_WALLET_NOT_FOUND) {
+                        getBitcoindService().createWallet(CORE_WALLET_NAME, true, true, "", true, true, true, false);
+                    } else if(!WALLET_ALREADY_LOADING_MESSAGE.equals(e.getErrorMessage().getMessage())) {
+                        throw e;
+                    }
                 }
             }
         }
@@ -178,6 +246,12 @@ public class BitcoindClient {
     }
 
     private ListSinceBlock getListSinceBlock(String blockHash) {
+        if(legacyCore) {
+            //Three parameters only: include_removed and include_change do not exist on these nodes, and
+            //they reject the call rather than ignoring the extras
+            return getBitcoindService().listSinceBlockLegacy(blockHash, 1, true);
+        }
+
         try {
             return getBitcoindService().listSinceBlock(blockHash, 1, true, true, true);
         } catch(JsonRpcException e) {
@@ -191,6 +265,11 @@ public class BitcoindClient {
     }
 
     public void importWallets(Collection<Wallet> wallets) throws ImportFailedException {
+        if(legacyCore) {
+            importWalletAddresses(wallets);
+            return;
+        }
+
         try {
             importDescriptors(getWalletDescriptors(wallets));
         } catch(ScanDateBeforePruneException e) {
@@ -224,7 +303,87 @@ public class BitcoindClient {
         importWallets(wallet.isMasterWallet() ? wallet.getAllWallets() : wallet.getMasterWallet().getAllWallets());
     }
 
+    /**
+     * The pre-descriptor import: expand each wallet's key ranges to concrete addresses and hand them to
+     * importmulti as watch-only entries.
+     *
+     * A descriptor wallet extends its own range as addresses are used; importmulti cannot, so the range is
+     * materialised here to the same gap limit the descriptor path would have requested. Newly derived
+     * addresses arrive on subsequent calls as the wallet advances, and already-imported ones are filtered
+     * out - re-importing an address would restart the node's rescan.
+     *
+     * The rescan timestamp is the earliest wallet birth date, or 0 to scan from the genesis block when none
+     * is set. A pruned node cannot rescan below its prune height, which is why an unpruned node is required.
+     */
+    private void importWalletAddresses(Collection<Wallet> wallets) throws ImportFailedException {
+        for(Wallet wallet : wallets.stream().filter(Wallet::isValid).toList()) {
+            Map<String, Date> addresses = new LinkedHashMap<>();
+            for(KeyPurpose keyPurpose : KeyPurpose.DEFAULT_PURPOSES) {
+                Wallet copyWallet = wallet.copy();
+                WalletNode purposeNode = copyWallet.getNode(keyPurpose);
+                int highestUsed = wallet.getFreshNode(keyPurpose).getIndex() - 1;
+                purposeNode.fillToIndex(Math.max(highestUsed, 0) + wallet.getGapLimit());
+                for(WalletNode addressNode : purposeNode.getChildren()) {
+                    if(addressNode.getAddress() != null) {
+                        addresses.putIfAbsent(addressNode.getAddress().toString(), wallet.getBirthDate());
+                    }
+                }
+            }
+
+            //Decided per wallet, not per session: only a wallet being imported for the first time needs a
+            //rescan. Later calls for the same wallet just extend its range as addresses are used, and those
+            //addresses cannot have earlier history - rescanning the chain again for them would cost hours
+            //and find nothing. A wallet opened after the first import is still new here, so it does scan.
+            boolean firstImport = importedWallets.add(wallet.getFullDisplayName());
+            if(firstImport) {
+                Platform.runLater(() -> EventManager.get().post(new CormorantScanStatusEvent("Scanning " +
+                        com.sparrowwallet.drongo.Coin.get().getCoreName() + " for " + wallet.getFullDisplayName(), Set.of(wallet), 0, null)));
+            }
+
+            importAddresses(addresses, firstImport);
+        }
+    }
+
+    private void importAddresses(Map<String, Date> addresses, boolean rescan) throws ImportFailedException {
+        Map<String, Date> newAddresses = new LinkedHashMap<>(addresses);
+        newAddresses.keySet().removeAll(importedAddresses);
+        if(newAddresses.isEmpty()) {
+            signalInitialImportStarted();
+            return;
+        }
+
+        //"now" tells the node the address has no history worth looking for, which is what makes a range
+        //extension cheap. A rescan starts from the wallet birth date, or genesis when none is set.
+        List<ImportMultiRequest> requests = newAddresses.entrySet().stream()
+                .map(entry -> new ImportMultiRequest(entry.getKey(),
+                        rescan ? (entry.getValue() == null ? 0L : entry.getValue().getTime() / 1000) : "now"))
+                .toList();
+
+        signalInitialImportStarted();
+
+        List<ImportMultiResult> results = getBitcoindService().importMulti(requests, Map.of("rescan", rescan));
+        for(int i = 0; i < results.size(); i++) {
+            ImportMultiResult result = results.get(i);
+            if(!result.success()) {
+                String message = result.error() == null ? "unknown error" : result.error().getMessage();
+                log.warn("Failed to import address into " + com.sparrowwallet.drongo.Coin.get().getCoreName() + ": " + message);
+                throw new ImportFailedException("Address import failed: " + message);
+            }
+        }
+
+        importedAddresses.addAll(newAddresses.keySet());
+        updateStore(getListSinceBlock(null));
+    }
+
     public void importAddress(Address address, Date since) throws ImportFailedException {
+        if(legacyCore) {
+            Map<String, Date> addresses = new LinkedHashMap<>();
+            addresses.put(address.toString(), since);
+            //An address imported on its own is being watched for existing history, so it always scans
+            importAddresses(addresses, true);
+            return;
+        }
+
         Map<String, ScanDate> outputDescriptors = new HashMap<>();
         String addressOutputDescriptor = OutputDescriptor.toDescriptorString(address);
         outputDescriptors.put(OutputDescriptor.normalize(addressOutputDescriptor), new ScanDate(since, null, true));
@@ -516,10 +675,15 @@ public class BitcoindClient {
 
     private String getTransaction(String txid) {
         try {
-            return getBitcoindService().getTransaction(txid, true, false).get("hex").toString();
+            return (legacyCore ? getBitcoindService().getTransactionLegacy(txid, true)
+                    : getBitcoindService().getTransaction(txid, true, false)).get("hex").toString();
         } catch(JsonRpcException e) {
             return getBitcoindService().getRawTransaction(txid, false).toString();
         }
+    }
+
+    public boolean isLegacyCore() {
+        return legacyCore;
     }
 
     private void syncMempool(boolean forceRefresh) {

@@ -91,6 +91,11 @@ public class AppServices {
 
     public static final List<Integer> TARGET_BLOCKS_RANGE = List.of(1, 2, 3, 4, 5, 10, 25, 50);
     private static final List<Double> LONG_FEE_RATES_RANGE = List.of(1d, 2d, 4d, 8d, 16d, 32d, 64d, 128d, 256d, 512d, 1024d, 2048d, 4096d, 8192d);
+    //The merge-mined Scrypto chains (Dogecoin et al.) denominate fees in the same 1e-8 unit as Bitcoin but at
+    //roughly 1000x the nominal rate - server estimatefee routinely returns tens of thousands of sat/vB - so
+    //their fee slider range extends far higher (up to 2^17) than Litecoin's Bitcoin-scale range. Without this
+    //the estimated rate falls off the top of the slider and the send fee cannot be positioned or calculated.
+    private static final List<Double> HIGH_FEE_RATES_RANGE = List.of(1d, 2d, 4d, 8d, 16d, 32d, 64d, 128d, 256d, 512d, 1024d, 2048d, 4096d, 8192d, 16384d, 32768d, 65536d, 131072d);
     public static final double FALLBACK_FEE_RATE = 20000d / 1000;
     public static final double TESTNET_FALLBACK_FEE_RATE = 1000d / 1000;
 
@@ -132,7 +137,11 @@ public class AppServices {
 
     private static final Map<Integer, BlockSummary> blockSummaries = new ConcurrentHashMap<>();
 
-    private static Map<Integer, Double> targetBlockFeeRates;
+    //Keyed per coin for the same reason the exchange rates below are: these chains do not share a fee
+    //scale, and ElectrumServer.getFeeEstimates seeds a new connection from this cache, so a single map
+    //hands the newly focused coin whatever the previous one was paying - Litecoin's 1 sat/vB to a chain
+    //that will not relay under 100, or Dogecoin's thousands to Litecoin.
+    private static final Map<com.sparrowwallet.drongo.Coin, Map<Integer, Double>> targetBlockFeeRates = new ConcurrentHashMap<>();
 
     private static Double nextBlockMedianFeeRate;
 
@@ -142,7 +151,9 @@ public class AppServices {
 
     private static Double serverMinimumRelayFeeRate;
 
-    private static CurrencyRate fiatCurrencyExchangeRate;
+    //Rates are cached per coin - one app holds wallets of several coins, and applying one coin's rate to
+    //another's balance shows a wildly wrong fiat value (e.g. a Dogecoin balance at the Litecoin price)
+    private static final Map<com.sparrowwallet.drongo.Coin, CurrencyRate> fiatCurrencyExchangeRates = new ConcurrentHashMap<>();
 
     private static List<Device> devices;
 
@@ -589,11 +600,12 @@ public class AppServices {
             FXMLLoader appLoader = new FXMLLoader(AppServices.class.getResource("app.fxml"));
             Parent root = appLoader.load();
             AppController appController = appLoader.getController();
+            com.sparrowwallet.sparrow.control.BrandingHelper.apply(root);
 
             Scene scene = new Scene(root);
             scene.getStylesheets().add(AppServices.class.getResource("app.css").toExternalForm());
 
-            stage.setTitle("Sparrow-LTC");
+            stage.setTitle(SparrowWallet.APP_NAME);
             stage.setMinWidth(650);
             stage.setMinHeight(708);
             stage.setScene(scene);
@@ -749,25 +761,34 @@ public class AppServices {
     }
 
     public static Double getMinimumFeeRate() {
-        Optional<Double> optMinFeeRate = getTargetBlockFeeRates().values().stream().min(Double::compareTo);
+        //Rates are absent until this coin's server has reported, which is every switch to a coin not yet
+        //connected in this session
+        Map<Integer, Double> coinFeeRates = getTargetBlockFeeRates();
+        Optional<Double> optMinFeeRate = coinFeeRates == null ? Optional.empty() : coinFeeRates.values().stream().min(Double::compareTo);
         Double minRate = optMinFeeRate.orElse(getFallbackFeeRate());
         return Math.max(minRate, Transaction.DUST_RELAY_TX_FEE);
     }
 
+    private static List<Double> baseFeeRatesRange() {
+        //Litecoin keeps Bitcoin's fee scale; the other Scrypto chains have ~1000x higher nominal fees.
+        return com.sparrowwallet.drongo.Coin.get() == com.sparrowwallet.drongo.Coin.LITECOIN ? LONG_FEE_RATES_RANGE : HIGH_FEE_RATES_RANGE;
+    }
+
     public static List<Double> getLongFeeRatesRange() {
         if(minimumRelayFeeRate == null || minimumRelayFeeRate >= Transaction.DEFAULT_MIN_RELAY_FEE) {
-            return LONG_FEE_RATES_RANGE;
+            return baseFeeRatesRange();
         } else {
             List<Double> longFeeRatesRange = new ArrayList<>();
             longFeeRatesRange.add(minimumRelayFeeRate);
-            longFeeRatesRange.addAll(LONG_FEE_RATES_RANGE);
+            longFeeRatesRange.addAll(baseFeeRatesRange());
             return longFeeRatesRange;
         }
     }
 
     public static List<Double> getFeeRatesRange() {
         if(minimumRelayFeeRate == null || minimumRelayFeeRate >= Transaction.DEFAULT_MIN_RELAY_FEE) {
-            return LONG_FEE_RATES_RANGE.subList(0, LONG_FEE_RATES_RANGE.size() - 3);
+            List<Double> base = baseFeeRatesRange();
+            return base.subList(0, base.size() - 3);
         } else {
             List<Double> longFeeRatesRange = getLongFeeRatesRange();
             return longFeeRatesRange.subList(0, longFeeRatesRange.size() - 4);
@@ -783,7 +804,8 @@ public class AppServices {
     }
 
     public static Map<Integer, Double> getTargetBlockFeeRates() {
-        return targetBlockFeeRates;
+        //Null when this coin has not reported rates yet, which every caller already handles by falling back
+        return targetBlockFeeRates.get(com.sparrowwallet.drongo.Coin.get());
     }
 
     public static TreeMap<Date, Set<MempoolRateSize>> getMempoolHistogram() {
@@ -825,7 +847,9 @@ public class AppServices {
     }
 
     public static CurrencyRate getFiatCurrencyExchangeRate() {
-        return fiatCurrencyExchangeRate;
+        //The active coin's rate: the focused wallet's coin on the FX thread, the operating wallet's coin
+        //inside a Coin.beginScope bracket. Null (fiat hidden) until that coin's rate has been fetched.
+        return fiatCurrencyExchangeRates.get(com.sparrowwallet.drongo.Coin.get());
     }
 
     public static List<Device> getDevices() {
@@ -958,7 +982,9 @@ public class AppServices {
             return;
         }
 
-        Server blockExplorer = Config.get().getBlockExplorer() == null ? BlockExplorer.getDefault() : Config.get().getBlockExplorer();
+        //Resolved against the active coin, not taken verbatim: a stored explorer can predate the coin the
+        //transaction belongs to (a config migrated from Sparrow-LTC holds litecoinspace.org for every coin)
+        Server blockExplorer = BlockExplorer.getConfigured(Config.get().getBlockExplorer());
         String url = blockExplorer.getUrl();
         if(url.contains("{0}")) {
             url = url.replace("{0}", txid);
@@ -1316,7 +1342,12 @@ public class AppServices {
 
     @Subscribe
     public void feesUpdated(FeeRatesUpdatedEvent event) {
-        targetBlockFeeRates = event.getTargetBlockFeeRates();
+        if(event.getTargetBlockFeeRates() != null) {
+            //Filed under the coin whose server produced them, not the focused one - the rates came from the
+            //connection, and focus can move while a fetch is in flight
+            com.sparrowwallet.drongo.Coin ratesCoin = ElectrumServer.getConnectedCoin();
+            targetBlockFeeRates.put(ratesCoin == null ? com.sparrowwallet.drongo.Coin.get() : ratesCoin, event.getTargetBlockFeeRates());
+        }
         nextBlockMedianFeeRate = event.getNextBlockMedianFeeRate();
     }
 
@@ -1338,6 +1369,8 @@ public class AppServices {
     public void fiatCurrencySelected(FiatCurrencySelectedEvent event) {
         if(ratesService != null) {
             ratesService.cancel();
+            //Source or currency changed - previously cached per-coin rates no longer apply
+            fiatCurrencyExchangeRates.clear();
 
             if(Config.get().getMode() != Mode.OFFLINE && event.getExchangeSource() != ExchangeSource.NONE) {
                 ratesService = createRatesService(event.getExchangeSource(), event.getCurrency());
@@ -1348,7 +1381,9 @@ public class AppServices {
 
     @Subscribe
     public void exchangeRatesUpdated(ExchangeRatesUpdatedEvent event) {
-        fiatCurrencyExchangeRate = event.getCurrencyRate();
+        if(event.getCoin() != null && event.getCurrencyRate() != null) {
+            fiatCurrencyExchangeRates.put(event.getCoin(), event.getCurrencyRate());
+        }
     }
 
     @Subscribe
@@ -1415,6 +1450,23 @@ public class AppServices {
     public void requestConnect(RequestConnectEvent event) {
         if(Config.get().hasServer()) {
             onlineProperty.set(true);
+        }
+    }
+
+    @Subscribe
+    public void activeCoinChanged(ActiveCoinChangedEvent event) {
+        //The server connection follows the active coin - drop the old chain's connection and reconnect
+        //under the newly focused coin's server configuration. Cancel closes the old transport and posts
+        //DisconnectionEvent; reset restores firstCall for a fresh connect.
+        if(onlineProperty.get() && Config.get().hasServer()) {
+            restartService(connectionService);
+        } else if(connectionService != null && connectionService.isRunning()) {
+            connectionService.cancel();
+        }
+
+        //Exchange rates are fetched for the active coin - refetch for the new one
+        if(onlineProperty.get() && Config.get().isFetchRates()) {
+            restartService(ratesService);
         }
     }
 

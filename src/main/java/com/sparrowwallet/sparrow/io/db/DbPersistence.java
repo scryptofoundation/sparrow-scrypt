@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.io.db;
 
 import com.google.common.eventbus.Subscribe;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.IOUtils;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.crypto.Argon2KeyDeriver;
@@ -166,6 +167,9 @@ public class DbPersistence implements Persistence {
         String currentPassword = getDatasourcePassword();
 
         updateExecutor.execute(() -> {
+            //Keystore xpubs and addresses serialize under the active coin - scope the db writer thread
+            //to this wallet's coin (see Coin.beginScope).
+            Coin previousCoin = Coin.beginScope(wallet.getCoin());
             try {
                 if(dataSource != null && currentPassword != null && newPassword == null) {
                     //Removing encryption: write data first
@@ -178,6 +182,8 @@ public class DbPersistence implements Persistence {
                 }
             } catch(Exception e) {
                 log.error("Error updating wallet db", e);
+            } finally {
+                Coin.endScope(previousCoin);
             }
         });
     }
@@ -393,10 +399,15 @@ public class DbPersistence implements Persistence {
         cleanAndMigrate(storage, schema, password);
 
         Jdbi jdbi = getJdbi(storage, password);
-        jdbi.useHandle(handle -> {
-            WalletDao walletDao = handle.attach(WalletDao.class);
-            walletDao.addWallet(schema, wallet);
-        });
+        Coin previousCoin = Coin.beginScope(wallet.getCoin());
+        try {
+            jdbi.useHandle(handle -> {
+                WalletDao walletDao = handle.attach(WalletDao.class);
+                walletDao.addWallet(schema, wallet);
+            });
+        } finally {
+            Coin.endScope(previousCoin);
+        }
 
         if(wallet.isMasterWallet()) {
             masterWallet = wallet;
