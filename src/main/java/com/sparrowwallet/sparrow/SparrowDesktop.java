@@ -140,9 +140,15 @@ public class SparrowDesktop extends Application {
         Config.get().setAppWidth(mainStage.getWidth());
         Config.get().setAppHeight(mainStage.getHeight());
         mainStage.close();
+        //Never let lock cleanup fail the stop method: an exception here aborts shutdown, and the packaged launcher then
+        //shows an error box that leaves the process alive and apparently hung
         SparrowWallet.Instance instance = SparrowWallet.getSparrowInstance();
         if(instance != null) {
-            instance.freeLock();
+            try {
+                instance.freeLock();
+            } catch(Exception e) {
+                LoggerFactory.getLogger(SparrowDesktop.class).warn("Could not release the application lock", e);
+            }
         }
     }
 }

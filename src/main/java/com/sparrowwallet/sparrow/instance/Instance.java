@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.instance;
 
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.sparrow.io.Storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Set;
 
 public abstract class Instance {
@@ -49,7 +51,9 @@ public abstract class Instance {
     public void acquireLock(boolean findExisting) throws InstanceException {
         Path lockFile = getLockFile(findExisting);
 
-        if(!Files.exists(lockFile)) {
+        //notExists, not !exists: a lock file whose attributes cannot be read is neither, and must be treated as
+        //present - binding over it fails, and only the client path below can clean up a stale one
+        if(Files.notExists(lockFile, LinkOption.NOFOLLOW_LINKS)) {
             startServer(lockFile);
         } else {
             doClient(lockFile);
@@ -164,7 +168,30 @@ public abstract class Instance {
             }
         }
 
-        return Storage.getSparrowDir().toPath().resolve(applicationId + ".lock");
+        return getDefaultLockFile();
+    }
+
+    /**
+     * On Windows the lock is a Unix domain socket file in the per-user temp folder rather than the app home under
+     * AppData\Roaming: a socket file orphaned there by a crashed or killed instance becomes inaccessible ("The file
+     * cannot be accessed by the system") even to del and fsutil, so it could never be cleaned up and every later
+     * launch ran without a lock. Orphans in the temp folder stay deletable. The name carries a hash of the app home,
+     * so separate homes (networks, --dir) keep separate locks, and the path stays under the socket path limit.
+     */
+    private Path getDefaultLockFile() {
+        Path sparrowDir = Storage.getSparrowDir().toPath();
+        if(OsType.getCurrent() == OsType.WINDOWS) {
+            String tmp = System.getProperty("java.io.tmpdir");
+            if(tmp != null && !tmp.isEmpty()) {
+                String homeHash = Integer.toHexString(sparrowDir.toAbsolutePath().normalize().toString().toLowerCase(Locale.ROOT).hashCode());
+                Path lockFile = Path.of(tmp).resolve(applicationId + "-" + homeHash + ".lock");
+                if(lockFile.toAbsolutePath().toString().length() < 100) {
+                    return lockFile;
+                }
+            }
+        }
+
+        return sparrowDir.resolve(applicationId + ".lock");
     }
 
     private void createSymlink(Path lockFile) {
@@ -212,14 +239,21 @@ public abstract class Instance {
      * @throws InstanceException throws InstanceException if it is unable to stop the server or release file lock
      */
     public void freeLock() throws InstanceException {
+        //Only the instance holding the lock may remove it (and the pointer to it). One that failed to acquire it,
+        //for example over a stale socket file it cannot delete, would otherwise delete another running instance's
+        //lock, or throw here and abort shutdown.
+        if(serverChannel == null) {
+            return;
+        }
+
         try {
-            if(serverChannel != null && serverChannel.isOpen()) {
+            if(serverChannel.isOpen()) {
                 serverChannel.close();
             }
             if(getUserLockFilePointer() != null) {
                 Files.deleteIfExists(getUserLockFilePointer());
             }
-            Files.deleteIfExists(getLockFile(false));
+            Files.deleteIfExists(getDefaultLockFile());
         } catch(Exception e) {
             throw new InstanceException(e);
         }
