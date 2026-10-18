@@ -24,6 +24,9 @@ public class WalletPasswordDialog extends Dialog<SecureString> {
     private final CheckBox deleteBackups;
     private boolean addingPassword;
 
+    //A backup is meant to be stored away from this computer, so its password is its only protection
+    private static final int MIN_BACKUP_PASSWORD_LENGTH = 8;
+
     public WalletPasswordDialog(String walletName, PasswordRequirement requirement) {
         this(walletName, requirement, false);
     }
@@ -37,7 +40,7 @@ public class WalletPasswordDialog extends Dialog<SecureString> {
         this.deleteBackups = new CheckBox("Delete any backups");
 
         final DialogPane dialogPane = getDialogPane();
-        setTitle("Wallet Password" + (walletName != null ? " - " + walletName : ""));
+        setTitle((requirement == PasswordRequirement.BACKUP_NEW ? "Backup Password" : "Wallet Password") + (walletName != null ? " - " + walletName : ""));
         dialogPane.setHeaderText(walletName != null ? requirement.description.substring(0, requirement.description.length() - 1) + " for " + walletName + ":" : requirement.description);
         dialogPane.getStylesheets().add(AppServices.class.getResource("general.css").toExternalForm());
         AppServices.setStageIcon(dialogPane.getScene().getWindow());
@@ -84,10 +87,11 @@ public class WalletPasswordDialog extends Dialog<SecureString> {
         dialogPane.getButtonTypes().addAll(okButtonType);
         Button okButton = (Button) dialogPane.lookupButton(okButtonType);
         okButton.setPrefWidth(130);
-        BooleanBinding isInvalid = Bindings.createBooleanBinding(() -> (requirement == PasswordRequirement.LOAD && password.getText().isEmpty()) || (passwordConfirm.isVisible() && !password.getText().equals(passwordConfirm.getText())), password.textProperty(), passwordConfirm.textProperty());
+        BooleanBinding isInvalid = Bindings.createBooleanBinding(() -> (requirement == PasswordRequirement.LOAD && password.getText().isEmpty()) ||
+                (requirement == PasswordRequirement.BACKUP_NEW && password.getText().length() < MIN_BACKUP_PASSWORD_LENGTH) || (passwordConfirm.isVisible() && !password.getText().equals(passwordConfirm.getText())), password.textProperty(), passwordConfirm.textProperty());
         okButton.disableProperty().bind(isInvalid);
 
-        if(requirement != PasswordRequirement.UPDATE_NEW && requirement != PasswordRequirement.UPDATE_CHANGE) {
+        if(requirement != PasswordRequirement.UPDATE_NEW && requirement != PasswordRequirement.UPDATE_CHANGE && requirement != PasswordRequirement.BACKUP_NEW) {
             passwordConfirm.setVisible(false);
             passwordConfirm.setManaged(false);
         }
@@ -134,7 +138,8 @@ public class WalletPasswordDialog extends Dialog<SecureString> {
         UPDATE_NEW("Add a password to the wallet?\nLeave empty for no password:", "No Password"),
         UPDATE_EMPTY("This wallet has no password.\nAdd a password to the wallet?\nLeave empty for no password:", "No Password"),
         UPDATE_SET("Re-enter the wallet password:", "Verify Password"),
-        UPDATE_CHANGE("Enter the new wallet password.\nLeave empty for no password:", "No Password");
+        UPDATE_CHANGE("Enter the new wallet password.\nLeave empty for no password:", "No Password"),
+        BACKUP_NEW("Choose a password for this seed backup (8+ characters).\nIt is separate from the wallet password, and\nthe backup cannot be opened without it:", "Save Backup");
 
         private final String description;
         private final String okButtonText;

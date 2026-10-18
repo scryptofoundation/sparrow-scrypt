@@ -61,7 +61,7 @@ public class WalletImportDialog extends Dialog<List<Wallet>> {
         }
 
         List<WalletImport> walletImporters = new ArrayList<>(List.of(new Bip129(), new CaravanMultisig(), new ColdcardMultisig(), new CoboVaultMultisig(), new Electrum(),
-                new KeystoneMultisig(), new Descriptor(), new SpecterDesktop(), new BlueWalletMultisig(), new Sparrow(), new JadeMultisig(), new PassportMultisig(), new SpecterDIYMultisig()));
+                new KeystoneMultisig(), new Descriptor(), new SpecterDesktop(), new BlueWalletMultisig(), new Sparrow(), new JadeMultisig(), new PassportMultisig(), new SpecterDIYMultisig(), new SeedBackup()));
         if(!selectedWalletForms.isEmpty()) {
             walletImporters.add(new WalletLabels(selectedWalletForms));
         }

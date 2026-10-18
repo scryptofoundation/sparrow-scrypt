@@ -1454,9 +1454,21 @@ public class AppController implements Initializable {
         }
 
         Storage storage = new Storage(Storage.getWalletFile(wallet.getName()));
-        WalletPasswordDialog dlg = new WalletPasswordDialog(wallet.getName(), WalletPasswordDialog.PasswordRequirement.UPDATE_NEW);
-        dlg.initOwner(rootStack.getScene().getWindow());
-        Optional<SecureString> password = dlg.showAndWait();
+        Optional<SecureString> password;
+        while(true) {
+            WalletPasswordDialog dlg = new WalletPasswordDialog(wallet.getName(), WalletPasswordDialog.PasswordRequirement.UPDATE_NEW);
+            dlg.initOwner(rootStack.getScene().getWindow());
+            password = dlg.showAndWait();
+            //"No Password" is the dialog's default button, so one Enter would store a restored seed unencrypted
+            if(password.isPresent() && password.get().length() == 0 && wallet.getKeystores().stream().anyMatch(Keystore::hasSeed)) {
+                Optional<ButtonType> optResponse = AppServices.showWarningDialog("No Wallet Password", "This wallet contains its seed words. Without a password they are stored " +
+                        "unencrypted on this computer, readable by anything that can read your files.\n\nSave this wallet without a password?", ButtonType.NO, ButtonType.YES);
+                if(optResponse.isEmpty() || optResponse.get() != ButtonType.YES) {
+                    continue;
+                }
+            }
+            break;
+        }
         if(password.isPresent()) {
             if(password.get().length() == 0) {
                 //Saving and restoring public keys derive addresses, so scope them to the imported wallet's coin.

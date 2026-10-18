@@ -519,7 +519,7 @@ public class KeystoreController extends WalletFormController implements Initiali
 
     private void showPrivate(Keystore keystore) {
         if(keystore.hasSeed()) {
-            SeedDisplayDialog dlg = new SeedDisplayDialog(keystore);
+            SeedDisplayDialog dlg = new SeedDisplayDialog(keystore, getWalletForm().getWallet());
             dlg.initOwner(viewSeedButton.getScene().getWindow());
             dlg.showAndWait();
         } else if(keystore.hasMasterPrivateExtendedKey()) {
