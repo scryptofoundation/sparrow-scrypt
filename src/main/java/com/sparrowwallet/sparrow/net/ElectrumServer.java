@@ -1602,6 +1602,14 @@ public class ElectrumServer {
          * refresh fee rates on the usual period.
          */
         private FeeRatesUpdatedEvent esploraCall(ElectrumServer electrumServer) throws ServerException {
+            //EsploraClient uses the JDK HttpClient, which cannot route through a SOCKS proxy or Tor. Refuse rather than
+            //connect directly: going around the user's proxy would expose their IP address and wallet addresses.
+            //Checked on every call, since the proxy can be switched on while connected.
+            if(Config.get().isUseProxy() || AppServices.isTorRunning()) {
+                esploraConnected = false;
+                throw new ServerConfigException("Esplora servers cannot be reached through a proxy or Tor yet. Turn off the proxy in Server Settings, or use an Electrum or Core server for this coin.");
+            }
+
             if(firstCall) {
                 Server server = Config.get().getServer();
                 electrumServerRpc = new EsploraServerRpc(server.getUrl());
