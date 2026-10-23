@@ -821,11 +821,17 @@ public class ElectrumServer {
                 if(reference.getHeight() > 0) {
                     BlockHeader blockHeader = blockHeaderMap.get(reference.getHeight());
                     if(blockHeader == null) {
-                        transactionMap.put(reference.getHash(), UNFETCHABLE_BLOCK_TRANSACTION);
-                        checkReferences.removeIf(ref -> ref.getHash().equals(reference.getHash()));
-                        continue;
+                        //An Electrum server always serves headers, so a missing one means the reference is bad. An
+                        //Esplora REST instance can fail one header request (rate limits) while the transaction itself
+                        //was fetched fine: keep it, undated, rather than making the whole wallet sync fail on it.
+                        if(transaction == null || !isPollingBackend()) {
+                            transactionMap.put(reference.getHash(), UNFETCHABLE_BLOCK_TRANSACTION);
+                            checkReferences.removeIf(ref -> ref.getHash().equals(reference.getHash()));
+                            continue;
+                        }
+                    } else {
+                        blockDate = blockHeader.getTimeAsDate();
                     }
-                    blockDate = blockHeader.getTimeAsDate();
                 }
 
                 BlockTransaction blockchainTransaction = new BlockTransaction(reference.getHash(), reference.getHeight(), blockDate, reference.getFee(), transaction);

@@ -71,6 +71,19 @@ public class EsploraClient {
      * costs nothing on the instances that answer correctly - a bare hash or hex string never starts with a
      * quote. Only the text routes go through this; JSON responses are parsed by {@link #get} untouched.
      */
+    /** The hash of the block at the given height on the server's best chain. */
+    public String getBlockHash(int height) throws EsploraException {
+        return getPlainString("/block-height/" + height);
+    }
+
+    /**
+     * The block header hex. Some instances (luckyscan, junk-coin mainnet) append the merge-mining AuxPoW data to
+     * the 80-byte header; callers that need only the header take its first 80 bytes.
+     */
+    public String getBlockHeaderHex(String blockHash) throws EsploraException {
+        return getPlainString("/block/" + blockHash + "/header");
+    }
+
     private String getPlainString(String path) throws EsploraException {
         return unquote(getString(path));
     }

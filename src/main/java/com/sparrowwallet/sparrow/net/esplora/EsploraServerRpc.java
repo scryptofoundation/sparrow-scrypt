@@ -194,10 +194,39 @@ public class EsploraServerRpc implements ElectrumServerRpc {
 
     @Override
     public Map<Integer, String> getBlockHeaders(Transport transport, Wallet wallet, Set<Integer> blockHeights) {
-        //Block header hex is not available uniformly across Esplora dialects. Transaction timestamps come
-        //from the tx status (block_time) instead, so this returns nothing and callers fall back.
-        return Collections.emptyMap();
+        //ElectrumServer.getTransactions dates every confirmed transaction from its block header, and before this
+        //returned real headers it marked every confirmed transaction on an Esplora backend unfetchable - so no
+        //Esplora wallet could load a confirmed receive. Both dialects serve /block-height/:h and /block/:hash/header.
+        //A header is used only if it hashes to the block hash the server gave for that height. Heights that fail
+        //are left out; ElectrumServer keeps those transactions with no date rather than dropping them.
+        Map<Integer, String> headers = new LinkedHashMap<>();
+        for(Integer height : blockHeights) {
+            try {
+                String blockHash = client.getBlockHash(height);
+                String headerHex = client.getBlockHeaderHex(blockHash);
+                if(headerHex.length() < BLOCK_HEADER_HEX_LENGTH) {
+                    log.warn("Esplora header for height " + height + " is too short");
+                    continue;
+                }
+
+                //Only the 80-byte header: some instances append the AuxPoW (merge-mining) data
+                String header = headerHex.substring(0, BLOCK_HEADER_HEX_LENGTH);
+                Sha256Hash headerHash = Sha256Hash.wrapReversed(Sha256Hash.hashTwice(Utils.hexToBytes(header)));
+                if(!headerHash.toString().equalsIgnoreCase(blockHash)) {
+                    log.warn("Esplora header for height " + height + " does not hash to block " + blockHash);
+                    continue;
+                }
+
+                headers.put(height, header);
+            } catch(EsploraException e) {
+                log.debug("Could not retrieve header for height " + height, e);
+            }
+        }
+
+        return headers;
     }
+
+    private static final int BLOCK_HEADER_HEX_LENGTH = 160;
 
     @Override
     public Map<Integer, BlockStats> getBlockStats(Transport transport, Set<Integer> blockHeights) {
