@@ -63,6 +63,19 @@ public class TcpTransport implements CloseableTransport, TimeoutCounter {
         this(server, null);
     }
 
+    /**
+     * The IP address of the node this transport is connected to, read from the open socket (no DNS lookup), or null
+     * when not connected. Through a proxy this is not the node's address, so callers should not show it then.
+     */
+    public String getRemoteIp() {
+        Socket connected = socket;
+        if(connected == null || !connected.isConnected() || connected.getInetAddress() == null) {
+            return null;
+        }
+
+        return connected.getInetAddress().getHostAddress();
+    }
+
     public TcpTransport(HostAndPort server, HostAndPort proxy) {
         this.server = server;
         this.socketFactory = (proxy == null ? SocketFactory.getDefault() : new ProxySocketFactory(proxy));

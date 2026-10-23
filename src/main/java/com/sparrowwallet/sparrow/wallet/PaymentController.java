@@ -623,11 +623,15 @@ public class PaymentController extends WalletFormController implements Initializ
         validationSupport.registerValidator(address, Validator.combine(
                 (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Invalid Address", !newValue.isEmpty() && !isValidRecipientAddress()),
                 (Control c, String newValue) -> {
+                    //Validation can run before the form is attached to its wallet, so build the message only
+                    //when there is something to warn about (getCoinsSharingRecipientAddress is empty then)
                     List<Coin> sharing = getCoinsSharingRecipientAddress();
-                    return ValidationResult.fromWarningIf( c, "Also a valid "
-                                    + sharing.stream().map(Coin::toDisplayString).collect(Collectors.joining(" and "))
-                                    + " address - check this is meant for " + getWalletForm().getWallet().getCoin().toDisplayString(),
-                            !sharing.isEmpty());
+                    if(sharing.isEmpty() || getWalletForm() == null) {
+                        return null;
+                    }
+                    return ValidationResult.fromWarning(c, "Also a valid "
+                            + sharing.stream().map(Coin::toDisplayString).collect(Collectors.joining(" and "))
+                            + " address - check this is meant for " + getWalletForm().getWallet().getCoin().toDisplayString());
                 }
         ));
         validationSupport.registerValidator(label, Validator.combine(

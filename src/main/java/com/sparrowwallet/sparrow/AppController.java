@@ -223,6 +223,10 @@ public class AppController implements Initializable {
     @FXML
     private UnlabeledToggleSwitch serverToggle;
 
+    private final Label connectionLabel = new Label();
+    private Integer connectionLabelHeight;
+    private final Map<String, String> resolvedNodeIps = new java.util.concurrent.ConcurrentHashMap<>();
+
     private Storage.KeyDerivationService keyDerivationService;
 
     private PauseTransition wait;
@@ -446,6 +450,10 @@ public class AppController implements Initializable {
         serverToggle.setDisable(!Config.get().hasServer());
         onlineProperty().bindBidirectional(serverToggle.selectedProperty());
         onlineProperty().addListener(new WeakChangeListener<>(serverToggleOnlineListener));
+        //Always-visible network + server, left of the toggle (the status text itself is transient)
+        connectionLabel.setPadding(new Insets(0, 10, 0, 0));
+        statusBar.getRightItems().addFirst(connectionLabel);
+        updateConnectionLabel(null);
         serverToggle.addEventHandler(MouseEvent.MOUSE_CLICKED, event -> {
             Config.get().setMode(serverToggle.isSelected() ? Mode.ONLINE : Mode.OFFLINE);
         });
@@ -1168,6 +1176,84 @@ public class AppController implements Initializable {
         Tooltip tooltip = new Tooltip(getServerToggleTooltipText(currentBlockHeight));
         tooltip.setShowDuration(Duration.seconds(15));
         serverToggle.setTooltip(tooltip);
+        updateConnectionLabel(currentBlockHeight);
+    }
+
+    /**
+     * The status bar's permanent label: "Testnet - online - ssl://host:port (ip) - height", or "- offline -" with the
+     * configured server. Test mode switches every coin at once, so the network is always shown, in amber whenever it
+     * is not mainnet, to make a test session hard to mistake for a real one. The server is the focused coin's (the
+     * connection follows the focused wallet tab).
+     */
+    private void updateConnectionLabel(Integer currentBlockHeight) {
+        if(currentBlockHeight != null) {
+            connectionLabelHeight = currentBlockHeight;
+        }
+
+        String networkName = Network.get().getName();
+        String network = networkName.substring(0, 1).toUpperCase(Locale.ROOT) + networkName.substring(1);
+        //The server's full URL (protocol, host, port), not its short display name, so the exact node is visible
+        com.sparrowwallet.sparrow.io.Server configured = Config.get().getServer();
+        String server = configured == null ? "no server" : configured.getUrl();
+
+        String text;
+        if(AppServices.isConnected()) {
+            String ip = getConnectedNodeIp(configured);
+            text = network + " - online - " + server + (ip != null ? " (" + ip + ")" : "")
+                    + (connectionLabelHeight != null ? " - " + String.format(Locale.ROOT, "%,d", connectionLabelHeight) : "");
+        } else if(AppServices.isConnecting()) {
+            connectionLabelHeight = null;
+            text = network + " - connecting - " + server;
+        } else {
+            connectionLabelHeight = null;
+            text = network + " - offline - " + server;
+        }
+
+        connectionLabel.setText(text);
+        connectionLabel.setStyle(Network.get() == Network.MAINNET ? "" : "-fx-text-fill: #e3a23d; -fx-font-weight: bold;");
+    }
+
+    /**
+     * The node's IP for the label. An Electrum connection reports it from its open socket. An HTTPS (Esplora) server
+     * has no socket here, so its host is resolved once in the background and cached - but never while a proxy or Tor
+     * is in use, since that lookup would leave the proxy, and the socket's peer would only be the proxy anyway.
+     */
+    private String getConnectedNodeIp(com.sparrowwallet.sparrow.io.Server server) {
+        if(Config.get().isUseProxy() || AppServices.isTorRunning()) {
+            return "via proxy";
+        }
+
+        String socketIp = com.sparrowwallet.sparrow.net.ElectrumServer.getConnectedNodeIp();
+        if(socketIp != null || server == null) {
+            return socketIp;
+        }
+
+        String host;
+        try {
+            host = java.net.URI.create(server.getUrl()).getHost();
+        } catch(Exception e) {
+            return null;
+        }
+        if(host == null) {
+            return null;
+        }
+
+        String cached = resolvedNodeIps.get(host);
+        if(cached != null) {
+            return cached;
+        }
+
+        Thread resolver = new Thread(() -> {
+            try {
+                resolvedNodeIps.put(host, java.net.InetAddress.getByName(host).getHostAddress());
+                Platform.runLater(() -> updateConnectionLabel(null));
+            } catch(Exception e) {
+                log.debug("Could not resolve " + host, e);
+            }
+        }, "NodeIpResolver");
+        resolver.setDaemon(true);
+        resolver.start();
+        return null;
     }
 
     private String getServerToggleTooltipText(Integer currentBlockHeight) {
@@ -3305,6 +3391,7 @@ public class AppController implements Initializable {
             statusUpdated(new StatusEvent(event.getStatus(), 120));
         }
         serverToggleStartAnimation();
+        updateConnectionLabel(null);
     }
 
     @Subscribe
@@ -3347,6 +3434,7 @@ public class AppController implements Initializable {
             tabLabelStopAnimation(wallet);
         }
         serverToggleStopAnimation();
+        updateConnectionLabel(null);
     }
 
     @Subscribe

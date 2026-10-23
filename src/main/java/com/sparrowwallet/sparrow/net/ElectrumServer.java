@@ -226,6 +226,12 @@ public class ElectrumServer {
         return protocol == Protocol.HTTP || protocol == Protocol.HTTPS;
     }
 
+    /** The connected Electrum node's IP from the open socket, or null (not connected, Esplora, or no TCP socket). */
+    public static String getConnectedNodeIp() {
+        CloseableTransport current = transport;
+        return current instanceof TcpTransport tcpTransport ? tcpTransport.getRemoteIp() : null;
+    }
+
     private static boolean isEsploraConfigured() {
         ServerType serverType = Config.get().getServerType();
         return (serverType == ServerType.ELECTRUM_SERVER || serverType == ServerType.PUBLIC_ELECTRUM_SERVER)
