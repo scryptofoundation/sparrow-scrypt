@@ -85,8 +85,9 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
         Label coinLabel = new Label("Coin:");
         coinLabel.setTranslateY(4);
         coinCombo = new ComboBox<>();
-        coinCombo.getItems().addAll(Coin.values());
-        coinCombo.setValue(Coin.get());
+        //Only coins that run on this network: test mode switches every coin at once
+        coinCombo.getItems().addAll(Coin.availableOn(com.sparrowwallet.drongo.Network.get()));
+        coinCombo.setValue(coinCombo.getItems().contains(Coin.get()) ? Coin.get() : Coin.LITECOIN);
         coinCombo.setConverter(new StringConverter<>() {
             @Override
             public String toString(Coin coin) {

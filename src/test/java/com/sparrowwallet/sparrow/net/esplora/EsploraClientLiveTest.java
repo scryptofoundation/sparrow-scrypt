@@ -39,6 +39,52 @@ public class EsploraClientLiveTest {
         exercise("Junkcoin", "https://explorer.junk-coin.com/api");
     }
 
+    @Test
+    public void pepecoinTestnetAddressesParse() throws EsploraException {
+        exerciseTestnet(com.sparrowwallet.drongo.Coin.PEPECOIN, "https://pepe-testnet-api.nintondo.io");
+    }
+
+    @Test
+    public void junkcoinTestnetAddressesParse() throws EsploraException {
+        exerciseTestnet(com.sparrowwallet.drongo.Coin.JUNKCOIN, "https://jkc-testnet-api.s3na.xyz");
+        exerciseTestnet(com.sparrowwallet.drongo.Coin.JUNKCOIN, "https://explorer.junk-coin.com/testnet/api");
+    }
+
+    /**
+     * Test mode check against the live chain: every base58 address paid in recent testnet blocks must parse with
+     * the coin's testnet parameters. A wrong version byte would reject them, or accept them only as mainnet.
+     * Bech32 outputs are skipped (these chains are configured without segwit here).
+     */
+    private void exerciseTestnet(com.sparrowwallet.drongo.Coin coin, String baseUrl) throws EsploraException {
+        com.sparrowwallet.drongo.Network previousNetwork = com.sparrowwallet.drongo.Network.get();
+        com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(coin);
+        com.sparrowwallet.drongo.Network.set(com.sparrowwallet.drongo.Network.TESTNET);
+        try {
+            EsploraClient client = new EsploraClient(baseUrl);
+            Assumptions.assumeTrue(client.getTipHeight() > 0, baseUrl + " returned no tip");
+            int parsed = 0;
+            for(String txid : client.getBlockTxids(client.getTipHash()).stream().limit(5).toList()) {
+                for(EsploraClient.EsploraOutput output : client.getTransaction(txid).vout()) {
+                    String address = output.scriptpubkey_address();
+                    if(address == null || address.toLowerCase(java.util.Locale.ROOT).startsWith("t")) {
+                        continue; //no address (OP_RETURN) or a bech32 testnet address
+                    }
+                    try {
+                        com.sparrowwallet.drongo.address.Address.fromString(address);
+                        parsed++;
+                    } catch(Exception e) {
+                        Assertions.fail(coin + " testnet address " + address + " from " + baseUrl + " did not parse: " + e.getMessage());
+                    }
+                }
+            }
+            System.out.println(coin + " testnet " + baseUrl + ": parsed " + parsed + " addresses");
+            Assertions.assertTrue(parsed > 0, "no base58 addresses found in recent " + coin + " testnet blocks");
+        } finally {
+            com.sparrowwallet.drongo.Network.set(previousNetwork);
+            com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+        }
+    }
+
     /**
      * Verifies the EsploraServerRpc adapter layer (not just the client): the tip, the sat/vB -> BTC/kB
      * fee conversion, and VerboseTransaction construction, against live Bellscoin.

@@ -2538,7 +2538,8 @@ public class AppController implements Initializable {
             MenuItem setCoin = new MenuItem("Set Wallet Coin...");
             setCoin.setOnAction(event -> {
                 Wallet masterWallet = walletTabData.getWalletForm().getMasterWallet();
-                ChoiceDialog<com.sparrowwallet.drongo.Coin> coinDialog = new ChoiceDialog<>(masterWallet.getCoin(), com.sparrowwallet.drongo.Coin.values());
+                List<com.sparrowwallet.drongo.Coin> coinChoices = com.sparrowwallet.drongo.Coin.availableOn(Network.get());
+                ChoiceDialog<com.sparrowwallet.drongo.Coin> coinDialog = new ChoiceDialog<>(coinChoices.contains(masterWallet.getCoin()) ? masterWallet.getCoin() : coinChoices.getFirst(), coinChoices);
                 coinDialog.setTitle("Set Wallet Coin");
                 coinDialog.setHeaderText("Set the coin for " + masterWallet.getName());
                 coinDialog.setContentText("Coin:");

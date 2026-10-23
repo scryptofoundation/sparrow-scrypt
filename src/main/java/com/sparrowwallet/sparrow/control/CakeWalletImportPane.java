@@ -72,8 +72,9 @@ public class CakeWalletImportPane extends MnemonicKeystorePane {
 
     private Node getOptionsEntry() {
         Label coinLabel = new Label("Coin:");
-        ComboBox<Coin> coinCombo = new ComboBox<>(FXCollections.observableArrayList(CakeWallet.COINS));
-        coinCombo.setValue(CakeWallet.COINS.contains(Coin.get()) ? Coin.get() : Coin.LITECOIN);
+        List<Coin> coins = CakeWallet.COINS.stream().filter(coin -> coin.supports(com.sparrowwallet.drongo.Network.get())).toList();
+        ComboBox<Coin> coinCombo = new ComboBox<>(FXCollections.observableArrayList(coins));
+        coinCombo.setValue(coins.contains(Coin.get()) ? Coin.get() : Coin.LITECOIN);
         coinCombo.setConverter(new StringConverter<>() {
             @Override
             public String toString(Coin coin) {

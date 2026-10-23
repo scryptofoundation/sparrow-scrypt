@@ -44,7 +44,15 @@ public enum PublicElectrumServer {
     BELLS_NINTONDO("api.nintondo.io", "https://api.nintondo.io", Coin.BELLSCOIN, Network.MAINNET),
     PEPE_PEPPOOL("peppool.space", "https://peppool.space/api", Coin.PEPECOIN, Network.MAINNET),
     LUCKY_LUCKYSCAN("luckyscan.org", "https://luckyscan.org/api", Coin.LUCKYCOIN, Network.MAINNET),
-    JUNK_EXPLORER("explorer.junk-coin.com", "https://explorer.junk-coin.com/api", Coin.JUNKCOIN, Network.MAINNET);
+    JUNK_EXPLORER("explorer.junk-coin.com", "https://explorer.junk-coin.com/api", Coin.JUNKCOIN, Network.MAINNET),
+
+    //Pepecoin testnet Esplora (Nintondo), verified 2026-10-23: tip ~1.55M, genesis f9f4ea4a... matches
+    PEPE_TESTNET_NINTONDO("pepe-testnet-api.nintondo.io", "https://pepe-testnet-api.nintondo.io", Coin.PEPECOIN, Network.TESTNET),
+
+    //Junkcoin testnet Esplora, verified 2026-10-23: both at tip 248438 with the testnet block 1 (ccedee1f...),
+    //which is how they are told apart from mainnet (the two chains share a genesis hash)
+    JUNK_TESTNET_S3NA("jkc-testnet-api.s3na.xyz", "https://jkc-testnet-api.s3na.xyz", Coin.JUNKCOIN, Network.TESTNET),
+    JUNK_TESTNET_EXPLORER("explorer.junk-coin.com/testnet", "https://explorer.junk-coin.com/testnet/api", Coin.JUNKCOIN, Network.TESTNET);
 
     PublicElectrumServer(String name, String url, Coin coin, Network network) {
         this.server = new Server(url, name);
