@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.mweb;
 
+import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.protocol.TransactionInput;
 import com.sparrowwallet.drongo.protocol.TransactionOutPoint;
 import com.sparrowwallet.drongo.protocol.TransactionOutput;
@@ -18,6 +19,16 @@ public class MwebFeeEstimator implements FeeEstimator {
         //Without this, every transaction build on those chains NPEs and fails silently, greying out Create Transaction.
         //Gated on the wallet's own coin, not the focused tab's, so a non-LTC build is safe while an LTC tab has focus.
         if(!wallet.getCoin().isMwebSupported()) {
+            return 0;
+        }
+
+        //A plain transparent Litecoin transaction (no MWEB input, no output to an MWEB address) has no peg fee, so it
+        //must not depend on the MWEB daemon: before mwebd has started (startup, offline, or a watch-only wallet
+        //preparing a PSBT for an external signer) MwebServer has no RPC stub, and asking it NPE'd every build.
+        boolean mwebInput = wallet.getScriptType() == ScriptType.MWEB
+                || utxos.values().stream().anyMatch(node -> node.getWallet() != null && node.getWallet().getScriptType() == ScriptType.MWEB);
+        boolean mwebOutput = outputs.stream().anyMatch(out -> ScriptType.MWEB.isScriptType(out.getTransactionOutput().getScript()));
+        if(!mwebInput && !mwebOutput) {
             return 0;
         }
 

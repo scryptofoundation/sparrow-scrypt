@@ -59,8 +59,9 @@ public class TestnetEndToEndLiveTest {
 
     @Test
     public void litecoin() throws Exception {
-        //Native segwit, the app's default for Litecoin. 0.01 tLTC.
-        run(Coin.LITECOIN, ScriptType.P2WPKH, Backend.ELECTRUM, PublicElectrumServer.TESTNET_BYSH_ME.getUrl(), 1_000_000L);
+        //Native segwit, the app's default for Litecoin. 0.002 tLTC, so one 0.01 tLTC faucet claim
+        //(cypherfaucet.com/ltc-testnet) covers the run
+        run(Coin.LITECOIN, ScriptType.P2WPKH, Backend.ELECTRUM, PublicElectrumServer.TESTNET_BYSH_ME.getUrl(), 200_000L);
     }
 
     private enum Backend { ESPLORA, ELECTRUM }
