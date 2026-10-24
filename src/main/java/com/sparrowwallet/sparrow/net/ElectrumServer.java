@@ -245,6 +245,12 @@ public class ElectrumServer {
 
     public static synchronized void closeActiveConnection() throws ServerException {
         esploraConnected = false;
+        //Drop an Esplora adapter with its connection. getTransport() returns no transport while the RPC is Esplora,
+        //and ConnectionService only swaps in the Electrum RPC after connecting - so switching from an Esplora coin's
+        //tab (Pepecoin, Junkcoin) to an Electrum coin's (Litecoin) failed with an NPE in connect().
+        if(electrumServerRpc instanceof EsploraServerRpc) {
+            electrumServerRpc = new SimpleElectrumServerRpc();
+        }
         if(transport != null) {
             closeConnection(transport);
             transport = null;
