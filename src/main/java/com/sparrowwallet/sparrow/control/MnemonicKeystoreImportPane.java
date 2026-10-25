@@ -315,9 +315,17 @@ public class MnemonicKeystoreImportPane extends MnemonicKeystorePane {
         contentBox.setSpacing(20);
         contentBox.getChildren().add(derivationField);
         contentBox.getChildren().add(importDerivationButton);
-        contentBox.setPadding(new Insets(10, 30, 10, 30));
-        contentBox.setPrefHeight(60);
 
-        return contentBox;
+        //Named presets for this wallet's coin and script type, so users pick a path instead of typing one
+        javafx.scene.layout.VBox entryBox = new javafx.scene.layout.VBox(10);
+        if(wallet != null && wallet.getScriptType() != null) {
+            entryBox.getChildren().add(new DerivationPresetBox(wallet.getScriptType(), derivationField));
+        }
+        entryBox.getChildren().add(contentBox);
+        entryBox.setPadding(new Insets(10, 30, 10, 30));
+        //Grow to fit the dropdown, note and path row rather than clipping them to the old fixed height
+        entryBox.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+
+        return entryBox;
     }
 }
