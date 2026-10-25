@@ -137,21 +137,35 @@ public class Storage {
      * Litecoin app and gating it off its own server. Child wallets follow the master via Wallet.getCoin().
      */
     private void inferLegacyCoin(Wallet wallet) {
-        Coin pathCoin = inferCoinFromPath();
-
         if(wallet.coin() == null) {
+            Coin pathCoin = inferCoinFromPath();
             Coin inferred = pathCoin != null ? pathCoin : inferCoinFromDerivation(wallet);
             if(inferred != null) {
                 log.info("Inferred coin " + inferred + " for legacy wallet " + wallet.getName() + " (" + walletFile.getAbsolutePath() + ")");
                 wallet.setCoin(inferred);
             }
-        } else if(wallet.coin() == Coin.LITECOIN && pathCoin != null && pathCoin != Coin.LITECOIN) {
+        } else {
             //Repair: interim 2026-07-22 builds could stamp LITECOIN into a legacy flavor wallet via the
             //derivation-based inference (all flavor wallets derive at Litecoin's 2'). The flavor home
-            //dir the wallet lives in is authoritative over a stored LITECOIN that contradicts it.
-            log.warn("Correcting stamped coin LITECOIN -> " + pathCoin + " for wallet " + wallet.getName() + " (" + walletFile.getAbsolutePath() + ")");
-            wallet.setCoin(pathCoin);
+            //dir the wallet lives in is authoritative over a stored LITECOIN that contradicts it. A user
+            //folder named after a coin is not: a Litecoin wallet saved in Desktop\Sparrow\Doge stays Litecoin.
+            Coin homeCoin = inferCoinFromFlavorHome();
+            if(wallet.coin() == Coin.LITECOIN && homeCoin != null && homeCoin != Coin.LITECOIN) {
+                log.warn("Correcting stamped coin LITECOIN -> " + homeCoin + " for wallet " + wallet.getName() + " (" + walletFile.getAbsolutePath() + ")");
+                wallet.setCoin(homeCoin);
+            }
         }
+    }
+
+    private Coin inferCoinFromFlavorHome() {
+        String path = walletFile.getAbsolutePath().toLowerCase(Locale.ROOT);
+        for(Coin coin : Coin.values()) {
+            if(path.contains("sparrow-" + coin.getTicker().toLowerCase(Locale.ROOT))) {
+                return coin;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -161,12 +175,12 @@ public class Storage {
      * derivation path identifies nothing.
      */
     private Coin inferCoinFromPath() {
-        String path = walletFile.getAbsolutePath().toLowerCase(Locale.ROOT);
-        for(Coin coin : Coin.values()) {
-            if(path.contains("sparrow-" + coin.getTicker().toLowerCase(Locale.ROOT))) {
-                return coin;
-            }
+        Coin homeCoin = inferCoinFromFlavorHome();
+        if(homeCoin != null) {
+            return homeCoin;
         }
+
+        String path = walletFile.getAbsolutePath().toLowerCase(Locale.ROOT);
 
         //Wallets copied out of their flavor home often live in user folders named after the coin
         //(e.g. Desktop\Sparrow\Doge\wallet.mv.db). Match whole directory names only, deepest first so
