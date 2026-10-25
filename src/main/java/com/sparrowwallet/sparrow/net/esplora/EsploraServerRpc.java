@@ -47,7 +47,16 @@ public class EsploraServerRpc implements ElectrumServerRpc {
     private final com.sparrowwallet.drongo.Coin coin;
 
     public EsploraServerRpc(String baseUrl) {
-        this.client = new EsploraClient(baseUrl);
+        this(baseUrl, null);
+    }
+
+    public boolean isProxied() {
+        return client.isProxied();
+    }
+
+    /** @param proxiedClient the app's HTTP client carrying Tor or the user's proxy, or null to connect directly */
+    public EsploraServerRpc(String baseUrl, com.sparrowwallet.sparrow.net.HttpClientService proxiedClient) {
+        this.client = new EsploraClient(baseUrl, proxiedClient);
         this.coin = com.sparrowwallet.drongo.Coin.get();
     }
 

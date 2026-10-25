@@ -1624,17 +1624,23 @@ public class ElectrumServer {
          * refresh fee rates on the usual period.
          */
         private FeeRatesUpdatedEvent esploraCall(ElectrumServer electrumServer) throws ServerException {
-            //EsploraClient uses the JDK HttpClient, which cannot route through a SOCKS proxy or Tor. Refuse rather than
-            //connect directly: going around the user's proxy would expose their IP address and wallet addresses.
-            //Checked on every call, since the proxy can be switched on while connected.
-            if(Config.get().isUseProxy() || AppServices.isTorRunning()) {
+            //With a proxy or Tor in use, every Esplora request goes through the app's HTTP client, which carries it
+            //(the JDK client EsploraClient uses directly cannot do SOCKS). If a proxy is wanted but not available yet
+            //- Tor still starting, or the proxy enabled with no address - refuse rather than connect directly, which
+            //would expose the user's IP and wallet addresses. Checked on every call: the proxy can be switched on or
+            //off while connected, and the adapter is rebuilt when that changes.
+            boolean proxyWanted = Config.get().isUseProxy() || AppServices.isTorRunning() || Config.get().requiresInternalTor();
+            if(proxyWanted && AppServices.getTorProxy() == null) {
                 esploraConnected = false;
-                throw new ServerConfigException("Esplora servers cannot be reached through a proxy or Tor yet. Turn off the proxy in Server Settings, or use an Electrum or Core server for this coin.");
+                throw new ServerConfigException("A proxy or Tor is enabled but not available, so the Esplora server is not contacted directly. Check the proxy in Server Settings.");
+            }
+            if(!firstCall && electrumServerRpc instanceof EsploraServerRpc current && current.isProxied() != proxyWanted) {
+                firstCall = true;
             }
 
             if(firstCall) {
                 Server server = Config.get().getServer();
-                electrumServerRpc = new EsploraServerRpc(server.getUrl());
+                electrumServerRpc = new EsploraServerRpc(server.getUrl(), proxyWanted ? AppServices.getHttpClientService() : null);
                 List<String> serverVersion = electrumServerRpc.getServerVersion(null, "Sparrow", SUPPORTED_VERSIONS);
                 serverCapability = getServerCapability(serverVersion);
 

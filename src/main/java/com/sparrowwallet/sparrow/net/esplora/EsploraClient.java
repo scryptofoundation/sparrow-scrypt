@@ -31,11 +31,59 @@ public class EsploraClient {
 
     private final String baseUrl;
     private final HttpClient httpClient;
+    //The app's tern client, carrying the bundled Tor or the user's SOCKS proxy. The JDK HttpClient cannot use a
+    //SOCKS proxy at all, so when one is in use every request goes through this instead (hostnames are resolved by
+    //the proxy, not locally). Null for a direct connection.
+    private final com.sparrowwallet.sparrow.net.HttpClientService proxiedClient;
 
     public EsploraClient(String baseUrl) {
+        this(baseUrl, null);
+    }
+
+    public EsploraClient(String baseUrl, com.sparrowwallet.sparrow.net.HttpClientService proxiedClient) {
         //Trim a trailing slash so path joins are predictable.
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
+        this.proxiedClient = proxiedClient;
+    }
+
+    public boolean isProxied() {
+        return proxiedClient != null;
+    }
+
+    private record Response(int status, String body) {}
+
+    /** One request through whichever transport this client uses. A null body is a GET, otherwise a text/plain POST. */
+    private Response send(String path, String postBody) throws Exception {
+        if(proxiedClient != null) {
+            try {
+                String body = postBody == null
+                        ? proxiedClient.requestJson(baseUrl + path, String.class, null) //String.class: tern returns the raw body
+                        : proxiedClient.postString(baseUrl + path, null, "text/plain", postBody);
+                return new Response(200, body);
+            } catch(Exception e) {
+                com.sparrowwallet.tern.http.client.HttpResponseException status = findStatus(e);
+                if(status != null) {
+                    return new Response(status.getStatusCode(), status.getResponseBody());
+                }
+                throw e;
+            }
+        }
+
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path)).timeout(Duration.ofSeconds(30));
+        HttpRequest request = postBody == null ? builder.GET().build()
+                : builder.header("Content-Type", "text/plain").POST(HttpRequest.BodyPublishers.ofString(postBody)).build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return new Response(response.statusCode(), response.body());
+    }
+
+    private static com.sparrowwallet.tern.http.client.HttpResponseException findStatus(Throwable e) {
+        for(Throwable t = e; t != null; t = t.getCause()) {
+            if(t instanceof com.sparrowwallet.tern.http.client.HttpResponseException status) {
+                return status;
+            }
+        }
+        return null;
     }
 
     /** Current chain tip height. */
@@ -178,19 +226,14 @@ public class EsploraClient {
     /** Broadcast a raw transaction; returns the txid. */
     public String broadcast(String txHex) throws EsploraException {
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/tx"))
-                    .timeout(Duration.ofSeconds(30))
-                    .header("Content-Type", "text/plain")
-                    .POST(HttpRequest.BodyPublishers.ofString(txHex))
-                    .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if(response.statusCode() == 404 || response.statusCode() == 405) {
+            Response response = send("/tx", txHex);
+            if(response.status() == 404 || response.status() == 405) {
                 //Not every public instance exposes the write half of the API - explorer.junk-coin.com serves
                 //the whole read path but has no POST /tx, so a wallet on it can sync but never send.
                 throw new EsploraException("The server at " + baseUrl + " does not accept transaction broadcasts. " +
                         "Configure a server that does in order to send from this wallet.");
             }
-            if(response.statusCode() != 200) {
+            if(response.status() != 200) {
                 throw new EsploraException(extractRejectReason(response.body()));
             }
             //The returned txid is subject to the same quoting as the other text responses
@@ -252,11 +295,9 @@ public class EsploraClient {
 
     private String getString(String path) throws EsploraException {
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
-                    .timeout(Duration.ofSeconds(30)).GET().build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if(response.statusCode() != 200) {
-                throw new EsploraException("Request " + path + " failed (HTTP " + response.statusCode() + "): " + response.body());
+            Response response = send(path, null);
+            if(response.status() != 200) {
+                throw new EsploraException("Request " + path + " failed (HTTP " + response.status() + "): " + response.body());
             }
             return response.body();
         } catch(EsploraException e) {
