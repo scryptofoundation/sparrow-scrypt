@@ -64,6 +64,7 @@ public class Config {
     private Boolean suggestChangeWalletsDir;
     private File walletsDir;
     private List<File> recentWalletFiles;
+    private List<String> litVmTokens;
     private Integer keyDerivationPeriod;
     private long dustAttackThreshold = DUST_ATTACK_THRESHOLD_SATS;
     private int enumerateHwPeriod = ENUMERATE_HW_PERIOD_SECS;
@@ -446,6 +447,16 @@ public class Config {
 
     public List<File> getRecentWalletFiles() {
         return recentWalletFiles;
+    }
+
+    /** ERC-20 contract addresses the user tracks in LitVM tabs (public, not wallet-specific). */
+    public List<String> getLitVmTokens() {
+        return litVmTokens == null ? new ArrayList<>() : new ArrayList<>(litVmTokens);
+    }
+
+    public void setLitVmTokens(List<String> litVmTokens) {
+        this.litVmTokens = new ArrayList<>(litVmTokens);
+        flush();
     }
 
     public void setRecentWalletFiles(List<File> recentWalletFiles) {
