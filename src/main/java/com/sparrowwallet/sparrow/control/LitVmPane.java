@@ -78,8 +78,12 @@ public class LitVmPane extends BorderPane {
 
         String accountText = link.getSource().getDisplayName() + (link.getDerivationPath() == null ? "" : " at " + link.getDerivationPath());
 
+        LitVmBridgePane bridgePane = new LitVmBridgePane(walletForm, client, this::setStatus, () -> refreshBalances(address));
         Button refreshButton = new Button("Refresh");
-        refreshButton.setOnAction(e -> refreshBalances(address));
+        refreshButton.setOnAction(e -> {
+            refreshBalances(address);
+            bridgePane.refresh();
+        });
         Button addTokenButton = new Button("Add Token...");
         addTokenButton.setOnAction(e -> addToken(address));
 
@@ -130,12 +134,15 @@ public class LitVmPane extends BorderPane {
 
         statusLabel.setWrapText(true);
         statusLabel.setMaxWidth(560);
-        VBox content = new VBox(14, title, warning, grid, statusLabel, unlinkButton);
+        Label bridgesTitle = new Label("Bridges");
+        bridgesTitle.setStyle("-fx-font-size: 1.2em;");
+        VBox content = new VBox(14, title, warning, grid, statusLabel, new Separator(), bridgesTitle, bridgePane, new Separator(), unlinkButton);
         content.setPadding(new Insets(20, 25, 20, 25));
         setCenter(new ScrollPane(content));
         ((ScrollPane)getCenter()).setFitToWidth(true);
 
         refreshBalances(address);
+        bridgePane.refresh();
     }
 
     private Wallet getMasterWallet() {

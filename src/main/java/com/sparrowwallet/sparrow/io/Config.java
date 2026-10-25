@@ -65,6 +65,7 @@ public class Config {
     private File walletsDir;
     private List<File> recentWalletFiles;
     private List<String> litVmTokens;
+    private List<String> litVmBridgeHistory;
     private Integer keyDerivationPeriod;
     private long dustAttackThreshold = DUST_ATTACK_THRESHOLD_SATS;
     private int enumerateHwPeriod = ENUMERATE_HW_PERIOD_SECS;
@@ -456,6 +457,16 @@ public class Config {
 
     public void setLitVmTokens(List<String> litVmTokens) {
         this.litVmTokens = new ArrayList<>(litVmTokens);
+        flush();
+    }
+
+    /** Bridge transactions made from LitVM tabs, as "kind|txHash|evmAddress" (public chain data, no secrets). */
+    public List<String> getLitVmBridgeHistory() {
+        return litVmBridgeHistory == null ? new ArrayList<>() : new ArrayList<>(litVmBridgeHistory);
+    }
+
+    public void setLitVmBridgeHistory(List<String> litVmBridgeHistory) {
+        this.litVmBridgeHistory = new ArrayList<>(litVmBridgeHistory);
         flush();
     }
 
