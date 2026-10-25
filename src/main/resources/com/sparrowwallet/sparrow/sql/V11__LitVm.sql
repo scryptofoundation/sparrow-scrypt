@@ -1,0 +1,2 @@
+create table litVmLink (id identity not null, source integer not null, address varchar(42) not null, accountIndex integer not null, secret varbinary(512), initialisationVector varbinary(32), encryptedBytes varbinary(512), keySalt varbinary(32), deriver integer, crypter integer, creationTimeSeconds bigint, wallet bigint not null);
+alter table litVmLink add constraint litVmLink_wallet foreign key (wallet) references wallet;

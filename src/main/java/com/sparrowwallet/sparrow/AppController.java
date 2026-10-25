@@ -266,7 +266,7 @@ public class AppController implements Initializable {
             }
 
             List<WalletTabData> closedWalletTabs = c.getRemoved().stream().filter(tab -> tab.getUserData() instanceof WalletTabData)
-                    .flatMap(tab -> ((TabPane) tab.getContent()).getTabs().stream().map(subTab -> (WalletTabData) subTab.getUserData())).collect(Collectors.toList());
+                    .flatMap(tab -> ((TabPane) tab.getContent()).getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> (WalletTabData) subTab.getUserData())).collect(Collectors.toList());
             if(!closedWalletTabs.isEmpty()) {
                 EventManager.get().post(new WalletTabsClosedEvent(closedWalletTabs));
             }
@@ -907,7 +907,9 @@ public class AppController implements Initializable {
             if(tab.getUserData() instanceof WalletTabData) {
                 TabPane subTabs = (TabPane)tab.getContent();
                 for(Tab subTab : subTabs.getTabs()) {
-                    openWalletTabData.add((WalletTabData)subTab.getUserData());
+                    if(isWalletSubTab(subTab)) {
+                        openWalletTabData.add((WalletTabData)subTab.getUserData());
+                    }
                 }
             }
         }
@@ -931,7 +933,7 @@ public class AppController implements Initializable {
                 TabPane subTabs = (TabPane)tab.getContent();
                 for(Tab subTab : subTabs.getTabs()) {
                     WalletTabData walletTabData = (WalletTabData)subTab.getUserData();
-                    if(walletTabData.getWallet() == wallet) {
+                    if(walletTabData.getWallet() == wallet && isWalletSubTab(subTab)) {
                         tabs.getSelectionModel().select(tab);
                         subTabs.getSelectionModel().select(subTab);
                     }
@@ -1034,7 +1036,7 @@ public class AppController implements Initializable {
             TabData tabData = (TabData)tab.getUserData();
             if(tabData instanceof WalletTabData) {
                 TabPane subTabs = (TabPane)tab.getContent();
-                allWalletForms.addAll(subTabs.getTabs().stream().map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm())
+                allWalletForms.addAll(subTabs.getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm())
                         .filter(walletForm -> walletForm.getWallet().isValid() && !walletForm.isLocked()).collect(Collectors.toList()));
             }
         }
@@ -1526,7 +1528,7 @@ public class AppController implements Initializable {
                     TabPane subTabs = (TabPane)tab.getContent();
                     for(Tab subTab : subTabs.getTabs()) {
                         WalletTabData walletTabData = (WalletTabData)subTab.getUserData();
-                        if(walletTabData.getStorage().getWalletFile().equals(walletFile)) {
+                        if(isWalletSubTab(subTab) && walletTabData.getStorage().getWalletFile().equals(walletFile)) {
                             iter.remove();
                         }
                     }
@@ -1675,6 +1677,34 @@ public class AppController implements Initializable {
         messageSignDialog.showAndWait();
     }
 
+    public void litVmTestnet(ActionEvent event) {
+        WalletForm selectedWalletForm = getSelectedWalletForm();
+        if(selectedWalletForm == null) {
+            AppServices.showErrorDialog("No Wallet Open", "Open a Litecoin wallet to link a LitVM account to it.");
+            return;
+        }
+
+        Wallet masterWallet = selectedWalletForm.getWallet().isMasterWallet() ? selectedWalletForm.getWallet() : selectedWalletForm.getWallet().getMasterWallet();
+        if(masterWallet.getLitVmLink() != null) {
+            Tab walletTab = getMasterWalletTab(masterWallet);
+            if(walletTab != null) {
+                TabPane subTabs = (TabPane)walletTab.getContent();
+                Tab litVmSubTab = getLitVmSubTab(subTabs);
+                if(litVmSubTab != null) {
+                    subTabs.getSelectionModel().select(litVmSubTab);
+                }
+            }
+            return;
+        }
+
+        if(!LitVmLinkDialog.canLink(masterWallet)) {
+            AppServices.showErrorDialog("LitVM Needs a Litecoin Wallet", "LitVM is linked to a Litecoin wallet and shown as a LitVM sub-tab under it. Select a Litecoin (non-MWEB) wallet first.");
+            return;
+        }
+
+        LitVmLinkDialog.link(masterWallet, selectedWalletForm.getStorage(), rootStack.getScene().getWindow());
+    }
+
     public void sendToMany(ActionEvent event) {
         sendToMany(Collections.emptyList());
     }
@@ -1787,7 +1817,7 @@ public class AppController implements Initializable {
             TabData tabData = (TabData) selectedTab.getUserData();
             if(tabData instanceof WalletTabData) {
                 TabPane subTabs = (TabPane) selectedTab.getContent();
-                List<WalletForm> walletForms = subTabs.getTabs().stream().map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm()).collect(Collectors.toList());
+                List<WalletForm> walletForms = subTabs.getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm()).collect(Collectors.toList());
                 if(!walletForms.isEmpty()) {
                     searchWallets(walletForms);
                 }
@@ -1801,7 +1831,7 @@ public class AppController implements Initializable {
             TabData tabData = (TabData)tab.getUserData();
             if(tabData instanceof WalletTabData) {
                 TabPane subTabs = (TabPane)tab.getContent();
-                allWalletForms.addAll(subTabs.getTabs().stream().map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm())
+                allWalletForms.addAll(subTabs.getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm())
                         .filter(walletForm -> walletForm.getWallet().isValid() && !walletForm.isLocked()).collect(Collectors.toList()));
             }
         }
@@ -1843,7 +1873,7 @@ public class AppController implements Initializable {
         for(Tab tab : tabs.getTabs()) {
             if(tab.getUserData() instanceof WalletTabData) {
                 TabPane subTabs = (TabPane)tab.getContent();
-                allWalletForms.add(subTabs.getTabs().stream().map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm())
+                allWalletForms.add(subTabs.getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm())
                         .filter(walletForm -> walletForm.getWallet().isValid() && !walletForm.isLocked()).collect(Collectors.toList()));
             }
         }
@@ -1863,7 +1893,7 @@ public class AppController implements Initializable {
             TabData tabData = (TabData) selectedTab.getUserData();
             if(tabData instanceof WalletTabData) {
                 TabPane subTabs = (TabPane) selectedTab.getContent();
-                List<WalletForm> walletForms = subTabs.getTabs().stream().map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm()).collect(Collectors.toList());
+                List<WalletForm> walletForms = subTabs.getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> ((WalletTabData)subTab.getUserData()).getWalletForm()).collect(Collectors.toList());
                 if(!walletForms.isEmpty()) {
                     WalletSummaryDialog walletSummaryDialog = new WalletSummaryDialog(List.of(walletForms));
                     walletSummaryDialog.initOwner(rootStack.getScene().getWindow());
@@ -1955,6 +1985,9 @@ public class AppController implements Initializable {
             tab.setContent(subTabs);
 
             WalletForm walletForm = addWalletSubTab(subTabs, storage, wallet);
+            if(wallet.getLitVmLink() != null) {
+                addLitVmSubTab(subTabs, walletForm, false);
+            }
             TabData tabData = new WalletTabData(TabData.TabType.WALLET, walletForm);
             tab.setUserData(tabData);
             tab.setContextMenu(getTabContextMenu(tab));
@@ -1997,7 +2030,7 @@ public class AppController implements Initializable {
                         } else {
                             TabPane subTabs = (TabPane)walletTab.getContent();
                             addWalletSubTab(subTabs, storage, wallet);
-                            Tab masterTab = subTabs.getTabs().stream().filter(tab -> ((WalletTabData)tab.getUserData()).getWallet().isMasterWallet()).findFirst().orElse(subTabs.getTabs().get(0));
+                            Tab masterTab = subTabs.getTabs().stream().filter(tab -> isWalletSubTab(tab) && ((WalletTabData)tab.getUserData()).getWallet().isMasterWallet()).findFirst().orElse(subTabs.getTabs().get(0));
                             Label masterLabel = (Label)masterTab.getGraphic();
                             masterLabel.setText(wallet.getMasterWallet().getLabel() != null ? wallet.getMasterWallet().getLabel() : wallet.getMasterWallet().getAutomaticName());
                             Platform.runLater(() -> {
@@ -2041,7 +2074,8 @@ public class AppController implements Initializable {
         }
 
         for(Map.Entry<Wallet, Storage> entry : AppServices.get().getOpenWallets().entrySet()) {
-            if(entry.getKey().getChildWallets().stream().anyMatch(childWallet -> !childWallet.isNested()) || isLinkedForeignMweb(entry.getKey(), entry.getValue())) {
+            if(entry.getKey().getChildWallets().stream().anyMatch(childWallet -> !childWallet.isNested()) || isLinkedForeignMweb(entry.getKey(), entry.getValue())
+                    || entry.getKey().getLitVmLink() != null) {
                 subTabsVisible = true;
                 return true;
             }
@@ -2115,6 +2149,12 @@ public class AppController implements Initializable {
 
     private void sortSubTabs(TabPane subTabs) {
         subTabs.getTabs().sort((o1, o2) -> {
+            //The LitVM sub-tab is an extension of the wallet rather than an account, so it always sorts last
+            boolean litVm1 = !isWalletSubTab(o1);
+            boolean litVm2 = !isWalletSubTab(o2);
+            if(litVm1 || litVm2) {
+                return Boolean.compare(litVm1, litVm2);
+            }
             WalletTabData tabData1 = (WalletTabData)o1.getUserData();
             WalletTabData tabData2 = (WalletTabData)o2.getUserData();
             //A separately-seeded linked MWEB wallet always sorts last so it reads as an appended linked wallet
@@ -2295,6 +2335,79 @@ public class AppController implements Initializable {
         Platform.runLater(() -> reconcileLinkedMwebTab(event.getWallet()));
     }
 
+    //The LitVM sub-tab carries its wallet's form for menus and focus, but is not a wallet of its own
+    private static boolean isWalletSubTab(Tab subTab) {
+        return !(subTab.getUserData() instanceof LitVmTabData);
+    }
+
+    /**
+     * Adds the LitVM sub-tab for a master wallet with a linked LitVM account, MWEB-style: amber when the account is
+     * separate from the wallet's seed, like a separately seeded MWEB wallet.
+     */
+    private void addLitVmSubTab(TabPane subTabs, WalletForm walletForm, boolean select) {
+        Tab subTab = new Tab();
+        subTab.setClosable(false);
+        if(walletForm.getWallet().getLitVmLink().isSeparateAccount()) {
+            subTab.getStyleClass().add("linked-seed");
+        }
+        Label subTabLabel = new Label("LitVM");
+        subTabLabel.setPadding(new Insets(0, 3, 0, 3));
+        Glyph glyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.LINK);
+        glyph.setFontSize(12);
+        subTabLabel.setGraphic(glyph);
+        subTabLabel.setContentDisplay(ContentDisplay.TOP);
+        subTabLabel.setAlignment(Pos.TOP_CENTER);
+        subTab.setGraphic(subTabLabel);
+        subTab.setContent(new LitVmPane(walletForm));
+        subTab.setUserData(new LitVmTabData(walletForm));
+        //Locking hides the sub-tab bar and shows the lock screen on the wallet's own tab, so move off LitVM
+        walletForm.lockedProperty().addListener((observable, oldValue, locked) -> {
+            if(locked && subTabs.getSelectionModel().getSelectedItem() == subTab) {
+                subTabs.getTabs().stream().filter(AppController::isWalletSubTab).findFirst().ifPresent(walletSubTab -> subTabs.getSelectionModel().select(walletSubTab));
+            }
+        });
+
+        subTabs.getTabs().add(subTab);
+        sortSubTabs(subTabs);
+        subTabsVisible = true;
+        setSubTabsVisible(subTabs, !walletForm.isLocked());
+        if(select) {
+            subTabs.getSelectionModel().select(subTab);
+        }
+    }
+
+    private Tab getMasterWalletTab(Wallet masterWallet) {
+        return tabs.getTabs().stream().filter(tab -> tab.getUserData() instanceof WalletTabData walletTabData && walletTabData.getWallet() == masterWallet)
+                .findFirst().orElse(null);
+    }
+
+    private Tab getLitVmSubTab(TabPane subTabs) {
+        return subTabs.getTabs().stream().filter(subTab -> !isWalletSubTab(subTab)).findFirst().orElse(null);
+    }
+
+    @Subscribe
+    public void walletLitVmChanged(WalletLitVmChangedEvent event) {
+        Platform.runLater(() -> {
+            Tab walletTab = getMasterWalletTab(event.getWallet());
+            if(walletTab == null) {
+                return;
+            }
+
+            TabPane subTabs = (TabPane)walletTab.getContent();
+            Tab existing = getLitVmSubTab(subTabs);
+            if(existing != null) {
+                subTabs.getTabs().remove(existing);
+            }
+
+            WalletTabData walletTabData = (WalletTabData)walletTab.getUserData();
+            if(event.getWallet().getLitVmLink() != null) {
+                addLitVmSubTab(subTabs, walletTabData.getWalletForm(), existing == null);
+            } else if(subTabs.getTabs().size() == 1) {
+                setSubTabsVisible(subTabs, areSubTabsVisible());
+            }
+        });
+    }
+
     private Glyph getSubTabGlyph(Wallet wallet) {
         Glyph tabGlyph;
         StandardAccount standardAccount = wallet.getStandardAccountType();
@@ -2333,7 +2446,7 @@ public class AppController implements Initializable {
             TabData tabData = (TabData) selectedTab.getUserData();
             if(tabData instanceof WalletTabData) {
                 TabPane subTabs = (TabPane) selectedTab.getContent();
-                return subTabs.getTabs().stream().map(subTab -> ((WalletTabData) subTab.getUserData()).getWalletForm()).collect(Collectors.toList());
+                return subTabs.getTabs().stream().filter(AppController::isWalletSubTab).map(subTab -> ((WalletTabData) subTab.getUserData()).getWalletForm()).collect(Collectors.toList());
             }
         }
 
@@ -3186,7 +3299,7 @@ public class AppController implements Initializable {
             if(tabData instanceof WalletTabData walletTabData) {
                 if(walletTabData.getWalletForm().getWalletId().equals(event.getWalletId()) && event.getWallet().isMasterWallet()) {
                     TabPane subTabs = (TabPane)walletTab.getContent();
-                    Tab masterTab = subTabs.getTabs().stream().filter(tab -> ((WalletTabData)tab.getUserData()).getWallet().isMasterWallet()).findFirst().orElse(subTabs.getTabs().get(0));
+                    Tab masterTab = subTabs.getTabs().stream().filter(tab -> isWalletSubTab(tab) && ((WalletTabData)tab.getUserData()).getWallet().isMasterWallet()).findFirst().orElse(subTabs.getTabs().get(0));
                     Label masterLabel = (Label)masterTab.getGraphic();
                     masterLabel.setText(event.getWallet().getLabel() != null ? event.getWallet().getLabel() : event.getWallet().getAutomaticName());
                     Label tabLabel = (Label)walletTab.getGraphic();

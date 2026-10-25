@@ -144,6 +144,7 @@
                 </Menu>
                 <Menu fx:id="toolsMenu" mnemonicParsing="false" text="Tools">
                     <MenuItem mnemonicParsing="false" text="Sign/Verify Message" accelerator="Shortcut+M" onAction="#signVerifyMessage"/>
+                    <MenuItem mnemonicParsing="false" text="LitVM Testnet..." onAction="#litVmTestnet"/>
                     <MenuItem fx:id="sendToMany" mnemonicParsing="false" text="Send To Many" onAction="#sendToMany"/>
                     <MenuItem fx:id="sweepPrivateKey" mnemonicParsing="false" text="Sweep Private Key" onAction="#sweepPrivateKey"/>
                     <SeparatorMenuItem />

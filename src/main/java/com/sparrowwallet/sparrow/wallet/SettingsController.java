@@ -103,6 +103,9 @@ public class SettingsController extends WalletFormController implements Initiali
     private Button linkPrivateWallet;
 
     @FXML
+    private Button linkLitVm;
+
+    @FXML
     private Button apply;
 
     @FXML
@@ -325,6 +328,10 @@ public class SettingsController extends WalletFormController implements Initiali
         linkPrivateWallet.setManaged(mwebSupported);
         enableMweb.setDisable(!canEnableMweb(walletForm.getWallet()));
         linkPrivateWallet.setDisable(!canLinkPrivateWallet(walletForm.getWallet()));
+        //LitVM is Litecoin's EVM chain, so like MWEB it is only offered on Litecoin wallets
+        linkLitVm.setVisible(mwebSupported);
+        linkLitVm.setManaged(mwebSupported);
+        updateLinkLitVm();
         revert.setDisable(true);
         apply.setDisable(true);
     }
@@ -1045,6 +1052,39 @@ public class SettingsController extends WalletFormController implements Initiali
             enableMweb.setDisable(!canEnableMweb(event.getWallet()));
             linkPrivateWallet.setDisable(!canLinkPrivateWallet(event.getWallet()));
             scanDescriptorQR.setVisible(!event.getWallet().isValid());
+        }
+    }
+
+    private void updateLinkLitVm() {
+        Wallet openMasterWallet = getOpenMasterWallet();
+        boolean linked = openMasterWallet != null && openMasterWallet.getLitVmLink() != null;
+        linkLitVm.setText(linked ? "Unlink LitVM..." : "Link LitVM...");
+        linkLitVm.setDisable(openMasterWallet == null || (!linked && !LitVmLinkDialog.canLink(openMasterWallet)));
+    }
+
+    public void linkLitVm(ActionEvent event) {
+        //Like linkPrivateWallet, act on the real open wallet: the settings form only edits a detached copy
+        Wallet openMasterWallet = getOpenMasterWallet();
+        if(openMasterWallet == null) {
+            return;
+        }
+
+        if(openMasterWallet.getLitVmLink() != null) {
+            LitVmLinkDialog.unlink(openMasterWallet, linkLitVm.getScene().getWindow());
+        } else {
+            LitVmLinkDialog.link(openMasterWallet, walletForm.getStorage(), linkLitVm.getScene().getWindow());
+        }
+    }
+
+    @Subscribe
+    public void walletLitVmChanged(WalletLitVmChangedEvent event) {
+        Wallet openMasterWallet = getOpenMasterWallet();
+        if(openMasterWallet != null && event.getWallet() == openMasterWallet) {
+            //Keep the edited copy in step, so a password change re-encrypts the link and Apply does not drop it
+            Wallet wallet = walletForm.getWallet();
+            Wallet masterWalletCopy = wallet.isMasterWallet() ? wallet : wallet.getMasterWallet();
+            masterWalletCopy.setLitVmLink(openMasterWallet.getLitVmLink() == null ? null : openMasterWallet.getLitVmLink().copy());
+            updateLinkLitVm();
         }
     }
 

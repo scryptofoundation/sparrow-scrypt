@@ -3,6 +3,7 @@ package com.sparrowwallet.sparrow.wallet;
 import com.sparrowwallet.drongo.policy.Policy;
 import com.sparrowwallet.drongo.wallet.DeterministicSeed;
 import com.sparrowwallet.drongo.wallet.Keystore;
+import com.sparrowwallet.drongo.wallet.LitVmLink;
 import com.sparrowwallet.drongo.wallet.MasterPrivateExtendedKey;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
@@ -111,6 +112,14 @@ public class SettingsWalletForm extends WalletForm {
                         EventManager.get().post(new KeystoreEncryptionChangedEvent(childWallet, childWallet.copy(), getStorage().getWalletId(childWallet), childEncryptionChangedKeystores));
                     }
                 }
+            }
+
+            //A password change re-encrypts a separate LitVM account's secret along with the keystores
+            LitVmLink litVmLink = masterWallet.getLitVmLink();
+            LitVmLink litVmLinkCopy = masterWalletCopy.getLitVmLink();
+            if(litVmLink != null && litVmLinkCopy != null && !Objects.equals(litVmLink.getEncryptedData(), litVmLinkCopy.getEncryptedData())) {
+                masterWallet.setLitVmLink(litVmLinkCopy.copy());
+                EventManager.get().post(new WalletLitVmChangedEvent(masterWallet));
             }
 
             if(labelChangedKeystores.isEmpty() && encryptionChangedKeystores.isEmpty()) {

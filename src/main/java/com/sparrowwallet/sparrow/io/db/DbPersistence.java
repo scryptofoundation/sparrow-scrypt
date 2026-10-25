@@ -353,6 +353,11 @@ public class DbPersistence implements Persistence {
                     mixConfigDao.addOrUpdate(wallet, wallet.getMixConfig());
                 }
 
+                if(dirtyPersistables.litVmLink) {
+                    LitVmLinkDao litVmLinkDao = handle.attach(LitVmLinkDao.class);
+                    litVmLinkDao.replace(wallet);
+                }
+
                 if(!dirtyPersistables.changedUtxoMixes.isEmpty()) {
                     UtxoMixDataDao utxoMixDataDao = handle.attach(UtxoMixDataDao.class);
                     for(Map.Entry<Sha256Hash, UtxoMixData> utxoMixDataEntry : dirtyPersistables.changedUtxoMixes.entrySet()) {
@@ -862,6 +867,13 @@ public class DbPersistence implements Persistence {
     }
 
     @Subscribe
+    public void walletLitVmChanged(WalletLitVmChangedEvent event) {
+        if(persistsFor(event.getWallet())) {
+            updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).litVmLink = true);
+        }
+    }
+
+    @Subscribe
     public void walletUtxoMixesChanged(WalletUtxoMixesChangedEvent event) {
         if(persistsFor(event.getWallet())) {
             updateExecutor.execute(() -> {
@@ -912,6 +924,7 @@ public class DbPersistence implements Persistence {
         public boolean walletConfig;
         public WalletTable walletTable = null;
         public boolean mixConfig;
+        public boolean litVmLink;
         public final Map<Sha256Hash, UtxoMixData> changedUtxoMixes = new HashMap<>();
         public final Map<Sha256Hash, UtxoMixData> removedUtxoMixes = new HashMap<>();
         public final List<Keystore> labelKeystores = new ArrayList<>();

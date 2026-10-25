@@ -126,6 +126,7 @@
                 <Button fx:id="addAccount" text="Add Account..." onAction="#addAccount" />
                 <Button fx:id="enableMweb" text="Enable MWEB..." onAction="#enableMweb" />
                 <Button fx:id="linkPrivateWallet" text="Link Private Wallet..." onAction="#linkPrivateWallet" />
+                <Button fx:id="linkLitVm" text="Link LitVM..." onAction="#linkLitVm" />
             </HBox>
             <HBox AnchorPane.rightAnchor="10" spacing="20">
                 <Button text="Advanced..." onAction="#showAdvanced" />
