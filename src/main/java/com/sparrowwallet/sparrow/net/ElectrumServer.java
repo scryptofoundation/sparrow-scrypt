@@ -102,6 +102,20 @@ public class ElectrumServer {
     //from the transport - this tracks whether the Esplora backend answered its last connect/ping.
     private static volatile boolean esploraConnected;
 
+    //Esplora's own proxied HTTP client, its proxy fixed at creation. Deliberately not the shared AppServices client,
+    //whose proxy other code can change or clear while Esplora is using it. Null when connecting directly.
+    private static HttpClientService esploraHttpClient;
+
+    private static synchronized void replaceEsploraHttpClient(HttpClientService replacement) {
+        if(esploraHttpClient != null && esploraHttpClient != replacement) {
+            HttpClientService previous = esploraHttpClient;
+            Thread stopper = new Thread(previous::stop, "EsploraHttpClientStop");
+            stopper.setDaemon(true);
+            stopper.start();
+        }
+        esploraHttpClient = replacement;
+    }
+
     private static final Pattern RPC_WALLET_LOADING_PATTERN = Pattern.compile(".*\"(Wallet loading failed[:.][^\"]*)\".*");
 
     private static synchronized CloseableTransport getTransport() throws ServerException {
@@ -251,6 +265,7 @@ public class ElectrumServer {
         if(electrumServerRpc instanceof EsploraServerRpc) {
             electrumServerRpc = new SimpleElectrumServerRpc();
         }
+        replaceEsploraHttpClient(null);
         if(transport != null) {
             closeConnection(transport);
             transport = null;
@@ -1634,13 +1649,20 @@ public class ElectrumServer {
                 esploraConnected = false;
                 throw new ServerConfigException("A proxy or Tor is enabled but not available, so the Esplora server is not contacted directly. Check the proxy in Server Settings.");
             }
-            if(!firstCall && electrumServerRpc instanceof EsploraServerRpc current && current.isProxied() != proxyWanted) {
+            if(!firstCall && electrumServerRpc instanceof EsploraServerRpc current && (current.isProxied() != proxyWanted
+                    || (proxyWanted && (esploraHttpClient == null || !java.util.Objects.equals(esploraHttpClient.getTorProxy(), AppServices.getTorProxy()))))) {
                 firstCall = true;
             }
 
             if(firstCall) {
                 Server server = Config.get().getServer();
-                electrumServerRpc = new EsploraServerRpc(server.getUrl(), proxyWanted ? AppServices.getHttpClientService() : null);
+                //Plain http through Tor would let exit nodes read the wallet's addresses and forge or hide responses;
+                //only an onion service (end-to-end inside Tor) may use it
+                if(proxyWanted && server.getUrl().startsWith("http://") && !server.isOnionAddress()) {
+                    throw new ServerConfigException("This Esplora server uses plain http, which is not safe through a proxy or Tor. Use an https or .onion server.");
+                }
+                replaceEsploraHttpClient(proxyWanted ? new HttpClientService(AppServices.getTorProxy(), 30_000) : null);
+                electrumServerRpc = new EsploraServerRpc(server.getUrl(), esploraHttpClient);
                 List<String> serverVersion = electrumServerRpc.getServerVersion(null, "Sparrow", SUPPORTED_VERSIONS);
                 serverCapability = getServerCapability(serverVersion);
 

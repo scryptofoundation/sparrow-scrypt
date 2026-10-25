@@ -1219,7 +1219,8 @@ public class AppController implements Initializable {
      * is in use, since that lookup would leave the proxy, and the socket's peer would only be the proxy anyway.
      */
     private String getConnectedNodeIp(com.sparrowwallet.sparrow.io.Server server) {
-        if(Config.get().isUseProxy() || AppServices.isTorRunning()) {
+        if(Config.get().isUseProxy() || AppServices.isTorRunning() || Config.get().requiresInternalTor()
+                || (server != null && server.isOnionAddress())) {
             return "via proxy";
         }
 

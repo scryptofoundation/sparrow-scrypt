@@ -56,6 +56,11 @@ public class EsploraClient {
     /** One request through whichever transport this client uses. A null body is a GET, otherwise a text/plain POST. */
     private Response send(String path, String postBody) throws Exception {
         if(proxiedClient != null) {
+            //The app's client is shared and its proxy can be changed or cleared elsewhere (Tor restarting, settings
+            //changes). A client built to be proxied must never fall through to a direct connection: refuse instead.
+            if(proxiedClient.getTorProxy() == null) {
+                throw new EsploraException("No proxy available for " + baseUrl + "; not connecting directly.");
+            }
             try {
                 String body = postBody == null
                         ? proxiedClient.requestJson(baseUrl + path, String.class, null) //String.class: tern returns the raw body
@@ -234,7 +239,15 @@ public class EsploraClient {
                         "Configure a server that does in order to send from this wallet.");
             }
             if(response.status() != 200) {
-                throw new EsploraException(extractRejectReason(response.body()));
+                String reason = extractRejectReason(response.body());
+                //The node already has it: a retried POST whose first attempt got through (the proxied client retries
+                //once on a network error), or a re-broadcast. The transaction is out, so report its txid, not a failure.
+                String lower = reason.toLowerCase(java.util.Locale.ROOT);
+                if(lower.contains("already known") || lower.contains("already-known") || lower.contains("already in")
+                        || lower.contains("already exists") || lower.contains("txn-already")) {
+                    return new com.sparrowwallet.drongo.protocol.Transaction(com.sparrowwallet.drongo.Utils.hexToBytes(txHex)).getTxId().toString();
+                }
+                throw new EsploraException(reason);
             }
             //The returned txid is subject to the same quoting as the other text responses
             return unquote(response.body());

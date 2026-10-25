@@ -9,6 +9,11 @@ public class HttpClientService extends com.sparrowwallet.tern.http.client.HttpCl
         super(new TorHttpProxySupplier(torProxy));
     }
 
+    /** With an explicit per-request timeout in milliseconds (tern retries a failed request once). */
+    public HttpClientService(HostAndPort torProxy, int timeoutMillis) {
+        super(timeoutMillis, new TorHttpProxySupplier(torProxy));
+    }
+
     public HostAndPort getTorProxy() {
         if(getHttpProxySupplier() instanceof TorHttpProxySupplier torHttpProxySupplier) {
             return torHttpProxySupplier.getTorProxy();
