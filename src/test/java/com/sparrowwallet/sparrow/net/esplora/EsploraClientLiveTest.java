@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +39,64 @@ public class EsploraClientLiveTest {
     public void junkcoinEsplora() throws EsploraException {
         //Read path only - this instance serves no POST /tx, so a Junkcoin wallet on it cannot broadcast
         exercise("Junkcoin", "https://explorer.junk-coin.com/api");
+    }
+
+    /**
+     * EsploraServerRpc.getBlockHeaders against every Esplora server the app lists. Sync dates each confirmed
+     * transaction from these headers, and some instances (luckyscan, junk-coin mainnet) append AuxPoW data after the
+     * 80-byte header - so each returned header must be exactly 80 bytes, parse, and hash to that height's block.
+     */
+    @Test
+    public void blockHeadersFromEveryServer() {
+        Map<String, String> servers = new LinkedHashMap<>();
+        servers.put("Bellscoin", "https://api.nintondo.io");
+        servers.put("Pepecoin", "https://peppool.space/api");
+        servers.put("Luckycoin", "https://luckyscan.org/api");
+        servers.put("Junkcoin", "https://explorer.junk-coin.com/api");
+        servers.put("Pepecoin testnet", "https://pepe-testnet-api.nintondo.io");
+        servers.put("Junkcoin testnet", "https://jkc-testnet-api.s3na.xyz");
+
+        List<String> unavailable = new ArrayList<>();
+        int checked = 0;
+        for(Map.Entry<String, String> server : servers.entrySet()) {
+            EsploraClient client = new EsploraClient(server.getValue());
+            int tip;
+            try {
+                tip = client.getTipHeight();
+            } catch(EsploraException e) {
+                unavailable.add(server.getKey() + " (" + e.getMessage() + ")");
+                continue;
+            }
+
+            Set<Integer> heights = new java.util.TreeSet<>(Set.of(tip - 5, tip - 100));
+            Map<Integer, String> headers = new EsploraServerRpc(server.getValue()).getBlockHeaders(null, null, heights);
+            if(headers.isEmpty()) {
+                unavailable.add(server.getKey() + " (no headers, likely rate limited)");
+                continue;
+            }
+
+            for(Map.Entry<Integer, String> header : headers.entrySet()) {
+                Assertions.assertEquals(160, header.getValue().length(), server.getKey() + " header must be trimmed to 80 bytes");
+                com.sparrowwallet.drongo.protocol.BlockHeader parsed = new com.sparrowwallet.drongo.protocol.BlockHeader(com.sparrowwallet.drongo.Utils.hexToBytes(header.getValue()));
+                Assertions.assertTrue(parsed.getTimeAsDate().getTime() > 1_500_000_000_000L, server.getKey() + " header time implausible");
+                checked++;
+            }
+            System.out.println(server.getKey() + ": " + headers.size() + " verified header(s) near tip " + tip);
+        }
+
+        System.out.println("unavailable: " + unavailable);
+        Assumptions.assumeTrue(checked > 0, "no Esplora server answered: " + unavailable);
+    }
+
+    /**
+     * peppool.space serves no header routes, so sync dates its confirmed transactions from the tx status instead.
+     * Pinned to a confirmed mainnet transaction (block 1264568).
+     */
+    @Test
+    public void blockDateFromTransactionStatusWithoutHeaders() {
+        java.util.Date date = new EsploraServerRpc("https://peppool.space/api").getBlockDate("772593a86f7caf011cf00dcd12c0c85ca7334e82b1f712238764e7efc6c8eb76");
+        Assumptions.assumeTrue(date != null, "peppool.space unavailable or rate limited");
+        Assertions.assertEquals(1792886321000L, date.getTime());
     }
 
     @Test

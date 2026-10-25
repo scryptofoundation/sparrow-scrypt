@@ -228,6 +228,21 @@ public class EsploraServerRpc implements ElectrumServerRpc {
 
     private static final int BLOCK_HEADER_HEX_LENGTH = 160;
 
+    /**
+     * The block time of a confirmed transaction from its status, for servers that serve no headers (peppool.space
+     * has no /block-height or /block/:hash/header routes, but its /tx/:txid status carries block_time). Null when
+     * unconfirmed or unavailable.
+     */
+    public java.util.Date getBlockDate(String txid) {
+        try {
+            long blockTime = client.getTransaction(txid).getBlockTime();
+            return blockTime > 0 ? new java.util.Date(blockTime * 1000L) : null;
+        } catch(EsploraException e) {
+            log.debug("Could not retrieve block time for " + txid, e);
+            return null;
+        }
+    }
+
     @Override
     public Map<Integer, BlockStats> getBlockStats(Transport transport, Set<Integer> blockHeights) {
         return Collections.emptyMap();
