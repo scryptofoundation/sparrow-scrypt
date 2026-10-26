@@ -1330,6 +1330,14 @@ public class AppController implements Initializable {
         }
     }
 
+    private static boolean isSameFile(File a, File b) {
+        try {
+            return Files.isSameFile(a.toPath(), b.toPath());
+        } catch(IOException e) {
+            return a.getAbsoluteFile().equals(b.getAbsoluteFile());
+        }
+    }
+
     public void openWalletFile(File file, boolean forceSameWindow) {
         try {
             Storage storage = new Storage(file);
@@ -3836,8 +3844,13 @@ public class AppController implements Initializable {
     public void requestWalletOpen(RequestWalletOpenEvent event) {
         if(tabs.getScene().getWindow().equals(event.getWindow())) {
             if(event.getFile() != null) {
-                Optional<Tab> optExisting = tabs.getTabs().stream().filter(tab -> tab.getUserData() instanceof WalletTabData walletTabData && walletTabData.getStorage().getWalletFile().equals(event.getFile())).findFirst();
-                optExisting.ifPresent(tab -> tabs.getTabs().remove(tab));
+                Optional<Tab> optExisting = tabs.getTabs().stream().filter(tab -> tab.getUserData() instanceof WalletTabData walletTabData && isSameFile(walletTabData.getStorage().getWalletFile(), event.getFile())).findFirst();
+                if(optExisting.isPresent()) {
+                    //Already open (for example restored at startup and also passed as an argument). Closing the tab and
+                    //reopening races the asynchronous close of its database, which on Windows still holds the file lock.
+                    tabs.getSelectionModel().select(optExisting.get());
+                    return;
+                }
                 openWalletFile(event.getFile(), true);
             } else {
                 openWallet(true);
