@@ -36,9 +36,9 @@ import java.util.function.Consumer;
  */
 public class LitVmBridgePane extends VBox {
     //Gas for a call signed before the approval it depends on is mined, so it cannot be estimated yet. Unused gas is
-    //not charged; measured use is well below these.
+    //not charged. A first Sepolia depositERC20 measured 355926 gas (2026-10-25).
     private static final BigInteger JKC_WITHDRAW_GAS = BigInteger.valueOf(600_000);
-    private static final BigInteger ZK_DEPOSIT_GAS = BigInteger.valueOf(300_000);
+    private static final BigInteger ZK_DEPOSIT_GAS = BigInteger.valueOf(600_000);
     private static final int RECEIPT_POLLS = 90;
 
     private static final String JKC_DEPOSIT = "jkc-deposit";
