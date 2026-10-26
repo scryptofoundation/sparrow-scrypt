@@ -1549,11 +1549,10 @@ public class HeadersController extends TransactionFormController implements Init
                     viewFinalButton.setDisable(true);
 
                     if(headersForm.getSigningWallet() == null) {
-                        for(Wallet wallet : AppServices.get().getOpenWallets().keySet()) {
-                            if(wallet.canSign(headersForm.getTransaction())) {
-                                headersForm.setSigningWallet(wallet);
-                                break;
-                            }
+                        List<Wallet> canSign = onTransactionCoin(AppServices.get().getOpenWallets().keySet().stream()
+                                .filter(wallet -> wallet.canSign(headersForm.getTransaction())).collect(Collectors.toList()));
+                        if(!canSign.isEmpty()) {
+                            headersForm.setSigningWallet(canSign.get(0));
                         }
                     }
 
@@ -1601,11 +1600,22 @@ public class HeadersController extends TransactionFormController implements Init
         fee.refresh(event.getUnitFormat(), event.getBitcoinUnit());
     }
 
+    /**
+     * Wallets on different coins can hold the same keys (one seed, the same derivation path), so any of them "can
+     * sign". Keep only those on the transaction's coin, which is the active coin of the wallet tab it came from; fall
+     * back to all of them when none match (for example a PSBT opened from a file).
+     */
+    private static List<Wallet> onTransactionCoin(List<Wallet> wallets) {
+        com.sparrowwallet.drongo.Coin coin = com.sparrowwallet.drongo.Coin.getGlobal();
+        List<Wallet> sameCoin = wallets.stream().filter(wallet -> wallet.getCoin() == coin).collect(Collectors.toList());
+        return sameCoin.isEmpty() ? wallets : sameCoin;
+    }
+
     @Subscribe
     public void openWallets(OpenWalletsEvent event) {
         if(id.getScene().getWindow().equals(event.getWindow()) && headersForm.getPsbt() != null && headersForm.getBlockTransaction() == null) {
-            List<Wallet> availableWallets = event.getWallets().stream().filter(wallet -> wallet.canSign(headersForm.getPsbt())).sorted(new WalletSignComparator()).collect(Collectors.toList());
-            List<Wallet> signingAllInputsWallets = event.getWallets().stream().filter(wallet -> wallet.canSignAllInputs(headersForm.getPsbt())).sorted(new WalletSignComparator()).collect(Collectors.toList());
+            List<Wallet> availableWallets = onTransactionCoin(event.getWallets().stream().filter(wallet -> wallet.canSign(headersForm.getPsbt())).sorted(new WalletSignComparator()).collect(Collectors.toList()));
+            List<Wallet> signingAllInputsWallets = onTransactionCoin(event.getWallets().stream().filter(wallet -> wallet.canSignAllInputs(headersForm.getPsbt())).sorted(new WalletSignComparator()).collect(Collectors.toList()));
             if(availableWallets.isEmpty() || !availableWallets.equals(signingAllInputsWallets)) {
                 for(Wallet wallet : event.getWalletsMap().keySet()) {
                     if(wallet.isValid() && !wallet.getSigningKeystores(headersForm.getPsbt()).isEmpty()) {

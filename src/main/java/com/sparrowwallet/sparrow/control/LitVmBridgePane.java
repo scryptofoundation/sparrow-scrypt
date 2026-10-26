@@ -271,8 +271,17 @@ public class LitVmBridgePane extends LitVmFlowPane {
         List<Wallet> wallets = new ArrayList<>();
         if(onJunkcoinTestnet()) {
             for(Wallet wallet : AppServices.get().getOpenWallets().keySet()) {
-                if(wallet.getCoin() == Coin.JUNKCOIN && wallet.isValid()) {
-                    wallets.add(wallet);
+                if(wallet.getCoin() != Coin.JUNKCOIN) {
+                    continue;
+                }
+                //isValid() derives keys, so it must run under Junkcoin, not the LitVM tab's Litecoin
+                Coin previous = Coin.beginScope(Coin.JUNKCOIN);
+                try {
+                    if(wallet.isValid()) {
+                        wallets.add(wallet);
+                    }
+                } finally {
+                    Coin.endScope(previous);
                 }
             }
         }
