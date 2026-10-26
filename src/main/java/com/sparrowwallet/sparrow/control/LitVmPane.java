@@ -30,6 +30,7 @@ public class LitVmPane extends BorderPane {
     private final BorderPane content = new BorderPane();
     private final Map<String, Node> views = new HashMap<>();
     private final ToggleGroup menu = new ToggleGroup();
+    private final HBox top = new HBox();
 
     public LitVmPane(WalletForm walletForm) {
         getStylesheets().add(AppServices.class.getResource("wallet/wallet.css").toExternalForm());
@@ -51,8 +52,9 @@ public class LitVmPane extends BorderPane {
 
         Label warning = new Label(WALLET_NETWORK.getDisplayName() + " (chain " + WALLET_NETWORK.getChainId() + "). Test " + WALLET_NETWORK.getSymbol() + " and test tokens have no value.");
         warning.setStyle("-fx-font-weight: bold;");
-        HBox top = new HBox(warning);
+        top.getChildren().add(warning);
         top.setPadding(new Insets(12, 25, 0, 25));
+        top.managedProperty().bind(top.visibleProperty());
         content.setTop(top);
         statusLabel.setWrapText(true);
         statusLabel.setPadding(new Insets(6, 25, 10, 25));
@@ -82,6 +84,8 @@ public class LitVmPane extends BorderPane {
         button.selectedProperty().addListener((obs, old, selected) -> {
             if(selected) {
                 statusLabel.setText("");
+                //Other Networks shows its own network and warning
+                top.setVisible(!name.equals("Other Networks"));
                 content.setCenter(views.computeIfAbsent(name, n -> scroll(view.get())));
             }
         });
