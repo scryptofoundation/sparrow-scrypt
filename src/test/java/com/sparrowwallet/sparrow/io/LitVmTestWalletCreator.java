@@ -33,27 +33,33 @@ public class LitVmTestWalletCreator {
         File out = new File(outPath);
         Assertions.assertFalse(out.exists(), "refusing to overwrite " + out);
 
+        //LITVM_TEST_WALLET_COIN=JUNKCOIN writes a P2PKH Junkcoin testnet wallet instead (no LitVM link), for bridge tests
+        Coin coin = Coin.valueOf(System.getenv().getOrDefault("LITVM_TEST_WALLET_COIN", "LITECOIN"));
+        ScriptType scriptType = coin == Coin.LITECOIN ? ScriptType.P2WPKH : ScriptType.P2PKH;
         Network previousNetwork = Network.get();
         Network.set(Network.TESTNET);
-        Coin previousCoin = Coin.beginScope(Coin.LITECOIN);
+        Coin previousCoin = Coin.beginScope(coin);
         try {
             DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(Arrays.asList(Files.readString(Path.of(seedPath)).trim().split("\\s+"))), "", 0, DeterministicSeed.Type.BIP39);
-            Keystore keystore = Keystore.fromSeed(seed, ScriptType.P2WPKH.getDefaultDerivation());
+            Keystore keystore = Keystore.fromSeed(seed, scriptType.getDefaultDerivation());
             Wallet wallet = new Wallet(out.getName().replace(".mv.db", ""));
-            wallet.setCoin(Coin.LITECOIN);
+            wallet.setCoin(coin);
             wallet.setNetwork(Network.TESTNET);
             wallet.setPolicyType(PolicyType.SINGLE);
-            wallet.setScriptType(ScriptType.P2WPKH);
+            wallet.setScriptType(scriptType);
             wallet.getKeystores().add(keystore);
-            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, ScriptType.P2WPKH, wallet.getKeystores(), 1));
-            wallet.setLitVmLink(LitVmLink.fromWalletSeed(seed, 0));
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
+            if(coin == Coin.LITECOIN) {
+                wallet.setLitVmLink(LitVmLink.fromWalletSeed(seed, 0));
+            }
             Assertions.assertTrue(wallet.isValid());
 
             Storage storage = new Storage(out);
             storage.setEncryptionPubKey(Storage.NO_PASSWORD_KEY);
             storage.saveWallet(wallet);
             storage.restorePublicKeysFromSeed(wallet, null);
-            System.out.println("wrote " + out + ", LitVM address " + wallet.getLitVmLink().getAddress());
+            System.out.println("wrote " + out + (coin == Coin.LITECOIN ? ", LitVM address " + wallet.getLitVmLink().getAddress()
+                    : ", first receive address " + wallet.getFreshNode(com.sparrowwallet.drongo.KeyPurpose.RECEIVE).getAddress().getAddress(Network.TESTNET)));
         } finally {
             Coin.endScope(previousCoin);
             Network.set(previousNetwork);
