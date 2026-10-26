@@ -34,43 +34,31 @@ import java.util.function.Consumer;
  * the native zkLTC bridge between Ethereum Sepolia and LiteForge. Every transaction is built and signed locally
  * with the LitVM account; bridge contracts are pinned in drongo and checked against the chain before use.
  */
-public class LitVmBridgePane extends VBox {
+public class LitVmBridgePane extends LitVmFlowPane {
     //Gas for a call signed before the approval it depends on is mined, so it cannot be estimated yet. Unused gas is
     //not charged. A first Sepolia depositERC20 measured 355926 gas (2026-10-25).
     private static final BigInteger JKC_WITHDRAW_GAS = BigInteger.valueOf(600_000);
     private static final BigInteger ZK_DEPOSIT_GAS = BigInteger.valueOf(600_000);
-    private static final int RECEIPT_POLLS = 90;
 
     private static final String JKC_DEPOSIT = "jkc-deposit";
     private static final String JKC_WITHDRAW = "jkc-withdraw";
     private static final String ZK_DEPOSIT = "zk-deposit";
     private static final String ZK_WITHDRAW = "zk-withdraw";
+    private static final String BASE_DEPOSIT = "base-deposit";
 
-    private final WalletForm walletForm;
     private final LitVmRpcClient l2;
     private final LitVmRpcClient l1 = new LitVmRpcClient(ZkLtcBridge.L1);
-    private final Consumer<String> status;
-    private final Runnable onBalancesChanged;
 
     private final VBox jkcRows = new VBox(6);
     private final VBox zkRows = new VBox(6);
+    private final VBox baseRows = new VBox(6);
     private final Label sepoliaBalance = new Label("Loading...");
-
-    /** One transaction of a flow. A dependent one was signed with a fixed gas limit before the step it needs was mined. */
-    private record Step(LitVmRpcClient client, Eip1559Transaction tx, String description, boolean dependent) {
-        Step(LitVmRpcClient client, Eip1559Transaction tx, String description) {
-            this(client, tx, description, false);
-        }
-    }
 
     private record Entry(String kind, String hash) {}
 
     public LitVmBridgePane(WalletForm walletForm, LitVmRpcClient l2, Consumer<String> status, Runnable onBalancesChanged) {
-        super(10);
-        this.walletForm = walletForm;
+        super(walletForm, status, onBalancesChanged);
         this.l2 = l2;
-        this.status = status;
-        this.onBalancesChanged = onBalancesChanged;
 
         Label jkcTitle = new Label("Junkcoin bridge (JKC testnet to " + JunkcoinBridge.WJKC.symbol() + ")");
         jkcTitle.setStyle("-fx-font-weight: bold;");
@@ -98,15 +86,15 @@ public class LitVmBridgePane extends VBox {
 
         getChildren().addAll(jkcTitle, jkcWarning, new HBox(8, depositJkc, withdrawJkc, checkDeposit), jkcRows,
                 new Separator(), zkTitle, zkNote, new HBox(10, new Label("Sepolia account:"), sepoliaBalance), new HBox(8, depositZk, withdrawZk, trackWithdrawal), zkRows);
-    }
 
-    private Wallet getMasterWallet() {
-        Wallet wallet = walletForm.getWallet();
-        return wallet.isMasterWallet() ? wallet : wallet.getMasterWallet();
-    }
-
-    private EvmAddress address() {
-        return getMasterWallet().getLitVmLink().getAddress();
+        Label baseTitle = new Label("Base bridge (Sepolia ETH to Base Sepolia)");
+        baseTitle.setStyle("-fx-font-weight: bold;");
+        Label baseNote = new Label(BaseBridge.NOTE);
+        baseNote.setWrapText(true);
+        baseNote.setMaxWidth(560);
+        Button depositBase = new Button("Move Sepolia ETH to Base...");
+        depositBase.setOnAction(e -> depositBase());
+        getChildren().addAll(new Separator(), baseTitle, baseNote, depositBase, baseRows);
     }
 
     // ---- history ----
@@ -136,8 +124,9 @@ public class LitVmBridgePane extends VBox {
 
     private record Row(String text, Runnable claim, String claimLabel) {}
 
-    private record BridgeState(List<Row> jkc, List<Row> zk, String sepolia) {}
+    private record BridgeState(List<Row> jkc, List<Row> zk, List<Row> base, String sepolia) {}
 
+    @Override
     public void refresh() {
         EvmAddress address = address();
         Set<String> jkcDeposits = new LinkedHashSet<>(scanJkcDeposits(address));
@@ -145,6 +134,7 @@ public class LitVmBridgePane extends VBox {
         List<Entry> jkcWithdrawals = history(JKC_WITHDRAW);
         List<Entry> zkDeposits = history(ZK_DEPOSIT);
         List<Entry> zkWithdrawals = history(ZK_WITHDRAW);
+        List<Entry> baseDeposits = history(BASE_DEPOSIT);
 
         Task<BridgeState> task = new Task<>() {
             @Override
@@ -193,7 +183,11 @@ public class LitVmBridgePane extends VBox {
                         zk.add(new Row("Withdrawal " + shortHash(entry.hash()) + ": " + message(e), null, null));
                     }
                 }
-                return new BridgeState(jkc, zk, sepolia);
+                List<Row> base = new ArrayList<>();
+                for(Entry entry : baseDeposits) {
+                    base.add(baseDepositRow(entry.hash()));
+                }
+                return new BridgeState(jkc, zk, base, sepolia);
             }
         };
         task.setOnSucceeded(e -> show(task.getValue()));
@@ -234,10 +228,21 @@ public class LitVmBridgePane extends VBox {
         }
     }
 
+    private Row baseDepositRow(String hash) {
+        try {
+            Optional<LitVmRpcClient.Receipt> receipt = l1.getReceipt(hash);
+            String text = receipt.isEmpty() ? "pending on Sepolia" : (receipt.get().success() ? "sent; credited on Base Sepolia in about 5 minutes" : "failed on Sepolia");
+            return new Row("Deposit to Base " + shortHash(hash) + ": " + text, null, null);
+        } catch(Exception e) {
+            return new Row("Deposit to Base " + shortHash(hash) + ": " + message(e), null, null);
+        }
+    }
+
     private void show(BridgeState state) {
         sepoliaBalance.setText(state.sepolia());
         fill(jkcRows, state.jkc());
         fill(zkRows, state.zk());
+        fill(baseRows, state.base());
     }
 
     private void fill(VBox box, List<Row> rows) {
@@ -365,7 +370,7 @@ public class LitVmBridgePane extends VBox {
         EvmAddress address = address();
         BigInteger net = JunkcoinBridge.afterFee(BigInteger.valueOf(sats), JunkcoinBridge.MAX_FEE_BPS);
         String jkc = JunkcoinBridge.WJKC.format(BigInteger.valueOf(sats));
-        if(!confirm("Bridge " + jkc + " JKC to LitVM?",
+        if(!confirm("Confirm Bridge Transfer", "Bridge " + jkc + " JKC to LitVM?",
                 "From wallet: " + wallet.getFullDisplayName() + "\nTo LitVM account: " + address + "\nCustody address: " + JunkcoinBridge.CUSTODY_ADDRESS
                 + "\nYou receive about " + JunkcoinBridge.WJKC.format(net) + " " + JunkcoinBridge.WJKC.symbol() + " after the 1% bridge fee, claimable here after "
                 + JunkcoinBridge.DEPOSIT_CONFIRMATIONS + " confirmations.\n\n" + JunkcoinBridge.TRUST_WARNING
@@ -402,11 +407,11 @@ public class LitVmBridgePane extends VBox {
             l2.verifyChain();
             JunkcoinBridge.verifyBridge(l2);
             Eip1559Transaction tx = l2.prepareCall(address, JunkcoinBridge.BRIDGE, BigInteger.ZERO, JunkcoinBridge.claimCall(txid));
-            requireBalance(l2, address, tx.maxCost(), "zkLTC");
+            requireBalance(l2, address, tx.maxCost());
             return List.of(new Step(l2, tx, "claimDeposit on the Junkcoin bridge"));
         }, steps -> {
             String amount = JunkcoinBridge.WJKC.format(claim.netAmount()) + " " + JunkcoinBridge.WJKC.symbol();
-            return confirmSteps("Claim " + amount + "?", "Mints " + amount + " for Junkcoin deposit " + txid + " to " + address
+            return confirmSteps("Confirm Bridge Transfer", "Claim " + amount + "?", "Mints " + amount + " for Junkcoin deposit " + txid + " to " + address
                     + "\nBridge contract: " + JunkcoinBridge.BRIDGE, steps, JunkcoinBridge.TRUST_WARNING);
         }, hashes -> status.accept("Claimed " + JunkcoinBridge.WJKC.symbol() + " in " + hashes.getLast()));
     }
@@ -494,9 +499,9 @@ public class LitVmBridgePane extends VBox {
             } else {
                 steps.add(new Step(l2, l2.prepareCall(address, JunkcoinBridge.BRIDGE, BigInteger.ZERO, withdraw), "initiateWithdrawal to " + jkcAddress));
             }
-            requireBalance(l2, address, totalCost(steps), "zkLTC");
+            requireBalance(l2, address, totalCost(steps));
             return steps;
-        }, steps -> confirmSteps("Withdraw " + JunkcoinBridge.WJKC.format(amount) + " " + JunkcoinBridge.WJKC.symbol() + "?",
+        }, steps -> confirmSteps("Confirm Bridge Transfer", "Withdraw " + JunkcoinBridge.WJKC.format(amount) + " " + JunkcoinBridge.WJKC.symbol() + "?",
                 "To Junkcoin address: " + jkcAddress + "\nYou receive about " + JunkcoinBridge.WJKC.format(JunkcoinBridge.afterFee(amount, JunkcoinBridge.MAX_FEE_BPS))
                         + " JKC after the 1% bridge fee, less the Junkcoin network fee.\nBridge contract: " + JunkcoinBridge.BRIDGE, steps, JunkcoinBridge.TRUST_WARNING),
         hashes -> {
@@ -541,9 +546,9 @@ public class LitVmBridgePane extends VBox {
             } else {
                 steps.add(new Step(l1, l1.prepareCall(address, ZkLtcBridge.INBOX, BigInteger.ZERO, ZkLtcBridge.depositCall(amount)), "depositERC20 on the Sepolia inbox"));
             }
-            requireBalance(l1, address, totalCost(steps), "Sepolia ETH");
+            requireBalance(l1, address, totalCost(steps));
             return steps;
-        }, steps -> confirmSteps("Deposit " + ZkLtcBridge.ZKLTC_L1.format(amount) + " zkLTC to LiteForge?",
+        }, steps -> confirmSteps("Confirm Bridge Transfer", "Deposit " + ZkLtcBridge.ZKLTC_L1.format(amount) + " zkLTC to LiteForge?",
                 "From and to: " + address + "\nInbox: " + ZkLtcBridge.INBOX + "\nToken: " + ZkLtcBridge.ZKLTC_L1.contract(), steps, ZkLtcBridge.TRUST_WARNING),
         hashes -> {
             record(ZK_DEPOSIT, hashes.getLast());
@@ -572,9 +577,9 @@ public class LitVmBridgePane extends VBox {
         prepare(() -> {
             l2.verifyChain();
             Eip1559Transaction tx = l2.prepareCall(address, ZkLtcBridge.ARB_SYS, amount, ZkLtcBridge.withdrawCall(address));
-            requireBalance(l2, address, tx.maxCost(), "zkLTC");
+            requireBalance(l2, address, tx.maxCost());
             return List.of(new Step(l2, tx, "withdrawEth to " + address + " on Sepolia"));
-        }, steps -> confirmSteps("Withdraw " + Wei.format(amount) + " zkLTC to Sepolia?",
+        }, steps -> confirmSteps("Confirm Bridge Transfer", "Withdraw " + Wei.format(amount) + " zkLTC to Sepolia?",
                 "From and to: " + address + "\nAfter the rollup confirms it (typically 1 to 8 hours) a Claim button appears here; claiming needs Sepolia ETH for gas.",
                 steps, ZkLtcBridge.TRUST_WARNING),
         hashes -> {
@@ -616,6 +621,41 @@ public class LitVmBridgePane extends VBox {
         start(task);
     }
 
+    // ---- Base bridge ----
+
+    private void depositBase() {
+        Optional<String> input = ask("Move Sepolia ETH to Base", "Amount of Sepolia ETH to move to Base Sepolia (it cannot be moved back from this wallet)", "ETH:");
+        if(input.isEmpty()) {
+            return;
+        }
+        BigInteger amount;
+        try {
+            amount = Wei.parse(input.get());
+        } catch(IllegalArgumentException e) {
+            status.accept(e.getMessage());
+            return;
+        }
+        if(amount.signum() == 0) {
+            status.accept("Enter an amount greater than zero.");
+            return;
+        }
+
+        EvmAddress address = address();
+        prepare(() -> {
+            l1.verifyChain();
+            BaseBridge.verify(l1);
+            Eip1559Transaction tx = l1.prepareCall(address, BaseBridge.PORTAL, amount, BaseBridge.depositCall(address, amount));
+            List<Step> steps = List.of(new Step(l1, tx, "depositTransaction on the Base portal"));
+            requireBalance(l1, address, totalCost(steps));
+            return steps;
+        }, steps -> confirmSteps("Confirm Bridge Transfer", "Move " + Wei.format(amount) + " ETH to Base Sepolia?",
+                "From and to: " + address + "\nPortal: " + BaseBridge.PORTAL, steps, BaseBridge.NOTE),
+        hashes -> {
+            record(BASE_DEPOSIT, hashes.getLast());
+            status.accept("Deposit sent in " + hashes.getLast() + ". It is credited on Base Sepolia in about 5 minutes.");
+        });
+    }
+
     private void claimZk(ZkLtcBridge.Withdrawal withdrawal, BigInteger sendCount) {
         EvmAddress address = address();
         prepare(() -> {
@@ -623,158 +663,10 @@ public class LitVmBridgePane extends VBox {
             l2.verifyChain();
             byte[] data = ZkLtcBridge.claimCall(l2, withdrawal, sendCount);
             Eip1559Transaction tx = l1.prepareCall(address, ZkLtcBridge.OUTBOX, BigInteger.ZERO, data);
-            requireBalance(l1, address, tx.maxCost(), "Sepolia ETH");
+            requireBalance(l1, address, tx.maxCost());
             return List.of(new Step(l1, tx, "executeTransaction on the Sepolia outbox"));
-        }, steps -> confirmSteps("Claim " + Wei.format(withdrawal.callValue()) + " zkLTC on Sepolia?",
+        }, steps -> confirmSteps("Confirm Bridge Transfer", "Claim " + Wei.format(withdrawal.callValue()) + " zkLTC on Sepolia?",
                 "Pays " + withdrawal.destination() + "\nOutbox: " + ZkLtcBridge.OUTBOX, steps, ZkLtcBridge.TRUST_WARNING),
         hashes -> status.accept("Claimed on Sepolia in " + hashes.getLast()));
-    }
-
-    // ---- shared flow: prepare, confirm, sign once, broadcast in order ----
-
-    private interface Preparer {
-        List<Step> prepare() throws Exception;
-    }
-
-    private void prepare(Preparer preparer, java.util.function.Predicate<List<Step>> confirmation, Consumer<List<String>> onSent) {
-        status.accept("Preparing transaction...");
-        Task<List<Step>> task = new Task<>() {
-            @Override
-            protected List<Step> call() throws Exception {
-                return preparer.prepare();
-            }
-        };
-        task.setOnSucceeded(e -> {
-            List<Step> steps = task.getValue();
-            if(!confirmation.test(steps)) {
-                status.accept("Cancelled.");
-                return;
-            }
-            LitVmLink link = getMasterWallet().getLitVmLink();
-            LitVmLinkDialog.withAccount(getMasterWallet(), walletForm.getStorage(), getScene().getWindow(), account -> {
-                if(!account.getAddress().equals(link.getAddress())) {
-                    status.accept("The unlocked account does not match this LitVM link; nothing was sent.");
-                    return;
-                }
-                List<Eip1559Transaction.Signed> signed = new ArrayList<>();
-                for(Step step : steps) {
-                    signed.add(account.sign(step.tx()));
-                }
-                broadcast(steps, signed, onSent);
-            }, () -> status.accept("Not sent."));
-        });
-        task.setOnFailed(e -> status.accept("Could not prepare the transaction: " + message(task.getException())));
-        start(task);
-    }
-
-    private void broadcast(List<Step> steps, List<Eip1559Transaction.Signed> signed, Consumer<List<String>> onSent) {
-        Task<List<String>> task = new Task<>() {
-            @Override
-            protected List<String> call() throws Exception {
-                List<String> hashes = new ArrayList<>();
-                for(int i = 0; i < steps.size(); i++) {
-                    Step step = steps.get(i);
-                    if(step.dependent()) {
-                        //Now that the step before is mined the call can be simulated: refuse to send it if it would revert
-                        //or need more gas than it was signed with, rather than spending the fee on a failure
-                        BigInteger gas;
-                        try {
-                            gas = step.client().estimateGas(signed.get(i).from(), step.tx().getTo(), step.tx().getValue(), step.tx().getData());
-                        } catch(java.io.IOException e) {
-                            throw new IllegalStateException(step.description() + " would fail (" + message(e) + "), so it was not sent");
-                        }
-                        if(gas.compareTo(step.tx().getGasLimit()) > 0) {
-                            throw new IllegalStateException(step.description() + " needs " + gas + " gas, more than the " + step.tx().getGasLimit() + " it was signed with, so it was not sent");
-                        }
-                    }
-                    String hash = step.client().sendRawTransaction(signed.get(i));
-                    hashes.add(hash);
-                    updateMessage("Sent " + step.description() + ": " + hash);
-                    Optional<LitVmRpcClient.Receipt> receipt = Optional.empty();
-                    for(int poll = 0; poll < RECEIPT_POLLS && receipt.isEmpty(); poll++) {
-                        Thread.sleep(2000);
-                        receipt = step.client().getReceipt(hash);
-                    }
-                    if(receipt.isEmpty()) {
-                        throw new IllegalStateException(step.description() + " is still pending (" + hash + ")" + (i + 1 < steps.size() ? "; the next step was not sent" : ""));
-                    }
-                    if(!receipt.get().success()) {
-                        throw new IllegalStateException(step.description() + " failed on chain (" + hash + ")" + (i + 1 < steps.size() ? "; the next step was not sent" : ""));
-                    }
-                }
-                return hashes;
-            }
-        };
-        task.messageProperty().addListener((obs, old, text) -> status.accept(text));
-        task.setOnSucceeded(e -> {
-            onSent.accept(task.getValue());
-            onBalancesChanged.run();
-            refresh();
-        });
-        task.setOnFailed(e -> status.accept("Not completed: " + message(task.getException())));
-        start(task);
-    }
-
-    private boolean confirmSteps(String header, String details, List<Step> steps, String warning) {
-        StringBuilder text = new StringBuilder(details).append("\n\nTransactions:");
-        for(int i = 0; i < steps.size(); i++) {
-            Step step = steps.get(i);
-            BigInteger maxFee = step.tx().getGasLimit().multiply(step.tx().getMaxFeePerGas());
-            text.append("\n").append(i + 1).append(". ").append(step.description()).append(" on ").append(step.client().getNetwork().getDisplayName())
-                    .append(" (contract ").append(step.tx().getTo()).append(", max fee ").append(Wei.format(maxFee)).append(" ").append(step.client().getNetwork().getSymbol()).append(")");
-        }
-        text.append("\n\n").append(warning);
-        return confirm(header, text.toString());
-    }
-
-    private boolean confirm(String header, String text) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.initOwner(getScene().getWindow());
-        confirm.setTitle("Confirm Bridge Transfer");
-        confirm.setHeaderText(header);
-        TextArea area = new TextArea(text);
-        area.setEditable(false);
-        area.setWrapText(true);
-        area.setPrefRowCount(14);
-        area.setPrefColumnCount(60);
-        confirm.getDialogPane().setContent(area);
-        Optional<ButtonType> answer = confirm.showAndWait();
-        return answer.isPresent() && answer.get() == ButtonType.OK;
-    }
-
-    private Optional<String> ask(String title, String header, String label) {
-        TextInputDialog dialog = new TextInputDialog();
-        dialog.initOwner(getScene().getWindow());
-        dialog.setTitle(title);
-        dialog.setHeaderText(header);
-        dialog.setContentText(label);
-        Optional<String> input = dialog.showAndWait();
-        return input.filter(text -> !text.isBlank());
-    }
-
-    private static BigInteger totalCost(List<Step> steps) {
-        return steps.stream().map(step -> step.tx().maxCost()).reduce(BigInteger.ZERO, BigInteger::add);
-    }
-
-    private static void requireBalance(LitVmRpcClient client, EvmAddress address, BigInteger needed, String unit) throws Exception {
-        BigInteger balance = client.getBalance(address);
-        if(balance.compareTo(needed) < 0) {
-            throw new IllegalStateException("Not enough " + unit + " on " + client.getNetwork().getDisplayName() + ": need up to " + Wei.format(needed) + ", have " + Wei.format(balance));
-        }
-    }
-
-    private static String shortHash(String hash) {
-        String text = hash.startsWith("0x") ? hash.substring(2) : hash;
-        return text.length() <= 12 ? text : text.substring(0, 8) + "..." + text.substring(text.length() - 4);
-    }
-
-    private static String message(Throwable t) {
-        return t == null ? "unknown error" : (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
-    }
-
-    private static void start(Task<?> task) {
-        Thread thread = new Thread(task, "LitVM bridge");
-        thread.setDaemon(true);
-        thread.start();
     }
 }

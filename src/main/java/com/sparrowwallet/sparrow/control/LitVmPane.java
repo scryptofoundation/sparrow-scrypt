@@ -20,24 +20,22 @@ import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.*;
 
 /**
- * Content of the LitVM sub-tab under a Litecoin wallet: the linked account's address, its zkLTC and tracked ERC-20
- * token balances, and transfers of either on the LiteForge testnet. The address comes from the stored link, so
- * viewing needs no password; sending asks for the wallet password (when it has one) to unlock the key just long
- * enough to sign.
+ * Content of the LitVM sub-tab under a Litecoin wallet: the linked EVM account on a chosen testnet (LiteForge by
+ * default, or Ethereum Sepolia and Base Sepolia, where the same address works), its native and tracked ERC-20
+ * balances, transfers, swaps and bridges. The address comes from the stored link, so viewing needs no password;
+ * sending asks for the wallet password (when it has one) to unlock the key just long enough to sign.
  */
 public class LitVmPane extends BorderPane {
     private static final String FAUCET_URL = "https://liteforge.hub.caldera.xyz/";
 
     private final WalletForm walletForm;
-    private final LitVmRpcClient client = new LitVmRpcClient(LitVmNetwork.LITEFORGE_TESTNET);
-    private final LitVmNetwork network = client.getNetwork();
+    private final Map<LitVmNetwork, LitVmRpcClient> clients = new EnumMap<>(LitVmNetwork.class);
+    private final ComboBox<LitVmNetwork> networkCombo = new ComboBox<>();
 
+    private final Label warning = new Label();
     private final Label balanceLabel = new Label("Loading...");
     private final VBox tokenBalances = new VBox(4);
     private final Label statusLabel = new Label();
@@ -46,8 +44,10 @@ public class LitVmPane extends BorderPane {
     private final TextField amountField = new TextField();
     private final Button sendButton = new Button("Send");
     private final Button removeTokenButton = new Button("Remove Token");
+    private final Hyperlink faucetLink = new Hyperlink();
+    private final LitVmSwapPane swapPane;
 
-    /** What is being sent: native zkLTC (token null) or an ERC-20 token. */
+    /** What is being sent: the network's native coin (token null) or an ERC-20 token. */
     private record Asset(Erc20Token token) {
         boolean isNative() {
             return token == null;
@@ -61,8 +61,21 @@ public class LitVmPane extends BorderPane {
 
         Label title = new Label("LitVM");
         title.setStyle("-fx-font-size: 1.4em;");
-        Label warning = new Label(network.getDisplayName() + " (chain " + network.getChainId() + "). Test " + network.getSymbol() + " and test tokens have no value.");
         warning.setStyle("-fx-font-weight: bold;");
+
+        networkCombo.setItems(FXCollections.observableArrayList(LitVmNetwork.values()));
+        networkCombo.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(LitVmNetwork network) {
+                return network == null ? "" : network.getDisplayName() + " (" + network.getSymbol() + ")";
+            }
+
+            @Override
+            public LitVmNetwork fromString(String string) {
+                return null;
+            }
+        });
+        networkCombo.setValue(LitVmNetwork.LITEFORGE_TESTNET);
 
         TextField addressField = new TextField(address.toString());
         addressField.setEditable(false);
@@ -73,12 +86,16 @@ public class LitVmPane extends BorderPane {
             content.putString(address.toString());
             Clipboard.getSystemClipboard().setContent(content);
         });
-        Hyperlink explorerLink = link("View in explorer", network.explorerAddressUrl(address));
-        Hyperlink faucetLink = link("Get free test " + network.getSymbol(), FAUCET_URL);
+        Hyperlink explorerLink = new Hyperlink("View in explorer");
+        explorerLink.setOnAction(e -> show(network().explorerAddressUrl(address)));
+        faucetLink.setText("Get free test zkLTC");
+        faucetLink.setOnAction(e -> show(FAUCET_URL));
 
-        String accountText = link.getSource().getDisplayName() + (link.getDerivationPath() == null ? "" : " at " + link.getDerivationPath());
+        String accountText = link.getSource().getDisplayName() + (link.getDerivationPath() == null ? "" : " at " + link.getDerivationPath())
+                + "; the same address on every network listed";
 
-        LitVmBridgePane bridgePane = new LitVmBridgePane(walletForm, client, this::setStatus, () -> refreshBalances(address));
+        LitVmBridgePane bridgePane = new LitVmBridgePane(walletForm, client(LitVmNetwork.LITEFORGE_TESTNET), this::setStatus, () -> refreshBalances(address));
+        swapPane = new LitVmSwapPane(walletForm, this::setStatus, () -> refreshBalances(address));
         Button refreshButton = new Button("Refresh");
         refreshButton.setOnAction(e -> {
             refreshBalances(address);
@@ -93,7 +110,7 @@ public class LitVmPane extends BorderPane {
         assetCombo.setConverter(new StringConverter<>() {
             @Override
             public String toString(Asset asset) {
-                return asset == null ? "" : (asset.isNative() ? network.getSymbol() : asset.token().symbol() + " (" + shortAddress(asset.token().contract()) + ")");
+                return asset == null ? "" : (asset.isNative() ? network().getSymbol() : asset.token().symbol() + " (" + shortAddress(asset.token().contract()) + ")");
             }
 
             @Override
@@ -107,42 +124,72 @@ public class LitVmPane extends BorderPane {
         removeTokenButton.setVisible(false);
         removeTokenButton.managedProperty().bind(removeTokenButton.visibleProperty());
         removeTokenButton.setOnAction(e -> removeToken(address));
+        faucetLink.managedProperty().bind(faucetLink.visibleProperty());
 
         toField.setPromptText("0x...");
         amountField.setPromptText("0.0");
         sendButton.setOnAction(e -> send());
 
+        networkCombo.valueProperty().addListener((obs, old, network) -> {
+            toField.clear();
+            amountField.clear();
+            setStatus("");
+            showNetwork();
+            refreshBalances(address);
+        });
+
         GridPane grid = new GridPane();
         grid.setHgap(10);
         grid.setVgap(10);
-        grid.add(new Label("Address"), 0, 0);
-        grid.add(new HBox(8, addressField, copyButton), 1, 0);
-        grid.add(new Label("Account"), 0, 1);
-        grid.add(new Label(accountText), 1, 1);
-        grid.add(new Label("Balance"), 0, 2);
-        grid.add(new HBox(10, balanceLabel, refreshButton), 1, 2);
-        grid.add(new Label("Tokens"), 0, 3);
-        grid.add(new VBox(6, tokenBalances, addTokenButton), 1, 3);
-        grid.add(new HBox(16, explorerLink, faucetLink), 1, 4);
-        grid.add(new Separator(), 0, 5, 2, 1);
-        grid.add(new Label("Asset"), 0, 6);
-        grid.add(new HBox(8, assetCombo, removeTokenButton), 1, 6);
-        grid.add(new Label("Send to"), 0, 7);
-        grid.add(toField, 1, 7);
-        grid.add(new Label("Amount"), 0, 8);
-        grid.add(new HBox(8, amountField, sendButton), 1, 8);
+        grid.add(new Label("Network"), 0, 0);
+        grid.add(networkCombo, 1, 0);
+        grid.add(new Label("Address"), 0, 1);
+        grid.add(new HBox(8, addressField, copyButton), 1, 1);
+        grid.add(new Label("Account"), 0, 2);
+        grid.add(new Label(accountText), 1, 2);
+        grid.add(new Label("Balance"), 0, 3);
+        grid.add(new HBox(10, balanceLabel, refreshButton), 1, 3);
+        grid.add(new Label("Tokens"), 0, 4);
+        grid.add(new VBox(6, tokenBalances, addTokenButton), 1, 4);
+        grid.add(new HBox(16, explorerLink, faucetLink), 1, 5);
+        grid.add(new Separator(), 0, 6, 2, 1);
+        grid.add(new Label("Asset"), 0, 7);
+        grid.add(new HBox(8, assetCombo, removeTokenButton), 1, 7);
+        grid.add(new Label("Send to"), 0, 8);
+        grid.add(toField, 1, 8);
+        grid.add(new Label("Amount"), 0, 9);
+        grid.add(new HBox(8, amountField, sendButton), 1, 9);
 
         statusLabel.setWrapText(true);
         statusLabel.setMaxWidth(560);
         Label bridgesTitle = new Label("Bridges");
         bridgesTitle.setStyle("-fx-font-size: 1.2em;");
-        VBox content = new VBox(14, title, warning, grid, statusLabel, new Separator(), bridgesTitle, bridgePane, new Separator(), unlinkButton);
+        VBox content = new VBox(14, title, warning, grid, statusLabel, new Separator(), swapPane, new Separator(), bridgesTitle, bridgePane, new Separator(), unlinkButton);
         content.setPadding(new Insets(20, 25, 20, 25));
         setCenter(new ScrollPane(content));
         ((ScrollPane)getCenter()).setFitToWidth(true);
 
+        showNetwork();
         refreshBalances(address);
         bridgePane.refresh();
+    }
+
+    private LitVmNetwork network() {
+        return networkCombo.getValue();
+    }
+
+    private LitVmRpcClient client(LitVmNetwork network) {
+        return clients.computeIfAbsent(network, LitVmRpcClient::new);
+    }
+
+    private void showNetwork() {
+        LitVmNetwork network = network();
+        warning.setText(network.getDisplayName() + " (chain " + network.getChainId() + "). Test " + network.getSymbol() + " and test tokens have no value.");
+        faucetLink.setVisible(network == LitVmNetwork.LITEFORGE_TESTNET);
+        assetCombo.setItems(FXCollections.observableArrayList(new Asset(null)));
+        assetCombo.getSelectionModel().selectFirst();
+        tokenBalances.getChildren().clear();
+        swapPane.setNetwork(client(network), List.of());
     }
 
     private Wallet getMasterWallet() {
@@ -150,10 +197,8 @@ public class LitVmPane extends BorderPane {
         return wallet.isMasterWallet() ? wallet : wallet.getMasterWallet();
     }
 
-    private Hyperlink link(String text, String url) {
-        Hyperlink link = new Hyperlink(text);
-        link.setOnAction(e -> AppServices.get().getApplication().getHostServices().showDocument(url));
-        return link;
+    private void show(String url) {
+        AppServices.get().getApplication().getHostServices().showDocument(url);
     }
 
     private static String shortAddress(EvmAddress address) {
@@ -161,12 +206,20 @@ public class LitVmPane extends BorderPane {
         return text.substring(0, 6) + "..." + text.substring(text.length() - 4);
     }
 
-    /** Tracked token contracts, from the config: the user's own list (contracts are public, not wallet secrets). */
-    private static List<EvmAddress> trackedTokens() {
+    /**
+     * Tracked token contracts on a network, from the config: the user's own list (contracts are public, not wallet
+     * secrets). Entries are "chainId:0x..."; a bare "0x..." entry predates other networks and means LiteForge.
+     */
+    private static List<EvmAddress> trackedTokens(LitVmNetwork network) {
         List<EvmAddress> tokens = new ArrayList<>();
-        for(String contract : Config.get().getLitVmTokens()) {
+        for(String entry : Config.get().getLitVmTokens()) {
+            int colon = entry.indexOf(':');
+            long chainId = colon < 0 ? LitVmNetwork.LITEFORGE_TESTNET.getChainId() : parseChainId(entry.substring(0, colon));
+            if(chainId != network.getChainId()) {
+                continue;
+            }
             try {
-                EvmAddress address = EvmAddress.fromString(contract);
+                EvmAddress address = EvmAddress.fromString(colon < 0 ? entry : entry.substring(colon + 1));
                 if(!tokens.contains(address)) {
                     tokens.add(address);
                 }
@@ -177,9 +230,25 @@ public class LitVmPane extends BorderPane {
         return tokens;
     }
 
-    private record Balances(BigInteger nativeBalance, List<Erc20Token> tokens, List<BigInteger> tokenBalances, List<String> errors) {}
+    private static long parseChainId(String text) {
+        try {
+            return Long.parseLong(text.trim());
+        } catch(NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static boolean sameEntry(String entry, LitVmNetwork network, EvmAddress contract) {
+        int colon = entry.indexOf(':');
+        long chainId = colon < 0 ? LitVmNetwork.LITEFORGE_TESTNET.getChainId() : parseChainId(entry.substring(0, colon));
+        return chainId == network.getChainId() && (colon < 0 ? entry : entry.substring(colon + 1)).trim().equalsIgnoreCase(contract.toString());
+    }
+
+    private record Balances(LitVmNetwork network, BigInteger nativeBalance, List<Erc20Token> tokens, List<BigInteger> tokenBalances, List<String> errors) {}
 
     private void refreshBalances(EvmAddress address) {
+        LitVmNetwork network = network();
+        LitVmRpcClient client = client(network);
         balanceLabel.setText("Loading...");
         Task<Balances> task = new Task<>() {
             @Override
@@ -189,7 +258,7 @@ public class LitVmPane extends BorderPane {
                 List<Erc20Token> tokens = new ArrayList<>();
                 List<BigInteger> balances = new ArrayList<>();
                 List<String> errors = new ArrayList<>();
-                for(EvmAddress contract : trackedTokens()) {
+                for(EvmAddress contract : trackedTokens(network)) {
                     try {
                         Erc20Token token = client.readToken(contract);
                         tokens.add(token);
@@ -198,19 +267,25 @@ public class LitVmPane extends BorderPane {
                         errors.add(shortAddress(contract) + ": " + message(e));
                     }
                 }
-                return new Balances(nativeBalance, tokens, balances, errors);
+                return new Balances(network, nativeBalance, tokens, balances, errors);
             }
         };
-        task.setOnSucceeded(e -> showBalances(task.getValue()));
+        task.setOnSucceeded(e -> {
+            if(task.getValue().network() == network()) {
+                showBalances(task.getValue());
+            }
+        });
         task.setOnFailed(e -> {
-            balanceLabel.setText("Unavailable");
-            setStatus("Could not reach " + network.getDisplayName() + ": " + message(task.getException()));
+            if(network == network()) {
+                balanceLabel.setText("Unavailable");
+                setStatus("Could not reach " + network.getDisplayName() + ": " + message(task.getException()));
+            }
         });
         start(task);
     }
 
     private void showBalances(Balances balances) {
-        balanceLabel.setText(Wei.format(balances.nativeBalance()) + " " + network.getSymbol());
+        balanceLabel.setText(Wei.format(balances.nativeBalance()) + " " + balances.network().getSymbol());
 
         tokenBalances.getChildren().clear();
         for(int i = 0; i < balances.tokens().size(); i++) {
@@ -229,6 +304,7 @@ public class LitVmPane extends BorderPane {
         balances.tokens().forEach(token -> assets.add(new Asset(token)));
         assetCombo.setItems(FXCollections.observableArrayList(assets));
         assetCombo.setValue(assets.stream().filter(asset -> selected != null && sameAsset(asset, selected)).findFirst().orElse(assets.getFirst()));
+        swapPane.setNetwork(client(balances.network()), balances.tokens());
 
         if(!balances.errors().isEmpty()) {
             setStatus("Could not read token(s): " + String.join("; ", balances.errors()));
@@ -240,6 +316,8 @@ public class LitVmPane extends BorderPane {
     }
 
     private void addToken(EvmAddress owner) {
+        LitVmNetwork network = network();
+        LitVmRpcClient client = client(network);
         TextInputDialog dialog = new TextInputDialog();
         dialog.initOwner(getScene().getWindow());
         dialog.setTitle("Add Token");
@@ -271,18 +349,20 @@ public class LitVmPane extends BorderPane {
             Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
             confirm.initOwner(getScene().getWindow());
             confirm.setTitle("Add Token");
-            confirm.setHeaderText("Track " + token.symbol() + "?");
+            confirm.setHeaderText("Track " + token.symbol() + " on " + network.getDisplayName() + "?");
             confirm.setContentText("Name: " + token.name() + "\nSymbol: " + token.symbol() + "\nDecimals: " + token.decimals() + "\nContract: " + token.contract()
                     + "\n\nAnyone can deploy a token with any name. Only track contracts from a source you trust.");
             Optional<ButtonType> answer = confirm.showAndWait();
             if(answer.isPresent() && answer.get() == ButtonType.OK) {
                 List<String> tokens = Config.get().getLitVmTokens();
-                if(tokens.stream().noneMatch(existing -> existing.equalsIgnoreCase(token.contract().toString()))) {
-                    tokens.add(token.contract().toString());
+                if(tokens.stream().noneMatch(existing -> sameEntry(existing, network, token.contract()))) {
+                    tokens.add(network.getChainId() + ":" + token.contract());
                     Config.get().setLitVmTokens(tokens);
                 }
-                setStatus("Tracking " + token.symbol() + ".");
-                refreshBalances(owner);
+                setStatus("Tracking " + token.symbol() + " on " + network.getDisplayName() + ".");
+                if(network == network()) {
+                    refreshBalances(owner);
+                }
             } else {
                 setStatus("Not added.");
             }
@@ -296,9 +376,9 @@ public class LitVmPane extends BorderPane {
         if(asset == null || asset.isNative()) {
             return;
         }
-        String contract = asset.token().contract().toString();
+        LitVmNetwork network = network();
         List<String> tokens = Config.get().getLitVmTokens();
-        tokens.removeIf(existing -> existing.equalsIgnoreCase(contract));
+        tokens.removeIf(existing -> sameEntry(existing, network, asset.token().contract()));
         Config.get().setLitVmTokens(tokens);
         setStatus("Stopped tracking " + asset.token().symbol() + ".");
         refreshBalances(owner);
@@ -310,6 +390,8 @@ public class LitVmPane extends BorderPane {
         if(link == null || asset == null) {
             return;
         }
+        LitVmNetwork network = network();
+        LitVmRpcClient client = client(network);
 
         EvmAddress to;
         BigInteger amount;
@@ -336,26 +418,31 @@ public class LitVmPane extends BorderPane {
 
         sendButton.setDisable(true);
         setStatus("Preparing transaction...");
+        BigInteger[] dataFee = new BigInteger[1];
         Task<Eip1559Transaction> prepare = new Task<>() {
             @Override
             protected Eip1559Transaction call() throws Exception {
                 client.verifyChain();
+                Eip1559Transaction tx;
                 if(asset.isNative()) {
-                    return client.prepareTransfer(link.getAddress(), to, amount);
+                    tx = client.prepareTransfer(link.getAddress(), to, amount);
+                } else {
+                    BigInteger tokenBalance = client.getTokenBalance(asset.token(), link.getAddress());
+                    if(tokenBalance.compareTo(amount) < 0) {
+                        throw new IllegalStateException("Only " + asset.token().format(tokenBalance) + " " + asset.token().symbol() + " available");
+                    }
+                    tx = client.prepareTokenTransfer(link.getAddress(), asset.token(), to, amount);
                 }
-                BigInteger tokenBalance = client.getTokenBalance(asset.token(), link.getAddress());
-                if(tokenBalance.compareTo(amount) < 0) {
-                    throw new IllegalStateException("Only " + asset.token().format(tokenBalance) + " " + asset.token().symbol() + " available");
-                }
-                Eip1559Transaction tx = client.prepareTokenTransfer(link.getAddress(), asset.token(), to, amount);
-                BigInteger gasBalance = client.getBalance(link.getAddress());
-                if(gasBalance.compareTo(tx.maxCost()) < 0) {
-                    throw new IllegalStateException("Not enough " + network.getSymbol() + " for the network fee (up to " + Wei.format(tx.maxCost()) + ")");
+                dataFee[0] = client.l1DataFee(tx);
+                BigInteger needed = tx.maxCost().add(dataFee[0]);
+                BigInteger balance = client.getBalance(link.getAddress());
+                if(balance.compareTo(needed) < 0) {
+                    throw new IllegalStateException("Not enough " + network.getSymbol() + " for this transfer and its network fee (up to " + Wei.format(needed) + ")");
                 }
                 return tx;
             }
         };
-        prepare.setOnSucceeded(e -> confirmAndSend(link, asset, to, amount, prepare.getValue()));
+        prepare.setOnSucceeded(e -> confirmAndSend(client, link, asset, to, amount, prepare.getValue(), dataFee[0]));
         prepare.setOnFailed(e -> {
             sendButton.setDisable(false);
             setStatus("Could not prepare the transaction: " + message(prepare.getException()));
@@ -363,17 +450,18 @@ public class LitVmPane extends BorderPane {
         start(prepare);
     }
 
-    private void confirmAndSend(LitVmLink link, Asset asset, EvmAddress to, BigInteger amount, Eip1559Transaction tx) {
-        BigInteger maxFee = tx.getGasLimit().multiply(tx.getMaxFeePerGas());
+    private void confirmAndSend(LitVmRpcClient client, LitVmLink link, Asset asset, EvmAddress to, BigInteger amount, Eip1559Transaction tx, BigInteger dataFee) {
+        LitVmNetwork network = client.getNetwork();
+        BigInteger maxFee = tx.getGasLimit().multiply(tx.getMaxFeePerGas()).add(dataFee);
         String amountText = asset.isNative() ? Wei.format(amount) + " " + network.getSymbol() : asset.token().format(amount) + " " + asset.token().symbol();
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.initOwner(getScene().getWindow());
-        confirm.setTitle("Confirm LitVM Transfer");
+        confirm.setTitle("Confirm Transfer");
         confirm.setHeaderText("Send " + amountText + " on " + network.getDisplayName() + "?");
         confirm.setContentText("From: " + link.getAddress() + "\nTo: " + to + "\nAmount: " + amountText
                 + (asset.isNative() ? "" : "\nToken contract: " + asset.token().contract())
                 + "\nMaximum network fee: " + Wei.format(maxFee) + " " + network.getSymbol()
-                + (asset.isNative() ? "\nMaximum total: " + Wei.format(tx.maxCost()) + " " + network.getSymbol() : ""));
+                + (asset.isNative() ? "\nMaximum total: " + Wei.format(tx.maxCost().add(dataFee)) + " " + network.getSymbol() : ""));
         Optional<ButtonType> answer = confirm.showAndWait();
         if(answer.isEmpty() || answer.get() != ButtonType.OK) {
             sendButton.setDisable(false);
@@ -381,13 +469,13 @@ public class LitVmPane extends BorderPane {
             return;
         }
 
-        LitVmLinkDialog.withAccount(getMasterWallet(), walletForm.getStorage(), getScene().getWindow(), account -> broadcast(account.sign(tx), link), () -> {
+        LitVmLinkDialog.withAccount(getMasterWallet(), walletForm.getStorage(), getScene().getWindow(), account -> broadcast(client, account.sign(tx), link), () -> {
             sendButton.setDisable(false);
             setStatus("Not sent.");
         });
     }
 
-    private void broadcast(Eip1559Transaction.Signed signed, LitVmLink link) {
+    private void broadcast(LitVmRpcClient client, Eip1559Transaction.Signed signed, LitVmLink link) {
         setStatus("Broadcasting " + signed.hashHex() + "...");
         Task<String> broadcast = new Task<>() {
             @Override
