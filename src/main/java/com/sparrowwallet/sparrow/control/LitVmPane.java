@@ -416,6 +416,11 @@ public class LitVmPane extends BorderPane {
             return;
         }
 
+        if(LitVmFlowPane.busy) {
+            setStatus("Another LitVM transaction is still in progress; wait for it to finish.");
+            return;
+        }
+        LitVmFlowPane.busy = true;
         sendButton.setDisable(true);
         setStatus("Preparing transaction...");
         BigInteger[] dataFee = new BigInteger[1];
@@ -444,7 +449,7 @@ public class LitVmPane extends BorderPane {
         };
         prepare.setOnSucceeded(e -> confirmAndSend(client, link, asset, to, amount, prepare.getValue(), dataFee[0]));
         prepare.setOnFailed(e -> {
-            sendButton.setDisable(false);
+            release();
             setStatus("Could not prepare the transaction: " + message(prepare.getException()));
         });
         start(prepare);
@@ -464,13 +469,13 @@ public class LitVmPane extends BorderPane {
                 + (asset.isNative() ? "\nMaximum total: " + Wei.format(tx.maxCost().add(dataFee)) + " " + network.getSymbol() : ""));
         Optional<ButtonType> answer = confirm.showAndWait();
         if(answer.isEmpty() || answer.get() != ButtonType.OK) {
-            sendButton.setDisable(false);
+            release();
             setStatus("Cancelled.");
             return;
         }
 
         LitVmLinkDialog.withAccount(getMasterWallet(), walletForm.getStorage(), getScene().getWindow(), account -> broadcast(client, account.sign(tx), link), () -> {
-            sendButton.setDisable(false);
+            release();
             setStatus("Not sent.");
         });
     }
@@ -480,9 +485,9 @@ public class LitVmPane extends BorderPane {
         Task<String> broadcast = new Task<>() {
             @Override
             protected String call() throws Exception {
-                String hash = client.sendRawTransaction(signed);
+                String hash = LitVmFlowPane.send(client, signed, "The transfer");
                 for(int i = 0; i < 30; i++) {
-                    Optional<LitVmRpcClient.Receipt> receipt = client.getReceipt(hash);
+                    Optional<LitVmRpcClient.Receipt> receipt = LitVmFlowPane.receipt(client, hash);
                     if(receipt.isPresent()) {
                         return receipt.get().success() ? "Confirmed in block " + receipt.get().blockNumber() + ": " + hash : "Failed on chain: " + hash;
                     }
@@ -492,16 +497,21 @@ public class LitVmPane extends BorderPane {
             }
         };
         broadcast.setOnSucceeded(e -> {
-            sendButton.setDisable(false);
+            release();
             setStatus(broadcast.getValue());
             amountField.clear();
             refreshBalances(link.getAddress());
         });
         broadcast.setOnFailed(e -> {
-            sendButton.setDisable(false);
-            setStatus("Not sent: " + message(broadcast.getException()));
+            release();
+            setStatus("Not completed: " + message(broadcast.getException()));
         });
         start(broadcast);
+    }
+
+    private void release() {
+        sendButton.setDisable(false);
+        LitVmFlowPane.busy = false;
     }
 
     private void setStatus(String text) {

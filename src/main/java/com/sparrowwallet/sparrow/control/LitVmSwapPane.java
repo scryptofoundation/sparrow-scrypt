@@ -95,10 +95,17 @@ public class LitVmSwapPane extends LitVmFlowPane {
 
     /** Points the section at a network and the tokens tracked there; hides it where no venue exists. */
     public void setNetwork(LitVmRpcClient client, List<Erc20Token> trackedTokens) {
+        //A balance refresh calls this again for the same network: keep what the user picked and typed
+        boolean sameNetwork = this.client != null && this.client.getNetwork() == client.getNetwork();
+        SwapAsset previousFrom = sameNetwork ? fromCombo.getValue() : null;
+        SwapAsset previousTo = sameNetwork ? toCombo.getValue() : null;
         this.client = client;
         List<SwapVenue> venues = SwapVenue.forNetwork(client.getNetwork());
         venue = venues.isEmpty() ? null : venues.getFirst();
-        quoteLabel.setText("");
+        if(!sameNetwork) {
+            amountField.clear();
+            quoteLabel.setText("");
+        }
         if(venue == null) {
             title.setText("Swaps");
             note.setText("No swap venue is set up on " + client.getNetwork().getDisplayName() + ".");
@@ -124,10 +131,22 @@ public class LitVmSwapPane extends LitVmFlowPane {
                 assets.add(new SwapAsset(token, nativeSymbol));
             }
         }
+        String quote = quoteLabel.getText();
         fromCombo.setItems(FXCollections.observableArrayList(assets));
         toCombo.setItems(FXCollections.observableArrayList(assets));
-        fromCombo.setValue(assets.get(0));
-        toCombo.setValue(assets.size() > 1 ? assets.get(1) : null);
+        fromCombo.setValue(find(assets, previousFrom).orElse(assets.get(0)));
+        toCombo.setValue(find(assets, previousTo).orElse(assets.size() > 1 ? assets.get(1) : null));
+        if(sameNetwork) {
+            quoteLabel.setText(quote);
+        }
+    }
+
+    private static java.util.Optional<SwapAsset> find(List<SwapAsset> assets, SwapAsset wanted) {
+        if(wanted == null) {
+            return java.util.Optional.empty();
+        }
+        return assets.stream().filter(asset -> wanted.token() == null ? asset.token() == null
+                : asset.token() != null && asset.token().contract().equals(wanted.token().contract())).findFirst();
     }
 
     @Override

@@ -368,18 +368,44 @@ public class LitVmBridgePane extends LitVmFlowPane {
             return;
         }
         EvmAddress address = address();
-        BigInteger net = JunkcoinBridge.afterFee(BigInteger.valueOf(sats), JunkcoinBridge.MAX_FEE_BPS);
+        Wallet sendingWallet = wallet;
+        long depositSats = sats;
+        //The custody address is pinned, but the bridge can be upgraded to a new one: check the deployed bridge still
+        //reports it, and read the live fee, before any JKC is paid to it
+        status.accept("Checking the Junkcoin bridge...");
+        Task<Integer> check = new Task<>() {
+            @Override
+            protected Integer call() throws Exception {
+                l2.verifyChain();
+                JunkcoinBridge.verifyBridge(l2);
+                return JunkcoinBridge.feeBps(l2);
+            }
+        };
+        check.setOnSucceeded(e -> {
+            int feeBps = check.getValue();
+            if(feeBps > JunkcoinBridge.MAX_FEE_BPS) {
+                status.accept("The bridge fee is now " + feeBps / 100.0 + "%, above the 1% this wallet accepts; nothing was sent.");
+                return;
+            }
+            confirmJkcDeposit(sendingWallet, custody, address, depositSats, feeBps);
+        });
+        check.setOnFailed(e -> status.accept("The Junkcoin bridge could not be verified, so no deposit was started: " + message(check.getException())));
+        start(check);
+    }
+
+    private void confirmJkcDeposit(Wallet sendingWallet, Address custody, EvmAddress address, long sats, int feeBps) {
+        BigInteger net = JunkcoinBridge.afterFee(BigInteger.valueOf(sats), feeBps);
         String jkc = JunkcoinBridge.WJKC.format(BigInteger.valueOf(sats));
         if(!confirm("Confirm Bridge Transfer", "Bridge " + jkc + " JKC to LitVM?",
-                "From wallet: " + wallet.getFullDisplayName() + "\nTo LitVM account: " + address + "\nCustody address: " + JunkcoinBridge.CUSTODY_ADDRESS
-                + "\nYou receive about " + JunkcoinBridge.WJKC.format(net) + " " + JunkcoinBridge.WJKC.symbol() + " after the 1% bridge fee, claimable here after "
-                + JunkcoinBridge.DEPOSIT_CONFIRMATIONS + " confirmations.\n\n" + JunkcoinBridge.TRUST_WARNING
+                "From wallet: " + sendingWallet.getFullDisplayName() + "\nTo LitVM account: " + address + "\nCustody address: " + JunkcoinBridge.CUSTODY_ADDRESS
+                + " (checked against the bridge contract)\nYou receive about " + JunkcoinBridge.WJKC.format(net) + " " + JunkcoinBridge.WJKC.symbol() + " after the "
+                + feeBps / 100.0 + "% bridge fee, claimable here after " + JunkcoinBridge.DEPOSIT_CONFIRMATIONS + " confirmations.\n\n" + JunkcoinBridge.TRUST_WARNING
                 + "\n\nThe wallet's Send tab opens with the custody payment and an OP_RETURN output naming your LitVM account. Review and send it there; "
                 + "do not change the OP_RETURN or the deposit is lost.")) {
+            status.accept("Cancelled.");
             return;
         }
 
-        Wallet sendingWallet = wallet;
         Payment payment = new Payment(custody, "Junkcoin bridge deposit to " + address, sats, false);
         EventManager.get().post(new SendActionEvent(sendingWallet, new ArrayList<>(sendingWallet.getSpendableUtxos().keySet())));
         Platform.runLater(() -> EventManager.get().post(new SpendUtxoEvent(sendingWallet, List.of(payment), List.of(JunkcoinBridge.depositData(address)), null)));

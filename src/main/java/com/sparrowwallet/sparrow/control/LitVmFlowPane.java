@@ -27,6 +27,8 @@ public abstract class LitVmFlowPane extends VBox {
     protected final WalletForm walletForm;
     protected final Consumer<String> status;
     private final Runnable onBalancesChanged;
+    //Shared by every LitVM flow (swaps, bridges, sends); touched only on the FX thread
+    static boolean busy;
 
     /** One transaction of a flow. A dependent one was signed with a fixed gas limit before the step it needs was mined. */
     protected record Step(LitVmRpcClient client, Eip1559Transaction tx, String description, boolean dependent) {
@@ -59,6 +61,13 @@ public abstract class LitVmFlowPane extends VBox {
     }
 
     protected void prepare(Preparer preparer, Predicate<List<Step>> confirmation, Consumer<List<String>> onSent) {
+        //One flow at a time per account: a second one could take the nonce a pre-signed dependent step was signed with,
+        //or repeat a claim that is already on its way
+        if(busy) {
+            status.accept("Another LitVM transaction is still in progress; wait for it to finish.");
+            return;
+        }
+        busy = true;
         status.accept("Preparing transaction...");
         Task<List<Step>> task = new Task<>() {
             @Override
@@ -69,12 +78,14 @@ public abstract class LitVmFlowPane extends VBox {
         task.setOnSucceeded(e -> {
             List<Step> steps = task.getValue();
             if(!confirmation.test(steps)) {
+                busy = false;
                 status.accept("Cancelled.");
                 return;
             }
             LitVmLink link = getMasterWallet().getLitVmLink();
             LitVmLinkDialog.withAccount(getMasterWallet(), walletForm.getStorage(), getScene().getWindow(), account -> {
                 if(!account.getAddress().equals(link.getAddress())) {
+                    busy = false;
                     status.accept("The unlocked account does not match this LitVM link; nothing was sent.");
                     return;
                 }
@@ -83,10 +94,41 @@ public abstract class LitVmFlowPane extends VBox {
                     signed.add(account.sign(step.tx()));
                 }
                 broadcast(steps, signed, onSent);
-            }, () -> status.accept("Not sent."));
+            }, () -> {
+                busy = false;
+                status.accept("Not sent.");
+            });
         });
-        task.setOnFailed(e -> status.accept("Could not prepare the transaction: " + message(task.getException())));
+        task.setOnFailed(e -> {
+            busy = false;
+            status.accept("Could not prepare the transaction: " + message(task.getException()));
+        });
         start(task);
+    }
+
+    /**
+     * Broadcasts a signed transaction. A node error (a JSON-RPC error answer) means it was refused; any other
+     * failure, such as a timeout, may come after the node accepted it, so it is reported with the transaction's own
+     * hash instead of as "not sent", to keep the user from paying twice by retrying.
+     */
+    static String send(LitVmRpcClient client, Eip1559Transaction.Signed signed, String description) {
+        try {
+            return client.sendRawTransaction(signed);
+        } catch(LitVmRpcClient.LitVmRpcException e) {
+            throw new IllegalStateException(description + " was refused by the node: " + message(e));
+        } catch(IOException e) {
+            throw new IllegalStateException(description + " may have been broadcast as " + signed.hashHex() + " (" + message(e)
+                    + "). Check it in the explorer before trying again.");
+        }
+    }
+
+    /** A receipt, or empty while pending; an unreadable answer counts as still pending rather than as a failure. */
+    static Optional<LitVmRpcClient.Receipt> receipt(LitVmRpcClient client, String hash) {
+        try {
+            return client.getReceipt(hash);
+        } catch(IOException | RuntimeException e) {
+            return Optional.empty();
+        }
     }
 
     private void broadcast(List<Step> steps, List<Eip1559Transaction.Signed> signed, Consumer<List<String>> onSent) {
@@ -109,13 +151,13 @@ public abstract class LitVmFlowPane extends VBox {
                             throw new IllegalStateException(step.description() + " needs " + gas + " gas, more than the " + step.tx().getGasLimit() + " it was signed with, so it was not sent");
                         }
                     }
-                    String hash = step.client().sendRawTransaction(signed.get(i));
+                    String hash = send(step.client(), signed.get(i), step.description() + (i + 1 < steps.size() ? " (later steps were not sent)" : ""));
                     hashes.add(hash);
                     updateMessage("Sent " + step.description() + ": " + hash);
                     Optional<LitVmRpcClient.Receipt> receipt = Optional.empty();
                     for(int poll = 0; poll < RECEIPT_POLLS && receipt.isEmpty(); poll++) {
                         Thread.sleep(2000);
-                        receipt = step.client().getReceipt(hash);
+                        receipt = receipt(step.client(), hash);
                     }
                     if(receipt.isEmpty()) {
                         throw new IllegalStateException(step.description() + " is still pending (" + hash + ")" + (i + 1 < steps.size() ? "; the next step was not sent" : ""));
@@ -129,11 +171,17 @@ public abstract class LitVmFlowPane extends VBox {
         };
         task.messageProperty().addListener((obs, old, text) -> status.accept(text));
         task.setOnSucceeded(e -> {
+            busy = false;
             onSent.accept(task.getValue());
             onBalancesChanged.run();
             refresh();
         });
-        task.setOnFailed(e -> status.accept("Not completed: " + message(task.getException())));
+        task.setOnFailed(e -> {
+            busy = false;
+            status.accept("Not completed: " + message(task.getException()));
+            onBalancesChanged.run();
+            refresh();
+        });
         start(task);
     }
 
