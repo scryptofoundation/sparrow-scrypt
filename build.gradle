@@ -357,6 +357,13 @@ if(os.linux) {
     tasks.jlink.finalizedBy('addUserWritePermission', 'extractNativeLibraries')
 }
 
+//The runtime image holds drongo and lark as modules, but the jlink plugin's tasks do not treat their jars as inputs, so
+//a change in drongo or lark alone left stale copies in build/jlinkbase and build/image and a stale exe. Make the jars
+//explicit inputs of every plugin task (closures, because the subprojects are configured after this script).
+tasks.matching { it.name in ['prepareMergedJarsDir', 'createMergedModule', 'createDelegatingModules', 'prepareModulesDir', 'jlink'] }.configureEach {
+    inputs.files({ project(':drongo').tasks.getByName('jar').outputs.files }, { project(':lark').tasks.getByName('jar').outputs.files })
+}
+
 tasks.register('addUserWritePermission', Exec) {
     if(os.windows) {
         def usersGroup = '*S-1-5-32-545' // Windows "Users" group SID (language-independent)
