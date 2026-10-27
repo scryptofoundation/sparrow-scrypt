@@ -6,6 +6,8 @@ import com.sparrowwallet.drongo.KeyPurpose;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.SecureString;
 import com.sparrowwallet.drongo.address.Address;
+import com.sparrowwallet.drongo.address.MwebAddress;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.drongo.bip47.PaymentCode;
 import com.sparrowwallet.drongo.bip47.SecretPoint;
 import com.sparrowwallet.drongo.crypto.ECKey;
@@ -1159,6 +1161,9 @@ public class SendController extends WalletFormController implements Initializabl
 
     public void createTransaction(ActionEvent event) {
         WalletTransaction walletTransaction = walletTransactionProperty.get();
+        if(!confirmCheckedInputs(walletTransaction)) {
+            return;
+        }
         if(log.isDebugEnabled()) {
             Map<WalletNode, List<String>> inputHashes = new LinkedHashMap<>();
             for(WalletNode node : walletTransaction.getSelectedUtxos().values()) {
@@ -1177,6 +1182,28 @@ public class SendController extends WalletFormController implements Initializabl
         PSBT psbt = walletTransaction.createPSBT();
         psbt = MwebServer.get().psbtAddIO(psbt, walletTransaction, getUserFeeRate());
         EventManager.get().post(new ViewPSBTEvent(createButton.getScene().getWindow(), walletTransaction.getPayments().get(0).getLabel(), null, psbt));
+    }
+
+    /**
+     * Inputs not yet checked for inscriptions and runes could be carrying one. A send asks first; a move into MWEB,
+     * where ord cannot follow them, waits until they are checked.
+     */
+    private boolean confirmCheckedInputs(WalletTransaction walletTransaction) {
+        List<BlockTransactionHashIndex> unknown = CollectiblesManager.get().unknownAmong(getWalletForm().getWallet(), walletTransaction.getSelectedUtxos().keySet());
+        if(unknown.isEmpty()) {
+            return true;
+        }
+        String outpoints = unknown.stream().map(BlockTransactionHashIndex::toString).collect(Collectors.joining("\n"));
+        boolean pegIn = walletTransaction.getPayments().stream().anyMatch(payment -> payment.getAddress() instanceof MwebAddress);
+        if(pegIn) {
+            AppServices.showErrorDialog("Inputs not checked", "Moving to Private is paused until these outputs are checked for inscriptions and runes:\n" + outpoints +
+                    "\nTry again when they have confirmed and the inscriptions server has indexed them.");
+            return false;
+        }
+        ButtonType continueButton = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
+        Optional<ButtonType> result = AppServices.showWarningDialog("Inputs not checked", "These inputs have not been checked for inscriptions or runes yet:\n" + outpoints +
+                "\nIf one carries something, spending it here would lose it.", ButtonType.CANCEL, continueButton);
+        return result.isPresent() && result.get() == continueButton;
     }
 
     private void addWalletTransactionNodes() {

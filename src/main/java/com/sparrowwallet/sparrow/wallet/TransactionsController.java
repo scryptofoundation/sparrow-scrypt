@@ -16,6 +16,7 @@ import com.sparrowwallet.drongo.wallet.BlockTransaction;
 import com.sparrowwallet.drongo.wallet.BlockTransactionHashIndex;
 import com.sparrowwallet.drongo.wallet.Payment;
 import com.sparrowwallet.drongo.wallet.Wallet;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
 import javafx.event.ActionEvent;
@@ -313,7 +314,18 @@ public class TransactionsController extends WalletFormController implements Init
 
     public void moveToPrivate(ActionEvent event) {
         Wallet wallet = getWalletForm().getWallet();
-        moveFunds(WalletLink.getPublicWallet(wallet), WalletLink.getMwebWallet(wallet));
+        Wallet publicWallet = WalletLink.getPublicWallet(wallet);
+        //ord cannot follow coins into MWEB, so an inscription or runes on an unchecked output would be lost there
+        if(publicWallet != null) {
+            List<BlockTransactionHashIndex> unknown = CollectiblesManager.get().unknownAmong(publicWallet, publicWallet.getSpendableUtxos().keySet());
+            if(!unknown.isEmpty()) {
+                AppServices.showErrorDialog("Inputs not checked", "Moving to Private is paused until these outputs are checked for inscriptions and runes:\n"
+                        + unknown.stream().map(BlockTransactionHashIndex::toString).collect(java.util.stream.Collectors.joining("\n"))
+                        + "\nTry again when they have confirmed and the inscriptions server has indexed them.");
+                return;
+            }
+        }
+        moveFunds(publicWallet, WalletLink.getMwebWallet(wallet));
     }
 
     public void moveToPublic(ActionEvent event) {

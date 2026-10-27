@@ -210,6 +210,7 @@ public class AppServices {
                 .subscribe(this::fetchBlockSummaries, exception -> log.error("Error fetching block summaries", exception));
 
         EventManager.get().register(this);
+        EventManager.get().register(com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.get());
     }
 
     public void start() {
