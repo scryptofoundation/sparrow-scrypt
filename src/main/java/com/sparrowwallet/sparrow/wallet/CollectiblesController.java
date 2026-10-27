@@ -16,6 +16,7 @@ import com.sparrowwallet.sparrow.net.ord.OrdOutput;
 import com.sparrowwallet.sparrow.net.ord.RuneBalance;
 import com.sparrowwallet.sparrow.settings.SettingsDialog;
 import com.sparrowwallet.sparrow.settings.SettingsGroup;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
 import com.sparrowwallet.sparrow.wallet.collectibles.ReleaseDialog;
@@ -79,6 +80,9 @@ public class CollectiblesController extends WalletFormController implements Init
     @FXML
     private Label emptyLabel;
 
+    @FXML
+    private Button sendRunesButton;
+
     private String selectedId;
 
     private record Holding(Wallet wallet, BlockTransactionHashIndex utxo, OrdOutput output, String serverUrl) {
@@ -126,6 +130,9 @@ public class CollectiblesController extends WalletFormController implements Init
         runesTable.getColumns().setAll(List.of(name, symbol, balance, outputs));
         runesTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         runesTable.setPlaceholder(new Label("No runes found"));
+        sendRunesButton.disableProperty().bind(runesTable.getSelectionModel().selectedItemProperty().isNull());
+        sendRunesButton.setOnAction(event -> CollectibleSendDialog.sendRunes(sendRunesButton.getScene().getWindow(), holdingWallets(),
+                runesTable.getSelectionModel().getSelectedItem().name()));
 
         showDetail(null);
         refresh();
@@ -325,6 +332,11 @@ public class CollectiblesController extends WalletFormController implements Init
             Hyperlink explorer = new Hyperlink("Open in explorer");
             explorer.setOnAction(event -> AppServices.get().getApplication().getHostServices().showDocument(new OrdClient(holding.serverUrl()).explorerUrl(id)));
             detailPane.getChildren().add(explorer);
+            if(inscription != null && inscription.satpoint() != null) {
+                Button send = new Button("Send...");
+                send.setOnAction(event -> CollectibleSendDialog.sendInscription(send.getScene().getWindow(), holding.wallet(), id, inscription.satpoint(), holding.output()));
+                detailPane.getChildren().add(send);
+            }
             if(holding.utxo().getStatus() == Status.PROTECTED) {
                 Button release = new Button("Spend as plain LTC...");
                 release.setOnAction(event -> ReleaseDialog.release(holding.wallet(), holding.utxo(), holding.output()));

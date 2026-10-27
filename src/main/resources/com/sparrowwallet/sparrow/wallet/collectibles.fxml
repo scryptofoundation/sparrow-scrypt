@@ -49,7 +49,12 @@
                 </BorderPane>
             </Tab>
             <Tab text="Runes">
-                <TableView fx:id="runesTable" />
+                <VBox spacing="10">
+                    <TableView fx:id="runesTable" VBox.vgrow="ALWAYS" />
+                    <HBox spacing="10" alignment="CENTER_RIGHT">
+                        <Button fx:id="sendRunesButton" text="Send..." />
+                    </HBox>
+                </VBox>
             </Tab>
         </TabPane>
     </center>
