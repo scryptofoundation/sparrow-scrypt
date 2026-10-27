@@ -681,52 +681,11 @@ public class SettingsController extends WalletFormController implements Initiali
 
         //Adds a same-seed MWEB (private) child wallet derived from this wallet's seed, mirroring the account-adding flow
         //(decrypt if needed -> add child -> persist -> re-encrypt). The MWEB child is surfaced as its own wallet tab.
-        if(masterWallet.isEncrypted()) {
-            String walletId = walletForm.getWalletId();
-            WalletPasswordDialog dlg = new WalletPasswordDialog(masterWallet.getName(), WalletPasswordDialog.PasswordRequirement.LOAD);
-            dlg.initOwner(enableMweb.getScene().getWindow());
-            Optional<SecureString> password = dlg.showAndWait();
-            if(password.isPresent()) {
-                Storage.KeyDerivationService keyDerivationService = new Storage.KeyDerivationService(walletForm.getStorage(), password.get(), true);
-                keyDerivationService.setOnSucceeded(workerStateEvent -> {
-                    EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.END, "Done"));
-                    ECKey encryptionFullKey = keyDerivationService.getValue();
-                    Key key = new Key(encryptionFullKey.getPrivKeyBytes(), walletForm.getStorage().getKeyDeriver().getSalt(), EncryptionType.Deriver.ARGON2);
-                    encryptionFullKey.clear();
-                    masterWallet.decrypt(key);
-                    try {
-                        Wallet childWallet = masterWallet.addMwebChildWallet();
-                        setTransparentLabel(masterWallet);
-                        EventManager.get().post(new ChildWalletsAddedEvent(getWalletForm().getStorage(), masterWallet, childWallet));
-                        childWallet.encrypt(key);
-                        saveChildWallets(masterWallet);
-                    } finally {
-                        masterWallet.encrypt(key);
-                        key.clear();
-                    }
-                    saveMasterLabel(masterWallet);
-                });
-                keyDerivationService.setOnFailed(workerStateEvent -> {
-                    EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.END, "Failed"));
-                    if(keyDerivationService.getException() instanceof InvalidPasswordException) {
-                        Optional<ButtonType> optResponse = showErrorDialog("Invalid Password", "The wallet password was invalid. Try again?", ButtonType.CANCEL, ButtonType.OK);
-                        if(optResponse.isPresent() && optResponse.get().equals(ButtonType.OK)) {
-                            Platform.runLater(() -> enableMweb(null));
-                        }
-                    } else {
-                        log.error("Error deriving wallet key", keyDerivationService.getException());
-                    }
-                });
-                EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.START, "Decrypting wallet..."));
-                keyDerivationService.start();
-            }
-        } else {
-            Wallet childWallet = masterWallet.addMwebChildWallet();
-            setTransparentLabel(masterWallet);
-            EventManager.get().post(new ChildWalletsAddedEvent(getWalletForm().getStorage(), masterWallet, childWallet));
-            saveChildWallets(masterWallet);
-            saveMasterLabel(masterWallet);
-        }
+        SameSeedChildWallets.add(walletForm, masterWallet, enableMweb.getScene().getWindow(), master -> {
+            Wallet childWallet = master.addMwebChildWallet();
+            setTransparentLabel(master);
+            return childWallet;
+        }, childWallet -> saveMasterLabel(masterWallet), () -> enableMweb(null));
     }
 
     //Once MWEB is enabled the wallet reads as Public/Private: label the master (transparent) account "Public"
@@ -984,20 +943,7 @@ public class SettingsController extends WalletFormController implements Initiali
     }
 
     private void saveChildWallets(Wallet masterWallet) {
-        for(Wallet childWallet : masterWallet.getChildWallets()) {
-            if(!childWallet.isNested()) {
-                Storage storage = AppServices.get().getOpenWallets().get(childWallet);
-                if(!storage.isPersisted(childWallet)) {
-                    try {
-                        storage.saveWallet(childWallet);
-                        EventManager.get().post(new NewChildWalletSavedEvent(storage, masterWallet, childWallet));
-                    } catch(Exception e) {
-                        log.error("Error saving wallet", e);
-                        AppServices.showErrorDialog("Error saving wallet " + childWallet.getName(), e.getMessage());
-                    }
-                }
-            }
-        }
+        SameSeedChildWallets.saveChildWallets(masterWallet);
     }
 
     private void setInputFieldsDisabled(boolean disabled) {
