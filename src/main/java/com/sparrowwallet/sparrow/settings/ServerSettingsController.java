@@ -20,6 +20,10 @@ import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.io.Server;
 import com.sparrowwallet.sparrow.io.Storage;
 import com.sparrowwallet.sparrow.net.*;
+import com.sparrowwallet.sparrow.net.ord.InscriptionServerMode;
+import com.sparrowwallet.sparrow.net.ord.OrdClient;
+import com.sparrowwallet.sparrow.net.ord.OrdServer;
+import com.sparrowwallet.sparrow.net.ord.OrdStatus;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
@@ -164,6 +168,36 @@ public class ServerSettingsController extends SettingsDetailController {
     @FXML
     private TextArea testResults;
 
+    @FXML
+    private Form inscriptionsForm;
+
+    @FXML
+    private ToggleGroup inscriptionsToggleGroup;
+
+    @FXML
+    private ToggleButton inscriptionsOff;
+
+    @FXML
+    private ToggleButton inscriptionsPublic;
+
+    @FXML
+    private ToggleButton inscriptionsCustom;
+
+    @FXML
+    private Field inscriptionsPublicField;
+
+    @FXML
+    private Field inscriptionsUrlField;
+
+    @FXML
+    private TextField inscriptionsUrl;
+
+    @FXML
+    private Button inscriptionsTest;
+
+    @FXML
+    private Label inscriptionsTestResult;
+
     private final ValidationSupport validationSupport = new ValidationSupport();
 
     private TorService torService;
@@ -185,6 +219,7 @@ public class ServerSettingsController extends SettingsDetailController {
         });
 
         Platform.runLater(this::setupValidation);
+        initializeInscriptions(config);
 
         publicElectrumForm.managedProperty().bind(publicElectrumForm.visibleProperty());
         coreForm.managedProperty().bind(coreForm.visibleProperty());
@@ -702,6 +737,111 @@ public class ServerSettingsController extends SettingsDetailController {
 
         testResults.setText("Could not connect:\n\n" + reason);
         testConnection.setGraphic(getGlyph(FontAwesome5.Glyph.EXCLAMATION_CIRCLE, "failure"));
+    }
+
+    //Inscription and rune checks are Litecoin only. The public server indexes mainnet only, so other networks offer
+    //Off and Custom (the user's own ord-litecoin).
+    private void initializeInscriptions(Config config) {
+        inscriptionsForm.managedProperty().bind(inscriptionsForm.visibleProperty());
+        inscriptionsForm.setVisible(Coin.get() == Coin.LITECOIN);
+        if(Coin.get() != Coin.LITECOIN) {
+            return;
+        }
+
+        inscriptionsPublicField.managedProperty().bind(inscriptionsPublicField.visibleProperty());
+        inscriptionsUrlField.managedProperty().bind(inscriptionsUrlField.visibleProperty());
+        inscriptionsOff.setUserData(InscriptionServerMode.OFF);
+        inscriptionsPublic.setUserData(InscriptionServerMode.PUBLIC);
+        inscriptionsCustom.setUserData(InscriptionServerMode.CUSTOM);
+        if(Network.get() != Network.MAINNET) {
+            inscriptionsPublic.setDisable(true);
+            inscriptionsPublic.setTooltip(new Tooltip("No public inscriptions server for this network"));
+        }
+
+        InscriptionServerMode mode = config.getInscriptionServerMode();
+        if(mode == InscriptionServerMode.PUBLIC && Network.get() != Network.MAINNET) {
+            mode = InscriptionServerMode.OFF;
+        }
+        inscriptionsUrl.setText(config.getInscriptionCustomUrl() == null ? "" : config.getInscriptionCustomUrl());
+        InscriptionServerMode initial = mode;
+        inscriptionsToggleGroup.selectToggle(inscriptionsToggleGroup.getToggles().stream().filter(t -> t.getUserData() == initial).findFirst().orElse(inscriptionsOff));
+        showInscriptionFields(initial);
+
+        inscriptionsToggleGroup.selectedToggleProperty().addListener((observable, oldValue, newValue) -> {
+            if(newValue == null) {
+                oldValue.setSelected(true);
+                return;
+            }
+            InscriptionServerMode selected = (InscriptionServerMode)newValue.getUserData();
+            if(selected == InscriptionServerMode.PUBLIC && !config.isInscriptionPublicWarningShown()) {
+                AppServices.showWarningDialog("Public inscriptions server", "ordinalslite.com will see the outputs of every wallet you open, which can link them together. " +
+                        "Run your own ord-litecoin server and choose Custom to avoid this.");
+                config.setInscriptionPublicWarningShown();
+            }
+            showInscriptionFields(selected);
+            saveInscriptionServer(config, selected);
+        });
+        inscriptionsUrl.focusedProperty().addListener((observable, wasFocused, focused) -> {
+            if(!focused && inscriptionsToggleGroup.getSelectedToggle() == inscriptionsCustom) {
+                saveInscriptionServer(config, InscriptionServerMode.CUSTOM);
+            }
+        });
+        inscriptionsUrl.setOnAction(event -> saveInscriptionServer(config, InscriptionServerMode.CUSTOM));
+        inscriptionsTest.setOnAction(event -> testInscriptionServer(config));
+    }
+
+    private void showInscriptionFields(InscriptionServerMode mode) {
+        inscriptionsPublicField.setVisible(mode == InscriptionServerMode.PUBLIC);
+        inscriptionsUrlField.setVisible(mode == InscriptionServerMode.CUSTOM);
+        inscriptionsTest.setDisable(mode == InscriptionServerMode.OFF);
+        inscriptionsTestResult.setText("");
+    }
+
+    private void saveInscriptionServer(Config config, InscriptionServerMode mode) {
+        String url = inscriptionsUrl.getText().trim();
+        if(mode == InscriptionServerMode.CUSTOM) {
+            try {
+                OrdServer.resolveUrl(mode, url, Network.get());
+            } catch(IllegalArgumentException e) {
+                inscriptionsTestResult.setText(e.getMessage());
+                return;
+            }
+        }
+        if(mode == config.getInscriptionServerMode() && (mode != InscriptionServerMode.CUSTOM || url.equals(config.getInscriptionCustomUrl()))) {
+            return;
+        }
+        config.setInscriptionServer(mode, mode == InscriptionServerMode.CUSTOM ? url : null);
+        EventManager.get().post(new InscriptionSettingsChangedEvent(Coin.get()));
+    }
+
+    private void testInscriptionServer(Config config) {
+        InscriptionServerMode mode = (InscriptionServerMode)inscriptionsToggleGroup.getSelectedToggle().getUserData();
+        String url;
+        try {
+            url = OrdServer.resolveUrl(mode, inscriptionsUrl.getText().trim(), Network.get());
+        } catch(IllegalArgumentException e) {
+            inscriptionsTestResult.setText(e.getMessage());
+            return;
+        }
+        if(url == null) {
+            return;
+        }
+        Network network = Network.get();
+        inscriptionsTestResult.setText("Testing...");
+        Thread thread = new Thread(() -> {
+            String result;
+            try {
+                OrdStatus status = OrdClient.forApp(url).status();
+                OrdClient.requireChain(status, network);
+                result = "Connected: " + status.chain() + ", height " + status.height() + ", runes indexed: " + (status.runeIndex() ? "yes" : "no");
+            } catch(Exception e) {
+                result = e.getMessage() == null ? e.toString() : e.getMessage();
+            }
+            String text = result;
+            Platform.runLater(() -> inscriptionsTestResult.setText(text));
+        }, "Inscriptions server test");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void setupValidation() {

@@ -189,4 +189,39 @@
         <TextArea fx:id="testResults" editable="false" wrapText="true"/>
     </StackPane>
 
+    <Form fx:id="inscriptionsForm" GridPane.columnIndex="0" GridPane.rowIndex="4">
+        <padding>
+            <Insets bottom="20.0"/>
+        </padding>
+        <Fieldset inputGrow="SOMETIMES" text="Inscriptions">
+            <Field text="Checks:">
+                <SegmentedButton>
+                    <toggleGroup>
+                        <ToggleGroup fx:id="inscriptionsToggleGroup" />
+                    </toggleGroup>
+                    <buttons>
+                        <ToggleButton fx:id="inscriptionsOff" text="Off" toggleGroup="$inscriptionsToggleGroup" />
+                        <ToggleButton fx:id="inscriptionsPublic" text="Public" toggleGroup="$inscriptionsToggleGroup" />
+                        <ToggleButton fx:id="inscriptionsCustom" text="Custom" toggleGroup="$inscriptionsToggleGroup" />
+                    </buttons>
+                </SegmentedButton>
+                <HelpLabel helpText="Checks each output of a Litecoin wallet for inscriptions and runes, so they are shown in Collectibles and never spent by accident. The server sees the outputs it is asked about." />
+            </Field>
+            <Field fx:id="inscriptionsPublicField" text="Server:">
+                <CopyableLabel text="ordinalslite.com" />
+            </Field>
+            <Field fx:id="inscriptionsUrlField" text="URL:">
+                <TextField fx:id="inscriptionsUrl" promptText="e.g. http://127.0.0.1:8080 (your ord-litecoin)" />
+            </Field>
+            <Field text="">
+                <Button fx:id="inscriptionsTest" graphicTextGap="5" text="Test">
+                    <graphic>
+                        <Glyph fontFamily="FontAwesome" icon="QUESTION_CIRCLE" prefWidth="13" />
+                    </graphic>
+                </Button>
+                <Label fx:id="inscriptionsTestResult" wrapText="true" />
+            </Field>
+        </Fieldset>
+    </Form>
+
 </GridPane>

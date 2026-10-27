@@ -3,6 +3,7 @@ package com.sparrowwallet.sparrow.io;
 import com.google.gson.*;
 import com.sparrowwallet.drongo.BitcoinUnit;
 import com.sparrowwallet.drongo.Coin;
+import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.UnitFormat;
@@ -12,6 +13,8 @@ import com.sparrowwallet.sparrow.control.QRDensity;
 import com.sparrowwallet.sparrow.control.QREncoding;
 import com.sparrowwallet.sparrow.control.WebcamResolution;
 import com.sparrowwallet.sparrow.net.*;
+import com.sparrowwallet.sparrow.net.ord.InscriptionServerMode;
+import com.sparrowwallet.sparrow.net.ord.OrdServer;
 import com.sparrowwallet.sparrow.wallet.FeeRatesSelection;
 import com.sparrowwallet.sparrow.wallet.OptimizationStrategy;
 import org.slf4j.Logger;
@@ -90,6 +93,7 @@ public class Config {
     private File electrumServerCert;
     private Map<String, ServerSettings> coinServers;
     private Map<String, Server> coinBlockExplorers;
+    private Map<String, InscriptionSettings> coinInscriptions;
     private boolean useProxy;
     private String proxyServer;
     private boolean autoSwitchProxy = true;
@@ -567,6 +571,63 @@ public class Config {
         private Server electrumServer;
         private List<Server> recentElectrumServers;
         private File electrumServerCert;
+    }
+
+    //Where inscription and rune data comes from, per coin (Litecoin only for now). Off unless the user turns it on,
+    //because a public server sees every output it is asked about.
+    private static class InscriptionSettings {
+        private InscriptionServerMode mode;
+        private String customUrl;
+        private boolean publicWarningShown;
+    }
+
+    private InscriptionSettings inscriptionSettings() {
+        return coinInscriptions == null ? null : coinInscriptions.get(Coin.get().getName());
+    }
+
+    private InscriptionSettings editInscriptionSettings() {
+        if(coinInscriptions == null) {
+            coinInscriptions = new LinkedHashMap<>();
+        }
+        return coinInscriptions.computeIfAbsent(Coin.get().getName(), name -> new InscriptionSettings());
+    }
+
+    public InscriptionServerMode getInscriptionServerMode() {
+        InscriptionSettings settings = inscriptionSettings();
+        return settings == null || settings.mode == null ? InscriptionServerMode.OFF : settings.mode;
+    }
+
+    public String getInscriptionCustomUrl() {
+        InscriptionSettings settings = inscriptionSettings();
+        return settings == null ? null : settings.customUrl;
+    }
+
+    /** The server to ask, or null when checks are off, no server fits this network, or the custom URL is invalid. */
+    public String getInscriptionServerUrl() {
+        try {
+            return OrdServer.resolveUrl(getInscriptionServerMode(), getInscriptionCustomUrl(), Network.get());
+        } catch(IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public void setInscriptionServer(InscriptionServerMode mode, String customUrl) {
+        InscriptionSettings settings = editInscriptionSettings();
+        settings.mode = mode;
+        if(customUrl != null) {
+            settings.customUrl = customUrl;
+        }
+        flush();
+    }
+
+    public boolean isInscriptionPublicWarningShown() {
+        InscriptionSettings settings = inscriptionSettings();
+        return settings != null && settings.publicWarningShown;
+    }
+
+    public void setInscriptionPublicWarningShown() {
+        editInscriptionSettings().publicWarningShown = true;
+        flush();
     }
 
     static Coin getStartupCoin() {
