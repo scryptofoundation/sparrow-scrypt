@@ -95,7 +95,7 @@ public class WalletLabels implements WalletImport, WalletExport {
             for(Map.Entry<BlockTransactionHashIndex, WalletNode> txoEntry : exportWallet.getWalletTxos().entrySet()) {
                 BlockTransactionHashIndex txo = txoEntry.getKey();
                 WalletNode addressNode = txoEntry.getValue();
-                Boolean spendable = (txo.isSpent() ? null : txo.getStatus() != Status.FROZEN);
+                Boolean spendable = (txo.isSpent() ? null : Status.isSpendable(txo.getStatus()));
                 labels.add(new InputOutputLabel(Type.output, txo.toString(), txo.getLabel(), origin, spendable, addressNode.getDerivationPath().substring(1), txo.getValue(),
                         confirmingTxs.contains(txo.getHash()) ? null : txo.getHeight(), txo.getDate(), getFiatValue(txo, fiatRates)));
 
@@ -268,11 +268,9 @@ public class WalletLabels implements WalletImport, WalletExport {
                                     }
 
                                     if(label.type == Type.output && !reference.isSpent() && label.spendable != null) {
-                                        if(!label.spendable && reference.getStatus() != Status.FROZEN) {
-                                            reference.setStatus(Status.FROZEN);
-                                            addChangedUtxo(changedWalletUtxoStatuses, txioEntry);
-                                        } else if(label.spendable && reference.getStatus() == Status.FROZEN) {
-                                            reference.setStatus(null);
+                                        Status imported = StatusTransitions.fromBip329(reference.getStatus(), label.spendable);
+                                        if(imported != reference.getStatus()) {
+                                            reference.setStatus(imported);
                                             addChangedUtxo(changedWalletUtxoStatuses, txioEntry);
                                         }
                                     }

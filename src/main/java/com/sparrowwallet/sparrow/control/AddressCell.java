@@ -7,6 +7,7 @@ import com.sparrowwallet.sparrow.event.WalletUtxoStatusChangedEvent;
 import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
 import com.sparrowwallet.sparrow.wallet.Entry;
 import com.sparrowwallet.sparrow.wallet.NodeEntry;
+import com.sparrowwallet.sparrow.wallet.StatusTransitions;
 import com.sparrowwallet.sparrow.wallet.UtxoEntry;
 import javafx.geometry.Pos;
 import javafx.scene.control.ContentDisplay;
@@ -47,7 +48,9 @@ public class AddressCell extends TreeTableCell<Entry, UtxoEntry.AddressStatus> {
                 setTooltip(tooltip);
                 getStyleClass().add("address-cell");
 
-                if(addressStatus.isDustAttack()) {
+                if(utxoEntry.getHashIndex().getStatus() == Status.PROTECTED) {
+                    setGraphic(getProtectedGlyph());
+                } else if(addressStatus.isDustAttack()) {
                     setGraphic(getDustAttackHyperlink(utxoEntry));
                 } else if(addressStatus.isDuplicate()) {
                     setGraphic(getDuplicateGlyph());
@@ -60,7 +63,15 @@ public class AddressCell extends TreeTableCell<Entry, UtxoEntry.AddressStatus> {
 
     private String getTooltipText(UtxoEntry utxoEntry, boolean duplicate, boolean dustAttack) {
         return (utxoEntry.getNode().getWallet().isNested() ? utxoEntry.getNode().getWallet().getDisplayName() + " " : "" ) +
-                utxoEntry.getNode().toString() + (duplicate ? " (Duplicate address)" : (dustAttack ? " (Possible dust attack)" : ""));
+                utxoEntry.getNode().toString() + (duplicate ? " (Duplicate address)" : (dustAttack ? " (Possible dust attack)" : "")) +
+                (utxoEntry.getHashIndex().getStatus() == Status.PROTECTED ? "\nCarries an inscription or runes. Only Collectibles can send it." : "");
+    }
+
+    public static Glyph getProtectedGlyph() {
+        Glyph protectedGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.LOCK);
+        protectedGlyph.getStyleClass().add("protected-utxo");
+        protectedGlyph.setFontSize(12);
+        return protectedGlyph;
     }
 
     public static Glyph getDuplicateGlyph() {
@@ -75,10 +86,10 @@ public class AddressCell extends TreeTableCell<Entry, UtxoEntry.AddressStatus> {
         dustAttackGlyph.getStyleClass().add("dust-attack-warning");
         dustAttackGlyph.setFontSize(12);
 
-        Hyperlink hyperlink = new Hyperlink(utxoEntry.getHashIndex().getStatus() == Status.FROZEN ? "" : "Freeze?", dustAttackGlyph);
+        Hyperlink hyperlink = new Hyperlink(StatusTransitions.canFreeze(utxoEntry.getHashIndex().getStatus()) ? "Freeze?" : "", dustAttackGlyph);
         hyperlink.getStyleClass().add("freeze-dust-utxo");
         hyperlink.setOnAction(event -> {
-            if(utxoEntry.getHashIndex().getStatus() != Status.FROZEN) {
+            if(StatusTransitions.canFreeze(utxoEntry.getHashIndex().getStatus())) {
                 hyperlink.setText("");
                 utxoEntry.getHashIndex().setStatus(Status.FROZEN);
                 EventManager.get().post(new WalletUtxoStatusChangedEvent(utxoEntry.getWallet(), Collections.singletonList(utxoEntry.getHashIndex())));

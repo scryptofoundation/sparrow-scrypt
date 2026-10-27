@@ -440,7 +440,7 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                 .map(tp -> tp.getTreeItem().getValue())
                 .filter(e -> e instanceof HashIndexEntry && ((HashIndexEntry)e).getType().equals(HashIndexEntry.Type.OUTPUT))
                 .map(e -> ((HashIndexEntry)e).getHashIndex())
-                .filter(ref -> ref.getStatus() != Status.FROZEN)
+                .filter(ref -> StatusTransitions.canFreeze(ref.getStatus()))
                 .collect(Collectors.toList());
 
         utxos.forEach(ref -> ref.setStatus(Status.FROZEN));
@@ -452,7 +452,7 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                 .map(tp -> tp.getTreeItem().getValue())
                 .filter(e -> e instanceof HashIndexEntry && ((HashIndexEntry)e).getType().equals(HashIndexEntry.Type.OUTPUT))
                 .map(e -> ((HashIndexEntry)e).getHashIndex())
-                .filter(ref -> ref.getStatus() == Status.FROZEN)
+                .filter(ref -> StatusTransitions.canUnfreeze(ref.getStatus()))
                 .collect(Collectors.toList());
 
         utxos.forEach(ref -> ref.setStatus(null));
@@ -723,7 +723,7 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                 });
                 getItems().add(spendUtxos);
 
-                List<BlockTransactionHashIndex> unfrozenUtxos = nodeEntry.getNode().getUnspentTransactionOutputs().stream().filter(utxo -> utxo.getStatus() != Status.FROZEN).collect(Collectors.toList());
+                List<BlockTransactionHashIndex> unfrozenUtxos = nodeEntry.getNode().getUnspentTransactionOutputs().stream().filter(utxo -> StatusTransitions.canFreeze(utxo.getStatus())).collect(Collectors.toList());
                 if(!unfrozenUtxos.isEmpty()) {
                     MenuItem freezeUtxos = new MenuItem("Freeze UTXOs");
                     freezeUtxos.setGraphic(getFreezeGlyph());
@@ -735,7 +735,7 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                     getItems().add(freezeUtxos);
                 }
 
-                List<BlockTransactionHashIndex> frozenUtxos = nodeEntry.getNode().getUnspentTransactionOutputs().stream().filter(utxo -> utxo.getStatus() == Status.FROZEN).collect(Collectors.toList());
+                List<BlockTransactionHashIndex> frozenUtxos = nodeEntry.getNode().getUnspentTransactionOutputs().stream().filter(utxo -> StatusTransitions.canUnfreeze(utxo.getStatus())).collect(Collectors.toList());
                 if(!frozenUtxos.isEmpty()) {
                     MenuItem unfreezeUtxos = new MenuItem("Unfreeze UTXOs");
                     unfreezeUtxos.setGraphic(getUnfreezeGlyph());
@@ -801,7 +801,8 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
             }
 
             if(hashIndexEntry.getType().equals(HashIndexEntry.Type.OUTPUT) && !hashIndexEntry.getHashIndex().isSpent()) {
-                if(hashIndexEntry.getHashIndex().getStatus() == null || hashIndexEntry.getHashIndex().getStatus() != Status.FROZEN) {
+                Status status = hashIndexEntry.getHashIndex().getStatus();
+                if(StatusTransitions.canFreeze(status)) {
                     MenuItem freezeUtxo = new MenuItem("Freeze UTXO");
                     freezeUtxo.setGraphic(getFreezeGlyph());
                     freezeUtxo.setOnAction(AE -> {
@@ -809,7 +810,7 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                         freezeUtxo(treeTableView, hashIndexEntry);
                     });
                     getItems().add(freezeUtxo);
-                } else {
+                } else if(StatusTransitions.canUnfreeze(status)) {
                     MenuItem unfreezeUtxo = new MenuItem("Unfreeze UTXO");
                     unfreezeUtxo.setGraphic(getUnfreezeGlyph());
                     unfreezeUtxo.setOnAction(AE -> {
@@ -876,6 +877,9 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                 cell.getStyleClass().add("utxo-row");
                 if(!utxoEntry.isSpendable()) {
                     cell.getStyleClass().add("unspendable");
+                }
+                if(utxoEntry.getHashIndex().getStatus() == Status.PROTECTED) {
+                    cell.getStyleClass().add("protected");
                 }
                 if(OsType.getCurrent() == OsType.MACOS && utxoEntry.getHashIndex().getHeight() > 0 && !addressCell && !cell.getStyleClass().contains("label-cell")) {
                     cell.getStyleClass().add("number-field");

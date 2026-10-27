@@ -59,8 +59,9 @@ public class UtxosDialog extends WalletDialog {
             if(keyStroke.getCharacter() == Character.valueOf('f')) {
                 if(utxos.getTableModel().getRowCount() > utxos.getSelectedRow()) {
                     TableCell dateCell = utxos.getTableModel().getRow(utxos.getSelectedRow()).get(0);
-                    if(dateCell.getEntry() instanceof UtxoEntry utxoEntry) {
-                        utxoEntry.getHashIndex().setStatus(utxoEntry.getHashIndex().getStatus() == Status.FROZEN ? null : Status.FROZEN);
+                    if(dateCell.getEntry() instanceof UtxoEntry utxoEntry && (StatusTransitions.canFreeze(utxoEntry.getHashIndex().getStatus())
+                            || StatusTransitions.canUnfreeze(utxoEntry.getHashIndex().getStatus()))) {
+                        utxoEntry.getHashIndex().setStatus(StatusTransitions.canUnfreeze(utxoEntry.getHashIndex().getStatus()) ? null : Status.FROZEN);
                         utxos.invalidate();
                         EventManager.get().post(new WalletUtxoStatusChangedEvent(utxoEntry.getWallet(), List.of(utxoEntry.getHashIndex())));
                     }

@@ -68,6 +68,14 @@
     -fx-text-fill: derive(white, -15%);
 }
 
+.utxo-row.protected {
+    -fx-opacity: 0.7;
+}
+
+.protected-utxo {
+    -fx-text-fill: #d4a017;
+}
+
 .number-cell {
     -fx-alignment: center-right;
 }

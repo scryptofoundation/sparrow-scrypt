@@ -29,6 +29,10 @@ public class DateTableCell extends TableCell {
             return "(f) " + unselected.substring(Math.min(4, unselected.length()));
         }
 
+        if(entry instanceof UtxoEntry utxoEntry && utxoEntry.getHashIndex().getStatus() == Status.PROTECTED) {
+            return "(p) " + unselected.substring(Math.min(4, unselected.length()));
+        }
+
         return unselected;
     }
 
