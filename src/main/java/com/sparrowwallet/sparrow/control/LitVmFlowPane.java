@@ -191,7 +191,7 @@ public abstract class LitVmFlowPane extends VBox {
             Step step = steps.get(i);
             BigInteger maxFee = step.tx().getGasLimit().multiply(step.tx().getMaxFeePerGas());
             text.append("\n").append(i + 1).append(". ").append(step.description()).append(" on ").append(step.client().getNetwork().getDisplayName())
-                    .append(" (contract ").append(step.tx().getTo()).append(", max fee ").append(Wei.format(maxFee)).append(" ").append(step.client().getNetwork().getSymbol()).append(")");
+                    .append(step.tx().isCreation() ? " (creates a new contract" : " (contract " + step.tx().getTo()).append(", max fee ").append(Wei.format(maxFee)).append(" ").append(step.client().getNetwork().getSymbol()).append(")");
         }
         if(warning != null) {
             text.append("\n\n").append(warning);

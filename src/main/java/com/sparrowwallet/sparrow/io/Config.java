@@ -68,6 +68,7 @@ public class Config {
     private File walletsDir;
     private List<File> recentWalletFiles;
     private List<String> litVmTokens;
+    private List<String> litVmCreatedTokens;
     private List<String> litVmBridgeHistory;
     private Integer keyDerivationPeriod;
     private long dustAttackThreshold = DUST_ATTACK_THRESHOLD_SATS;
@@ -461,6 +462,16 @@ public class Config {
 
     public void setLitVmTokens(List<String> litVmTokens) {
         this.litVmTokens = new ArrayList<>(litVmTokens);
+        flush();
+    }
+
+    /** Tokens deployed from this app, as "chainId:0x...:template key". */
+    public List<String> getLitVmCreatedTokens() {
+        return litVmCreatedTokens == null ? new ArrayList<>() : new ArrayList<>(litVmCreatedTokens);
+    }
+
+    public void setLitVmCreatedTokens(List<String> litVmCreatedTokens) {
+        this.litVmCreatedTokens = new ArrayList<>(litVmCreatedTokens);
         flush();
     }
 

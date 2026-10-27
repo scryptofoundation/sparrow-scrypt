@@ -133,6 +133,30 @@ final class LitVmContext {
         Config.get().setLitVmTokens(tokens);
     }
 
+    /** Tokens deployed from this app on a network, with the template each was made from. */
+    static Map<EvmAddress, String> createdTokens(LitVmNetwork network) {
+        Map<EvmAddress, String> created = new LinkedHashMap<>();
+        for(String entry : Config.get().getLitVmCreatedTokens()) {
+            String[] parts = entry.split(":");
+            if(parts.length != 3 || parseChainId(parts[0]) != network.getChainId()) {
+                continue;
+            }
+            try {
+                Erc20Templates.Options.fromKey(parts[2]);
+                created.put(EvmAddress.fromString(parts[1]), parts[2]);
+            } catch(IllegalArgumentException e) {
+                //skip a malformed entry
+            }
+        }
+        return created;
+    }
+
+    static void recordCreated(LitVmNetwork network, EvmAddress contract, String key) {
+        List<String> created = Config.get().getLitVmCreatedTokens();
+        created.add(network.getChainId() + ":" + contract + ":" + key);
+        Config.get().setLitVmCreatedTokens(created);
+    }
+
     private static long parseChainId(String text) {
         try {
             return Long.parseLong(text.trim());
