@@ -6,6 +6,7 @@ import com.sparrowwallet.drongo.ordinals.CollectibleTransactions;
 import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.wallet.BlockTransactionHashIndex;
 import com.sparrowwallet.drongo.wallet.CoinbaseTxoFilter;
+import com.sparrowwallet.drongo.wallet.MwebPegoutTxoFilter;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletNode;
 import com.sparrowwallet.sparrow.net.ord.OrdOutput;
@@ -28,7 +29,7 @@ public final class CollectibleSend {
 
     /**
      * Outputs that may pay the fee: shown clean by the last check, with no status of any kind (not protected, released or
-     * frozen) and not an immature coinbase. None at all when checks are off or have not run, since an unchecked output
+     * frozen) and not an immature coinbase or MWEB peg-out. None at all when checks are off or have not run, since an unchecked output
      * could carry an inscription that the fee or change would take.
      */
     public static List<CollectibleTransactions.Pinned> feeCandidates(Wallet wallet, CollectiblesManager.Snapshot snapshot) {
@@ -36,10 +37,11 @@ public final class CollectibleSend {
             return List.of();
         }
         CoinbaseTxoFilter coinbase = new CoinbaseTxoFilter(wallet);
+        MwebPegoutTxoFilter pegout = new MwebPegoutTxoFilter(wallet);
         List<CollectibleTransactions.Pinned> candidates = new ArrayList<>();
         for(Map.Entry<BlockTransactionHashIndex, WalletNode> entry : wallet.getWalletUtxos().entrySet()) {
             BlockTransactionHashIndex utxo = entry.getKey();
-            if(utxo.getStatus() == null && snapshot.states().get(utxo.toString()) == CollectibleState.CLEAN && coinbase.isEligible(utxo)) {
+            if(utxo.getStatus() == null && snapshot.states().get(utxo.toString()) == CollectibleState.CLEAN && coinbase.isEligible(utxo) && pegout.isEligible(utxo)) {
                 candidates.add(new CollectibleTransactions.Pinned(utxo, entry.getValue()));
             }
         }

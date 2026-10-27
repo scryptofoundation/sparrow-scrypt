@@ -97,36 +97,56 @@ public final class CollectibleSendDialog {
         if(choice.isEmpty()) {
             return;
         }
+        //Build from the first holding wallet that can; a wallet that holds the runes but lacks fee coins explains more than one that lacks the runes
         String problem = null;
+        String holdsLess = null;
         for(Wallet wallet : holdingWallets) {
+            CollectiblesManager.Snapshot snapshot;
+            List<CollectibleTransactions.Pinned> inputs;
+            WalletTransaction walletTransaction;
             try {
-                CollectiblesManager.Snapshot snapshot = snapshot(wallet);
-                List<CollectibleTransactions.Pinned> inputs = CollectibleSend.runeInputs(wallet, snapshot, rune.spacedName(), choice.get().amount());
-                WalletTransaction walletTransaction = CollectibleTransactions.sendRunes(wallet, inputs, choice.get().recipient(), rune.id(), choice.get().amount(),
+                snapshot = snapshot(wallet);
+                inputs = CollectibleSend.runeInputs(wallet, snapshot, rune.spacedName(), choice.get().amount());
+            } catch(IllegalArgumentException e) {
+                holdsLess = holdsLess == null ? e.getMessage() : holdsLess;
+                continue;
+            } catch(Exception e) {
+                problem = problem == null ? e.getMessage() : problem;
+                continue;
+            }
+            try {
+                walletTransaction = CollectibleTransactions.sendRunes(wallet, inputs, choice.get().recipient(), rune.id(), choice.get().amount(),
                         CollectibleSend.feeCandidates(wallet, snapshot), choice.get().feeRate(), AppServices.getMinimumRelayFeeRate());
-                RuneBalance sent = new RuneBalance(choice.get().amount(), rune.divisibility(), rune.symbol());
-                List<String> moving = new ArrayList<>();
-                moving.add(sent.format() + " " + rune.spacedName() + " to the recipient");
-                moving.add("Everything else on the spent outputs stays in " + wallet.getFullDisplayName() + " (its own change output)");
-                for(CollectibleTransactions.Pinned input : inputs) {
-                    OrdOutput answer = snapshot.answers().get(input.utxo().toString());
-                    if(answer != null) {
-                        for(Map.Entry<String, RuneBalance> other : answer.runes().entrySet()) {
-                            if(!other.getKey().equals(rune.spacedName())) {
-                                moving.add("Also on the inputs (kept): " + other.getValue().format() + " " + other.getKey());
-                            }
+            } catch(Exception e) {
+                problem = problem == null ? wallet.getFullDisplayName() + " holds the runes, but: " + e.getMessage() : problem;
+                continue;
+            }
+
+            RuneBalance sent = new RuneBalance(choice.get().amount(), rune.divisibility(), rune.symbol());
+            List<String> moving = new ArrayList<>();
+            moving.add(sent.format() + " " + rune.spacedName() + " to the recipient");
+            moving.add("Everything else on the spent outputs stays in " + wallet.getFullDisplayName() + " (its own change output)");
+            for(CollectibleTransactions.Pinned input : inputs) {
+                OrdOutput answer = snapshot.answers().get(input.utxo().toString());
+                if(answer != null) {
+                    for(Map.Entry<String, RuneBalance> other : answer.runes().entrySet()) {
+                        if(!other.getKey().equals(rune.spacedName())) {
+                            moving.add("Also on the inputs (kept): " + other.getValue().format() + " " + other.getKey());
                         }
                     }
                 }
-                if(confirm(owner, "Send runes?", choice.get().recipient(), moving, walletTransaction)) {
-                    open(owner, walletTransaction, "Send " + sent.format() + " " + rune.spacedName());
-                }
-                return;
-            } catch(Exception e) {
-                problem = e.getMessage();
             }
+            //One confirmation only, whatever the answer
+            if(confirm(owner, "Send runes?", choice.get().recipient(), moving, walletTransaction)) {
+                try {
+                    open(owner, walletTransaction, "Send " + sent.format() + " " + rune.spacedName());
+                } catch(Exception e) {
+                    AppServices.showErrorDialog("Cannot send runes", e.getMessage());
+                }
+            }
+            return;
         }
-        AppServices.showErrorDialog("Cannot send runes", problem);
+        AppServices.showErrorDialog("Cannot send runes", problem != null ? problem : holdsLess);
     }
 
     private static CollectiblesManager.Snapshot snapshot(Wallet wallet) {

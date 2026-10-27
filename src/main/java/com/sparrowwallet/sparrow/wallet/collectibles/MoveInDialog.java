@@ -51,7 +51,13 @@ public final class MoveInDialog {
 
     private MoveInDialog() {}
 
-    private record Lookup(List<MoveIn.Found> found, List<OrdOutput> answers) {}
+    /** leftOut counts mined (coinbase) and MWEB peg-out outputs, which may not be spendable yet and are not moved. */
+    private record Lookup(List<MoveIn.Found> found, List<OrdOutput> answers, int leftOut) {
+        String leftOutNote() {
+            return leftOut == 0 ? "" : "\n\n" + leftOut + " mined or MWEB peg-out output" + (leftOut == 1 ? " was" : "s were")
+                    + " left out, as they may not be spendable yet. Send " + (leftOut == 1 ? "it" : "them") + " from ord or Litecoin Core once mature.";
+        }
+    }
 
     public static void start(Window owner, WalletForm walletForm) {
         Wallet open = walletForm.getWallet();
@@ -109,14 +115,19 @@ public final class MoveInDialog {
                     }
                     updateMessage("Looking up " + owners.size() + " addresses of " + keys.size() + " keys...");
                     List<MoveIn.Found> unclassified = new ArrayList<>();
+                    int leftOut = 0;
                     for(Map.Entry<Address, List<TransactionOutput>> entry : electrumServer.getUtxos(new ArrayList<>(owners.keySet())).entrySet()) {
                         Owned owner = owners.get(entry.getKey());
                         for(TransactionOutput output : entry.getValue()) {
-                            unclassified.add(new MoveIn.Found(output, owner.key(), owner.type(), List.of(), false));
+                            if(MoveIn.mayBeImmature(output)) {
+                                leftOut++;
+                            } else {
+                                unclassified.add(new MoveIn.Found(output, owner.key(), owner.type(), List.of(), false));
+                            }
                         }
                     }
                     if(unclassified.isEmpty()) {
-                        return new Lookup(List.of(), List.of());
+                        return new Lookup(List.of(), List.of(), leftOut);
                     }
 
                     updateMessage("Checking " + unclassified.size() + " outputs with the inscriptions server...");
@@ -136,7 +147,7 @@ public final class MoveInDialog {
                         MoveIn.Found f = unclassified.get(i);
                         found.add(new MoveIn.Found(f.output(), f.key(), f.type(), answer.inscriptions(), !answer.runes().isEmpty()));
                     }
-                    return new Lookup(found, answers);
+                    return new Lookup(found, answers, leftOut);
                 } finally {
                     Coin.endScope(previousCoin);
                 }
@@ -146,7 +157,7 @@ public final class MoveInDialog {
             try {
                 Lookup result = lookup.getValue();
                 if(result.found().isEmpty()) {
-                    AppServices.showAlertDialog("Nothing to move", "No unspent outputs were found at the dump's addresses.", Alert.AlertType.INFORMATION, ButtonType.OK);
+                    AppServices.showAlertDialog("Nothing to move", "No unspent outputs were found at the dump's addresses." + result.leftOutNote(), Alert.AlertType.INFORMATION, ButtonType.OK);
                     return;
                 }
                 confirmAndSign(owner, open, taproot, result);
@@ -204,7 +215,7 @@ public final class MoveInDialog {
             text.append("All runes move to ").append(runesDestination).append(" in ").append(taproot.getFullDisplayName()).append(".\n");
         }
         text.append("The plain LTC, less the fee").append(runic ? " and the runes output" : "").append(", moves to ").append(plainDestination)
-                .append(" in ").append(plainWallet.getFullDisplayName()).append(".");
+                .append(" in ").append(plainWallet.getFullDisplayName()).append(".").append(lookup.leftOutNote());
 
         Dialog<Double> dialog = new Dialog<>();
         dialog.initOwner(owner);

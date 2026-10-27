@@ -41,7 +41,10 @@ public final class SameSeedChildWallets {
      */
     public static void add(WalletForm walletForm, Wallet masterWallet, Window owner, Function<Wallet, Wallet> adder, Consumer<Wallet> onAdded, Runnable retry) {
         if(!masterWallet.isEncrypted()) {
-            Wallet childWallet = adder.apply(masterWallet);
+            Wallet childWallet = derive(masterWallet, adder);
+            if(childWallet == null) {
+                return;
+            }
             EventManager.get().post(new ChildWalletsAddedEvent(walletForm.getStorage(), masterWallet, childWallet));
             saveChildWallets(masterWallet);
             onAdded.accept(childWallet);
@@ -64,7 +67,10 @@ public final class SameSeedChildWallets {
             masterWallet.decrypt(key);
             Wallet childWallet;
             try {
-                childWallet = adder.apply(masterWallet);
+                childWallet = derive(masterWallet, adder);
+                if(childWallet == null) {
+                    return;
+                }
                 EventManager.get().post(new ChildWalletsAddedEvent(walletForm.getStorage(), masterWallet, childWallet));
                 childWallet.encrypt(key);
                 saveChildWallets(masterWallet);
@@ -87,6 +93,17 @@ public final class SameSeedChildWallets {
         });
         EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.START, "Decrypting wallet..."));
         keyDerivationService.start();
+    }
+
+    /** The new child, or null after telling the user why it could not be derived. */
+    private static Wallet derive(Wallet masterWallet, Function<Wallet, Wallet> adder) {
+        try {
+            return adder.apply(masterWallet);
+        } catch(RuntimeException e) {
+            log.error("Error adding child wallet", e);
+            AppServices.showErrorDialog("Cannot add wallet", e.getMessage());
+            return null;
+        }
     }
 
     public static void saveChildWallets(Wallet masterWallet) {

@@ -92,6 +92,25 @@ public class CollectibleSendTest {
     }
 
     @Test
+    public void immaturePegoutIsNotAFeeCandidate() {
+        //A HogEx transaction (first output the MWEB HogEx script) paying a peg-out to the wallet, 2 confirmations at height 200
+        WalletNode node = nodes.get(nextNode++);
+        Transaction hogex = new Transaction();
+        hogex.addInput(Sha256Hash.wrap("11".repeat(32)), 0, new Script(new byte[0]));
+        hogex.addOutput(1_000_000, ScriptType.MWEB_HOGEX.getOutputScript(new byte[32]));
+        hogex.addOutput(50_000, node.getAddress());
+        Assertions.assertTrue(hogex.isHogEx());
+        Sha256Hash hash = hogex.getTxId();
+        wallet.updateTransactions(Map.of(hash, new BlockTransaction(hash, 199, new Date(), 0L, hogex)));
+        BlockTransactionHashIndex pegout = new BlockTransactionHashIndex(hash, 199, new Date(), 0L, 1, 50_000);
+        node.getTransactionOutputs().add(pegout);
+        states.put(pegout.toString(), CollectibleState.CLEAN);
+        BlockTransactionHashIndex clean = utxo(60_000, CollectibleState.CLEAN, false);
+        List<CollectibleTransactions.Pinned> candidates = CollectibleSend.feeCandidates(wallet, snapshot());
+        Assertions.assertEquals(List.of(clean), candidates.stream().map(CollectibleTransactions.Pinned::utxo).toList());
+    }
+
+    @Test
     public void noCandidatesWithoutAnEnabledSnapshot() {
         utxo(50_000, CollectibleState.CLEAN, false);
         Assertions.assertTrue(CollectibleSend.feeCandidates(wallet, null).isEmpty());
