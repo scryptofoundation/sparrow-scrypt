@@ -1248,6 +1248,10 @@ public class ElectrumServer {
         pathScriptHashes.put("m/0", getScriptHash(address));
         Map<String, ScriptHashTx[]> historyResult = electrumServerRpc.getScriptHashHistory(getTransport(), wallet, pathScriptHashes, true);
         Set<String> txids = Arrays.stream(historyResult.get("m/0")).map(scriptHashTx -> scriptHashTx.tx_hash).collect(Collectors.toSet());
+        if(txids.isEmpty()) {
+            //An empty batch gets no reply from ElectrumX, so never send one
+            return new ArrayList<>();
+        }
 
         Map<String, String> transactionsResult = electrumServerRpc.getTransactions(getTransport(), wallet, txids);
         List<TransactionOutput> transactionOutputs = new ArrayList<>();

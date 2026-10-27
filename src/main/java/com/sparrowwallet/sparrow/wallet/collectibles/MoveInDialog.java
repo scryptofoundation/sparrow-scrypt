@@ -13,7 +13,9 @@ import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletNode;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
+import com.sparrowwallet.sparrow.control.DialogImage;
 import com.sparrowwallet.sparrow.control.FeeRangeSlider;
+import com.sparrowwallet.sparrow.control.ServiceProgressDialog;
 import com.sparrowwallet.sparrow.event.ViewTransactionEvent;
 import com.sparrowwallet.sparrow.net.ElectrumServer;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
@@ -99,7 +101,10 @@ public final class MoveInDialog {
                     }
                     ElectrumServer electrumServer = new ElectrumServer();
                     List<MoveIn.Found> unclassified = new ArrayList<>();
+                    int done = 0;
                     for(OrdWalletDump.DumpedKey key : keys) {
+                        updateMessage("Looking up the addresses of key " + (done + 1) + " of " + keys.size() + "...");
+                        updateProgress(done++, keys.size());
                         for(Map.Entry<ScriptType, Address> entry : OrdWalletDump.addresses(key).entrySet()) {
                             for(TransactionOutput output : electrumServer.getUtxos(entry.getValue())) {
                                 unclassified.add(new MoveIn.Found(output, key, entry.getKey(), List.of(), false));
@@ -110,6 +115,8 @@ public final class MoveInDialog {
                         return new Lookup(List.of(), List.of());
                     }
 
+                    updateMessage("Checking " + unclassified.size() + " outputs with the inscriptions server...");
+                    updateProgress(-1, 0);
                     OrdClient client = OrdClient.forApp(url);
                     OrdStatus status = client.status();
                     OrdClient.requireChain(status, Network.get());
@@ -149,6 +156,9 @@ public final class MoveInDialog {
             OrdWalletDump.clear(keys);
             AppServices.showErrorDialog("Cannot move in", lookup.getException().getMessage());
         });
+        ServiceProgressDialog progress = new ServiceProgressDialog("Move In", "Finding what the ord wallet holds", new DialogImage(DialogImage.Type.SPARROW), lookup);
+        progress.initOwner(owner);
+        AppServices.moveToActiveWindowScreen(progress);
         Thread thread = new Thread(lookup, "Move in lookup");
         thread.setDaemon(true);
         thread.start();
