@@ -43,6 +43,7 @@ public class FontAwesome5 extends GlyphFont {
         FILE_IMPORT('\uf56f'),
         FILE_EXPORT('\uf56e'),
         FILE_PDF('\uf1c1'),
+        GEM('\uf3a5'),
         HAND_HOLDING('\uf4bd'),
         HAND_HOLDING_MEDICAL('\ue05c'),
         HAND_HOLDING_WATER('\uf4c1'),

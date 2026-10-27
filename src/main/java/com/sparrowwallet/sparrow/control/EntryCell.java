@@ -810,6 +810,18 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                         freezeUtxo(treeTableView, hashIndexEntry);
                     });
                     getItems().add(freezeUtxo);
+                } else if(status == Status.PROTECTED) {
+                    MenuItem releaseUtxo = new MenuItem("Spend as plain LTC...");
+                    releaseUtxo.setGraphic(getUnfreezeGlyph());
+                    releaseUtxo.setOnAction(AE -> {
+                        hide();
+                        Wallet wallet = hashIndexEntry.getWallet();
+                        com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.Snapshot snapshot =
+                                com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.get().getSnapshot(wallet.isNested() ? wallet.getMasterWallet() : wallet);
+                        com.sparrowwallet.sparrow.wallet.collectibles.ReleaseDialog.release(wallet, hashIndexEntry.getHashIndex(),
+                                snapshot == null ? null : snapshot.answers().get(hashIndexEntry.getHashIndex().toString()));
+                    });
+                    getItems().add(releaseUtxo);
                 } else if(StatusTransitions.canUnfreeze(status)) {
                     MenuItem unfreezeUtxo = new MenuItem("Unfreeze UTXO");
                     unfreezeUtxo.setGraphic(getUnfreezeGlyph());

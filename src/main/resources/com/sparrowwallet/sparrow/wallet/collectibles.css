@@ -1,0 +1,29 @@
+.collectibles-title {
+    -fx-font-size: 1.2em;
+}
+
+.inscription-tile {
+    -fx-padding: 6;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-border-color: -fx-box-border;
+    -fx-cursor: hand;
+}
+
+.inscription-tile.selected {
+    -fx-border-color: -fx-accent;
+    -fx-border-width: 2;
+}
+
+.inscription-frame {
+    -fx-background-color: -fx-control-inner-background-alt;
+}
+
+.inscription-placeholder {
+    -fx-text-fill: derive(-fx-text-base-color, 40%);
+    -fx-text-alignment: center;
+}
+
+.inscription-detail .detail-name {
+    -fx-font-weight: bold;
+}

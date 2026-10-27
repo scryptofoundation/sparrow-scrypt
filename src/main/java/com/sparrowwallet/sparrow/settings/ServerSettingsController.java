@@ -827,15 +827,19 @@ public class ServerSettingsController extends SettingsDetailController {
             return;
         }
         Network network = Network.get();
+        Coin coin = Coin.get();
         inscriptionsTestResult.setText("Testing...");
         Thread thread = new Thread(() -> {
             String result;
+            Coin previous = Coin.beginScope(coin);
             try {
                 OrdStatus status = OrdClient.forApp(url).status();
                 OrdClient.requireChain(status, network);
                 result = "Connected: " + status.chain() + ", height " + status.height() + ", runes indexed: " + (status.runeIndex() ? "yes" : "no");
             } catch(Exception e) {
                 result = e.getMessage() == null ? e.toString() : e.getMessage();
+            } finally {
+                Coin.endScope(previous);
             }
             String text = result;
             Platform.runLater(() -> inscriptionsTestResult.setText(text));

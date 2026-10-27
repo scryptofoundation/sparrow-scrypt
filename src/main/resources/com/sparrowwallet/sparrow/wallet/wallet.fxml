@@ -54,6 +54,14 @@
                     <Function fx:constant="UTXOS"/>
                 </userData>
             </ToggleButton>
+            <ToggleButton VBox.vgrow="ALWAYS" text="Collectibles" contentDisplay="TOP" styleClass="list-item" maxHeight="Infinity" toggleGroup="$walletMenu">
+                <graphic>
+                    <Glyph fontFamily="Font Awesome 5 Free Solid" icon="GEM" fontSize="20" />
+                </graphic>
+                <userData>
+                    <Function fx:constant="COLLECTIBLES"/>
+                </userData>
+            </ToggleButton>
             <ToggleButton VBox.vgrow="ALWAYS" text="Settings" contentDisplay="TOP" styleClass="list-item" maxHeight="Infinity" toggleGroup="$walletMenu">
                 <graphic>
                     <Glyph fontFamily="FontAwesome" icon="COG" fontSize="20" />
