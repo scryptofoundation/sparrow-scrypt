@@ -7,6 +7,7 @@ import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.SecureString;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.address.MwebAddress;
+import com.sparrowwallet.sparrow.wallet.collectibles.CheckedTxoFilter;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.drongo.bip47.PaymentCode;
 import com.sparrowwallet.drongo.bip47.SecretPoint;
@@ -628,7 +629,9 @@ public class SendController extends WalletFormController implements Initializabl
                         payments, opReturnsList, excludedChangeNodes,
                         feeRate, getMinimumFeeRate(), minRelayFeeRate, userFee,
                         currentBlockHeight, groupByAddress, includeMempoolOutputs, allowRbf, new MwebFeeEstimator());
-                walletTransactionService = new WalletTransactionService(wallet, params, replacedTransaction);
+                //Coins the user picked are used as picked; otherwise checked coins are tried first
+                TxoFilter checkedFilter = utxoSelectorProperty.get() instanceof PresetUtxoSelector ? null : CollectiblesManager.get().checkedFilter(wallet);
+                walletTransactionService = new WalletTransactionService(wallet, params, replacedTransaction, checkedFilter);
                 walletTransactionService.setOnSucceeded(event -> {
                     if(!walletTransactionService.isIgnoreResult()) {
                         walletTransactionProperty.setValue(walletTransactionService.getValue());
@@ -697,12 +700,14 @@ public class SendController extends WalletFormController implements Initializabl
         private final Wallet wallet;
         private final TransactionParameters params;
         private final BlockTransaction replacedTransaction;
+        private final TxoFilter checkedFilter;
         private boolean ignoreResult;
 
-        public WalletTransactionService(Wallet wallet, TransactionParameters params, BlockTransaction replacedTransaction) {
+        public WalletTransactionService(Wallet wallet, TransactionParameters params, BlockTransaction replacedTransaction, TxoFilter checkedFilter) {
             this.wallet = wallet;
             this.params = params;
             this.replacedTransaction = replacedTransaction;
+            this.checkedFilter = checkedFilter;
         }
 
         @Override
@@ -738,12 +743,17 @@ public class SendController extends WalletFormController implements Initializabl
                 private WalletTransaction getWalletTransaction() throws InsufficientFundsException {
                     try {
                         updateMessage("Selecting UTXOs...");
-                        return wallet.createWalletTransaction(params);
+                        return CheckedTxoFilter.preferChecked(checkedFilter, params.txoFilters(), filters -> wallet.createWalletTransaction(withFilters(params, filters)));
                     } finally {
                         updateMessage("");
                     }
                 }
             };
+        }
+
+        private static TransactionParameters withFilters(TransactionParameters p, List<TxoFilter> filters) {
+            return new TransactionParameters(p.utxoSelectors(), filters, p.payments(), p.opReturns(), p.excludedChangeNodes(), p.feeRate(), p.longTermFeeRate(),
+                    p.minRelayFeeRate(), p.fee(), p.currentBlockHeight(), p.groupByAddress(), p.includeMempoolOutputs(), p.allowRbf(), p.feeEstimator());
         }
 
         public boolean isIgnoreResult() {

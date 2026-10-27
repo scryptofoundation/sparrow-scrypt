@@ -17,6 +17,7 @@ import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdOutput;
 import com.sparrowwallet.sparrow.net.ord.OrdStatus;
 import com.sparrowwallet.drongo.wallet.Status;
+import com.sparrowwallet.drongo.wallet.TxoFilter;
 import com.sparrowwallet.sparrow.wallet.Entry;
 import com.sparrowwallet.sparrow.wallet.HashIndexEntry;
 import javafx.application.Platform;
@@ -231,6 +232,15 @@ public class CollectiblesManager {
             return List.of();
         }
         return unknownIn(snapshots.get(master), utxos);
+    }
+
+    /** A filter preferring checked outputs for the wallet, or null when checks are off (no preference). */
+    public TxoFilter checkedFilter(Wallet wallet) {
+        Wallet master = wallet != null && wallet.isNested() ? wallet.getMasterWallet() : wallet;
+        if(!applies(master) || serverUrl(master) == null) {
+            return null;
+        }
+        return new CheckedTxoFilter(snapshots.get(master));
     }
 
     /**
