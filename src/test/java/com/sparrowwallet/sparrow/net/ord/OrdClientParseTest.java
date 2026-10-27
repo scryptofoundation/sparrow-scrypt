@@ -58,6 +58,35 @@ public class OrdClientParseTest {
     }
 
     @Test
+    public void regtestRunes() throws IOException {
+        String outpoint = "4cd2a10d346b8aa6df179405e0e96f66dcbbfed266466e8bc7b1145e6fe95f7e:1";
+        OrdOutput output = OrdClient.parseOutput(outpoint, fixture("output-runes-regtest.json"));
+        RuneBalance balance = output.runes().get("TESTRUNE•LITECOIN");
+        Assertions.assertEquals(2, balance.divisibility());
+        Assertions.assertEquals("T", balance.symbol());
+        Assertions.assertEquals("1000.00", balance.format());
+        Assertions.assertTrue(output.inscriptions().isEmpty());
+        Assertions.assertTrue(output.carries());
+    }
+
+    /** ord answers an output of a transaction not yet mined with indexed false (and spent true): unknown, not empty. */
+    @Test
+    public void regtestUnminedIsUnindexed() throws IOException {
+        OrdOutput output = OrdClient.parseOutput("9a9d6ab0b0ecd9979559bcd0fbf03198080b7d906cfaf8b611a60b73511331e6:0", fixture("output-unindexed-regtest.json"));
+        Assertions.assertFalse(output.indexed());
+        Assertions.assertFalse(output.carries());
+    }
+
+    @Test
+    public void regtestStatus() throws IOException {
+        OrdStatus status = OrdClient.parseStatus(fixture("status-regtest.json"));
+        Assertions.assertEquals("regtest", status.chain());
+        Assertions.assertTrue(status.runeIndex());
+        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(status, Network.REGTEST));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(status, Network.MAINNET));
+    }
+
+    @Test
     public void unindexedIsUnknown() throws IOException {
         OrdOutput output = OrdClient.parseOutput(OUTPOINT, "{\"indexed\":false,\"inscriptions\":[],\"runes\":{},\"value\":1000,\"spent\":false}");
         Assertions.assertFalse(output.indexed());
