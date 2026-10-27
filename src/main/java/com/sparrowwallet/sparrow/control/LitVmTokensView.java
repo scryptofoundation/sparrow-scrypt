@@ -293,7 +293,7 @@ class LitVmTokensView extends LitVmFlowPane {
                     }
                 }
                 if(submitted && !onExplorer) {
-                    explorerProblem = "The explorer accepted the source but has not verified it";
+                    explorerProblem = "The explorer accepted the source but has not verified it; its verifier service may be down";
                 }
 
                 String retry = " Manage > Publish Source tries again.";
