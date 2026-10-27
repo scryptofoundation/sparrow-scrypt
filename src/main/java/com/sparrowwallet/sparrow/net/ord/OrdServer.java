@@ -38,6 +38,16 @@ public final class OrdServer {
         return url;
     }
 
+    /** The URL to store for Custom: the typed URL if usable, otherwise blank, which leaves checks off. */
+    public static String customUrlToSave(String typed, Network network) {
+        try {
+            String url = resolveUrl(InscriptionServerMode.CUSTOM, typed, network);
+            return url == null ? "" : url;
+        } catch(IllegalArgumentException e) {
+            return "";
+        }
+    }
+
     public static boolean isOnion(String url) {
         String host = URI.create(url).getHost();
         return host != null && host.toLowerCase(Locale.ROOT).endsWith(".onion");

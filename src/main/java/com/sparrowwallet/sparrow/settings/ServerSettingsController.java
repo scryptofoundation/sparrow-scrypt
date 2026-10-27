@@ -798,18 +798,12 @@ public class ServerSettingsController extends SettingsDetailController {
     }
 
     private void saveInscriptionServer(Config config, InscriptionServerMode mode) {
-        String url = inscriptionsUrl.getText().trim();
+        String typed = inscriptionsUrl.getText().trim();
+        String url = typed;
         if(mode == InscriptionServerMode.CUSTOM) {
-            if(url.isEmpty()) {
-                //Nothing typed yet; saved once a URL is entered
-                return;
-            }
-            try {
-                OrdServer.resolveUrl(mode, url, Network.get());
-            } catch(IllegalArgumentException e) {
-                inscriptionsTestResult.setText(e.getMessage());
-                return;
-            }
+            //Without a usable URL, Custom is saved blank so checks stop, rather than staying on the previous server
+            url = OrdServer.customUrlToSave(typed, Network.get());
+            inscriptionsTestResult.setText(!typed.isEmpty() && url.isEmpty() ? "The inscriptions server must be an http or https URL" : "");
         }
         if(mode == config.getInscriptionServerMode() && (mode != InscriptionServerMode.CUSTOM || url.equals(config.getInscriptionCustomUrl()))) {
             return;
