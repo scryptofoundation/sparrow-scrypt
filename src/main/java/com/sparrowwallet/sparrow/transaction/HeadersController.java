@@ -996,6 +996,11 @@ public class HeadersController extends TransactionFormController implements Init
     }
 
     public void finalizeTransaction(ActionEvent event) {
+        //The signing wallets are found after the tab opens, which takes a while for a transaction with many inputs
+        if(signingWallet.getValue() == null) {
+            AppServices.showErrorDialog("No signing wallet yet", "The wallets that can sign this transaction are still being found. Try again in a moment.");
+            return;
+        }
         EventManager.get().post(new FinalizeTransactionEvent(headersForm.getPsbt(), signingWallet.getValue()));
     }
 
@@ -1113,6 +1118,10 @@ public class HeadersController extends TransactionFormController implements Init
     }
 
     public void signPSBT(ActionEvent event) {
+        if(headersForm.getSigningWallet() == null) {
+            AppServices.showErrorDialog("No signing wallet", "No open wallet was chosen to sign this transaction. Close this tab and create the transaction again.");
+            return;
+        }
         signSoftwareKeystores();
         signDeviceKeystores();
     }
