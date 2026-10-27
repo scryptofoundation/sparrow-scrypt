@@ -14,6 +14,17 @@ public record OrdOutput(String outpoint, boolean indexed, List<String> inscripti
         return !inscriptions.isEmpty() || !runes.isEmpty() || unlisted;
     }
 
+    /**
+     * This answer as far as the server can vouch for it. A server without a rune index reports no runes on every
+     * output, so an answer showing nothing at all counts as not indexed (unknown) rather than clean.
+     */
+    public OrdOutput forServer(boolean runeIndex) {
+        if(runeIndex || carries() || !indexed) {
+            return this;
+        }
+        return new OrdOutput(outpoint, false, inscriptions, runes, value, spent, unlisted);
+    }
+
     public static OrdOutput unknown(String outpoint) {
         return new OrdOutput(outpoint, false, List.of(), Map.of(), 0, false, false);
     }

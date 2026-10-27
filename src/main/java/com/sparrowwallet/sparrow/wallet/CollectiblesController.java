@@ -191,6 +191,7 @@ public class CollectiblesController extends WalletFormController implements Init
         List<String> errors = new ArrayList<>();
         //One line per server, with its latest check
         Map<String, java.time.Instant> checked = new LinkedHashMap<>();
+        boolean noRuneIndex = false;
         Map<String, Holding> inscriptions = new LinkedHashMap<>();
         Map<String, RuneBalance> runeTotals = new TreeMap<>();
         Map<String, List<String>> runeOutputs = new HashMap<>();
@@ -204,6 +205,9 @@ public class CollectiblesController extends WalletFormController implements Init
             }
             if(snapshot == null || !snapshot.enabled()) {
                 continue;
+            }
+            if(!snapshot.runesIndexed()) {
+                noRuneIndex = true;
             }
             if(snapshot.error() != null) {
                 errors.add("Could not reach " + snapshot.serverHost() + ": " + snapshot.error() + ". Outputs not yet checked count as unknown.");
@@ -232,7 +236,8 @@ public class CollectiblesController extends WalletFormController implements Init
             statusLabel.setText(errors.getFirst());
         } else if(!checked.isEmpty()) {
             statusLabel.setText(checked.entrySet().stream().map(e -> "Checked with " + e.getKey() + " at " + TIME_FORMAT.format(e.getValue()) + ".")
-                    .collect(java.util.stream.Collectors.joining(" ")));
+                    .collect(java.util.stream.Collectors.joining(" "))
+                    + (noRuneIndex ? " This server does not index runes, so outputs without inscriptions count as unchecked (start ord with --index-runes)." : ""));
         } else {
             statusLabel.setText("Checking outputs for inscriptions and runes...");
         }

@@ -15,6 +15,8 @@ import com.sparrowwallet.sparrow.event.*;
 import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdOutput;
+import com.sparrowwallet.sparrow.net.ord.OrdStatus;
+import com.sparrowwallet.drongo.wallet.Status;
 import com.sparrowwallet.sparrow.wallet.Entry;
 import com.sparrowwallet.sparrow.wallet.HashIndexEntry;
 import javafx.application.Platform;
@@ -46,9 +48,9 @@ public class CollectiblesManager {
     private final Map<String, OrdOutput> confirmed = new ConcurrentHashMap<>();
 
     public record Snapshot(Map<String, CollectibleState> states, Map<String, OrdOutput> answers, Instant checkedAt, String serverUrl, String error,
-                           boolean enabled) {
+                           boolean enabled, boolean runesIndexed) {
         static Snapshot disabled() {
-            return new Snapshot(Map.of(), Map.of(), Instant.now(), null, null, false);
+            return new Snapshot(Map.of(), Map.of(), Instant.now(), null, null, false, true);
         }
 
         public String serverHost() {
@@ -130,7 +132,8 @@ public class CollectiblesManager {
 
     private void check(Wallet wallet) {
         try {
-            //Read the wallet on the FX thread, where its history is updated
+            //Read the wallet on the FX thread, like the wallet views do. History sync can still replace output objects
+            //meanwhile, so protection is applied to the live outputs at publish time, not to these
             CompletableFuture<WalletData> future = new CompletableFuture<>();
             Platform.runLater(() -> {
                 queued.remove(wallet);
@@ -144,7 +147,7 @@ public class CollectiblesManager {
 
             String url = serverUrl(wallet);
             if(url == null) {
-                publish(wallet, Snapshot.disabled(), data, Map.of());
+                publish(wallet, Snapshot.disabled(), Map.of());
                 return;
             }
 
@@ -158,10 +161,13 @@ public class CollectiblesManager {
             }
 
             String error = null;
+            boolean runeIndex = true;
             Coin previous = Coin.beginScope(wallet.getCoin());
             try {
                 OrdClient client = OrdClient.forApp(url);
-                client.requireChain(network);
+                OrdStatus status = client.status();
+                OrdClient.requireChain(status, network);
+                runeIndex = status.runeIndex();
                 Map<String, Integer> heights = new HashMap<>();
                 List<String> ask = new ArrayList<>();
                 for(BlockTransactionHashIndex utxo : data.utxos().keySet()) {
@@ -170,7 +176,9 @@ public class CollectiblesManager {
                         ask.add(utxo.toString());
                     }
                 }
-                for(OrdOutput output : client.outputs(ask)) {
+                for(OrdOutput answer : client.outputs(ask)) {
+                    //Without a rune index an empty answer proves nothing, so it stays unknown and is not cached
+                    OrdOutput output = answer.forServer(runeIndex);
                     answers.put(output.outpoint(), output);
                     if(output.indexed() && heights.getOrDefault(output.outpoint(), 0) > 0) {
                         confirmed.put(url + "|" + output.outpoint(), output);
@@ -184,23 +192,23 @@ public class CollectiblesManager {
             }
 
             Map<String, CollectibleState> states = CollectiblesClassifier.classify(data.txos(), data.txs(), answers);
-            publish(wallet, new Snapshot(states, Map.copyOf(answers), Instant.now(), url, error, true), data, answers);
+            publish(wallet, new Snapshot(states, Map.copyOf(answers), Instant.now(), url, error, true, runeIndex), answers);
         } catch(Exception e) {
             log.error("Error checking outputs for inscriptions", e);
         }
     }
 
-    private void publish(Wallet wallet, Snapshot snapshot, WalletData data, Map<String, OrdOutput> answers) {
+    private void publish(Wallet wallet, Snapshot snapshot, Map<String, OrdOutput> answers) {
         Platform.runLater(() -> {
             snapshots.put(wallet, snapshot);
-            List<BlockTransactionHashIndex> changed = CollectiblesProtector.apply(data.utxos().keySet(), snapshot.states());
+            //The wallet's outputs now, not those read before the server was asked
+            Map<BlockTransactionHashIndex, WalletNode> live = wallet.getWalletUtxos();
+            List<BlockTransactionHashIndex> changed = protect(live.keySet(), snapshot.states(), answers);
             if(!changed.isEmpty()) {
                 List<Entry> labelled = new ArrayList<>();
                 for(BlockTransactionHashIndex utxo : changed) {
-                    OrdOutput answer = answers.get(utxo.toString());
-                    if(answer != null) {
-                        utxo.setLabel(CollectiblesProtector.newLabel(utxo.getLabel(), answer));
-                        WalletNode node = data.utxos().get(utxo);
+                    WalletNode node = live.get(utxo);
+                    if(node != null && answers.get(utxo.toString()) != null) {
                         labelled.add(new HashIndexEntry(node.getWallet(), utxo, HashIndexEntry.Type.OUTPUT, node.getKeyPurpose()));
                     }
                 }
@@ -222,14 +230,34 @@ public class CollectiblesManager {
         if(!applies(master) || serverUrl(master) == null) {
             return List.of();
         }
-        Snapshot snapshot = snapshots.get(master);
+        return unknownIn(snapshots.get(master), utxos);
+    }
+
+    /**
+     * Outputs not shown clean. One known to carry something but not yet marked PROTECTED (the check and a history
+     * sync crossed) also counts, so it is never spent without a warning.
+     */
+    static List<BlockTransactionHashIndex> unknownIn(Snapshot snapshot, Collection<BlockTransactionHashIndex> utxos) {
         List<BlockTransactionHashIndex> unknown = new ArrayList<>();
         for(BlockTransactionHashIndex utxo : utxos) {
             CollectibleState state = snapshot == null || !snapshot.enabled() ? null : snapshot.states().get(utxo.toString());
-            if(state == null || state == CollectibleState.UNKNOWN) {
+            boolean unmarked = state == CollectibleState.CARRIES && utxo.getStatus() != Status.PROTECTED && utxo.getStatus() != Status.RELEASED;
+            if(state == null || state == CollectibleState.UNKNOWN || unmarked) {
                 unknown.add(utxo);
             }
         }
         return unknown;
+    }
+
+    /** Marks carrying outputs PROTECTED and labels them, returning those changed. */
+    static List<BlockTransactionHashIndex> protect(Collection<BlockTransactionHashIndex> utxos, Map<String, CollectibleState> states, Map<String, OrdOutput> answers) {
+        List<BlockTransactionHashIndex> changed = CollectiblesProtector.apply(utxos, states);
+        for(BlockTransactionHashIndex utxo : changed) {
+            OrdOutput answer = answers.get(utxo.toString());
+            if(answer != null) {
+                utxo.setLabel(CollectiblesProtector.newLabel(utxo.getLabel(), answer));
+            }
+        }
+        return changed;
     }
 }
