@@ -19,6 +19,7 @@ import com.sparrowwallet.sparrow.settings.SettingsGroup;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
+import com.sparrowwallet.sparrow.wallet.collectibles.MoveInDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.ReleaseDialog;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
@@ -69,6 +70,9 @@ public class CollectiblesController extends WalletFormController implements Init
     private Button refreshButton;
 
     @FXML
+    private Button moveInButton;
+
+    @FXML
     private TilePane inscriptionTiles;
 
     @FXML
@@ -109,6 +113,7 @@ public class CollectiblesController extends WalletFormController implements Init
             settingsDialog.showAndWait();
         });
         refreshButton.setOnAction(event -> holdingWallets().forEach(CollectiblesManager.get()::refresh));
+        moveInButton.setOnAction(event -> MoveInDialog.start(moveInButton.getScene().getWindow(), getWalletForm()));
 
         TableColumn<RuneRow, String> name = new TableColumn<>("Rune");
         name.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().name()));

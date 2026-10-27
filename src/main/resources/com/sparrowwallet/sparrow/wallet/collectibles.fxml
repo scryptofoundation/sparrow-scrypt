@@ -16,6 +16,7 @@
             <HBox spacing="10" alignment="CENTER_LEFT">
                 <Label text="Collectibles" styleClass="collectibles-title" />
                 <Region HBox.hgrow="ALWAYS" />
+                <Button fx:id="moveInButton" text="Move in from ord-litecoin wallet..." />
                 <Button fx:id="refreshButton" text="Refresh" />
             </HBox>
             <HBox spacing="10" alignment="CENTER_LEFT">
