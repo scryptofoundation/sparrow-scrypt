@@ -189,7 +189,7 @@ public class OrdClient {
                 if(response.statusCode() / 100 != 2) {
                     throw new HttpStatusException(response.statusCode());
                 }
-                return readCapped(in, maxBytes);
+                return readCapped(in, maxBytes, TIMEOUT_SECONDS * 1000L);
             }
         } catch(InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -216,7 +216,7 @@ public class OrdClient {
                 if(response.getStatus() / 100 != 2) {
                     throw new HttpStatusException(response.getStatus());
                 }
-                return readCapped(in, maxBytes);
+                return readCapped(in, maxBytes, TIMEOUT_SECONDS * 1000L);
             }
         } catch(IOException e) {
             throw e;
@@ -228,13 +228,44 @@ public class OrdClient {
         }
     }
 
-    static byte[] readCapped(InputStream in, int maxBytes) throws IOException {
-        byte[] data = in.readNBytes(maxBytes + 1);
-        if(data.length > maxBytes) {
-            throw new ContentTooLargeException(maxBytes);
+    /**
+     * Reads at most maxBytes, giving up after timeoutMillis. A request timeout only covers the wait for headers, so a
+     * server that sends headers and then trickles the body would otherwise hold the single checking thread forever.
+     */
+    static byte[] readCapped(InputStream in, int maxBytes, long timeoutMillis) throws IOException {
+        java.util.concurrent.atomic.AtomicBoolean timedOut = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.ScheduledFuture<?> watchdog = WATCHDOG.schedule(() -> {
+            timedOut.set(true);
+            try {
+                in.close();
+            } catch(IOException e) {
+                //Closing is only to unblock the read
+            }
+        }, timeoutMillis, TimeUnit.MILLISECONDS);
+        try {
+            byte[] data = in.readNBytes(maxBytes + 1);
+            if(timedOut.get()) {
+                throw new IOException("Inscriptions server took too long to answer");
+            }
+            if(data.length > maxBytes) {
+                throw new ContentTooLargeException(maxBytes);
+            }
+            return data;
+        } catch(IOException e) {
+            if(timedOut.get() && !(e instanceof ContentTooLargeException)) {
+                throw new IOException("Inscriptions server took too long to answer", e);
+            }
+            throw e;
+        } finally {
+            watchdog.cancel(false);
         }
-        return data;
     }
+
+    private static final java.util.concurrent.ScheduledExecutorService WATCHDOG = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "Inscriptions server watchdog");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private static JsonNode readTree(String json) throws IOException {
         if(json.length() > MAX_JSON_CHARS) {

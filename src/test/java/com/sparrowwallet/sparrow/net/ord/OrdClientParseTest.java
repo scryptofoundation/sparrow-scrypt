@@ -127,6 +127,37 @@ public class OrdClientParseTest {
         Assertions.assertThrows(IllegalArgumentException.class, () -> client.outputs(List.of("abc:0")));
     }
 
+    /** A server that sends headers and then nothing must not hold the checks up forever. */
+    @Test
+    public void stalledBodyTimesOut() {
+        java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
+        InputStream stalled = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                try {
+                    closed.await();
+                } catch(InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IOException("closed");
+            }
+
+            @Override
+            public void close() {
+                closed.countDown();
+            }
+        };
+        long start = System.nanoTime();
+        Assertions.assertThrows(IOException.class, () -> OrdClient.readCapped(stalled, 1000, 300));
+        Assertions.assertTrue(System.nanoTime() - start < 5_000_000_000L);
+    }
+
+    @Test
+    public void bodyWithinDeadlineIsRead() throws IOException {
+        Assertions.assertEquals(3, OrdClient.readCapped(new java.io.ByteArrayInputStream(new byte[3]), 10, 1000).length);
+        Assertions.assertThrows(IOException.class, () -> OrdClient.readCapped(new java.io.ByteArrayInputStream(new byte[11]), 10, 1000));
+    }
+
     @Test
     public void oversizedJsonIsRejected() {
         String json = "{\"indexed\":true,\"pad\":\"" + "a".repeat(OrdClient.MAX_JSON_CHARS) + "\"}";
