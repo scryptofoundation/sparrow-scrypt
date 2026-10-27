@@ -800,6 +800,10 @@ public class ServerSettingsController extends SettingsDetailController {
     private void saveInscriptionServer(Config config, InscriptionServerMode mode) {
         String url = inscriptionsUrl.getText().trim();
         if(mode == InscriptionServerMode.CUSTOM) {
+            if(url.isEmpty()) {
+                //Nothing typed yet; saved once a URL is entered
+                return;
+            }
             try {
                 OrdServer.resolveUrl(mode, url, Network.get());
             } catch(IllegalArgumentException e) {

@@ -189,7 +189,8 @@ public class CollectiblesController extends WalletFormController implements Init
         List<Wallet> wallets = holdingWallets();
         List<String> off = new ArrayList<>();
         List<String> errors = new ArrayList<>();
-        Set<String> checked = new LinkedHashSet<>();
+        //One line per server, with its latest check
+        Map<String, java.time.Instant> checked = new LinkedHashMap<>();
         Map<String, Holding> inscriptions = new LinkedHashMap<>();
         Map<String, RuneBalance> runeTotals = new TreeMap<>();
         Map<String, List<String>> runeOutputs = new HashMap<>();
@@ -207,7 +208,7 @@ public class CollectiblesController extends WalletFormController implements Init
             if(snapshot.error() != null) {
                 errors.add("Could not reach " + snapshot.serverHost() + ": " + snapshot.error() + ". Outputs not yet checked count as unknown.");
             } else {
-                checked.add("Checked with " + snapshot.serverHost() + " at " + TIME_FORMAT.format(snapshot.checkedAt()) + ".");
+                checked.merge(snapshot.serverHost(), snapshot.checkedAt(), (a, b) -> a.isAfter(b) ? a : b);
             }
             for(BlockTransactionHashIndex utxo : wallet.getWalletUtxos().keySet()) {
                 OrdOutput output = snapshot.answers().get(utxo.toString());
@@ -230,7 +231,8 @@ public class CollectiblesController extends WalletFormController implements Init
         } else if(!errors.isEmpty()) {
             statusLabel.setText(errors.getFirst());
         } else if(!checked.isEmpty()) {
-            statusLabel.setText(String.join(" ", checked));
+            statusLabel.setText(checked.entrySet().stream().map(e -> "Checked with " + e.getKey() + " at " + TIME_FORMAT.format(e.getValue()) + ".")
+                    .collect(java.util.stream.Collectors.joining(" ")));
         } else {
             statusLabel.setText("Checking outputs for inscriptions and runes...");
         }

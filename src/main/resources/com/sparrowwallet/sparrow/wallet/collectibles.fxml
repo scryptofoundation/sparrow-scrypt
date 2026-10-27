@@ -20,7 +20,7 @@
             </HBox>
             <HBox spacing="10" alignment="CENTER_LEFT">
                 <Label fx:id="statusLabel" wrapText="true" HBox.hgrow="ALWAYS" maxWidth="Infinity" />
-                <Button fx:id="preferencesButton" text="Open Preferences" />
+                <Button fx:id="preferencesButton" text="Open Preferences" minWidth="-Infinity" />
             </HBox>
         </VBox>
     </top>
@@ -38,11 +38,13 @@
                         </ScrollPane>
                     </center>
                     <right>
-                        <VBox fx:id="detailPane" spacing="6" prefWidth="300" styleClass="inscription-detail">
-                            <padding>
-                                <Insets top="10.0" left="15.0" right="5.0" bottom="10.0" />
-                            </padding>
-                        </VBox>
+                        <ScrollPane fitToWidth="true" hbarPolicy="NEVER" prefWidth="310">
+                            <VBox fx:id="detailPane" spacing="6" styleClass="inscription-detail">
+                                <padding>
+                                    <Insets top="10.0" left="15.0" right="5.0" bottom="10.0" />
+                                </padding>
+                            </VBox>
+                        </ScrollPane>
                     </right>
                 </BorderPane>
             </Tab>

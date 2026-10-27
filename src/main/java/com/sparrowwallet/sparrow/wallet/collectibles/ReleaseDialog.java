@@ -38,8 +38,11 @@ public final class ReleaseDialog {
             lost.add("The inscriptions or runes it carries");
         }
         ButtonType release = new ButtonType("Spend as plain LTC", ButtonBar.ButtonData.OK_DONE);
-        Optional<ButtonType> result = AppServices.showWarningDialog("Spend as plain LTC?", "Spending this output as plain LTC will lose:\n" + String.join("\n", lost) +
-                "\n\nThis cannot be undone.", ButtonType.CANCEL, release);
+        //By ord's rules the inscription follows its sat into an output of the spending transaction: often your own
+        //change, which is then protected again, or the recipient's output, where it is gone for good
+        Optional<ButtonType> result = AppServices.showWarningDialog("Spend as plain LTC?", "Spending this output as plain LTC moves or loses:\n" + String.join("\n", lost) +
+                "\n\nIf it lands in your own change it is protected again; if it lands in a payment, it belongs to the recipient. This cannot be undone.",
+                ButtonType.CANCEL, release);
         return result.isPresent() && result.get() == release;
     }
 
