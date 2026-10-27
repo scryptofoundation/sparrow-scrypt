@@ -21,6 +21,30 @@ public class OrdClientParseTest {
     }
 
     @Test
+    public void parsesRuneEntry() throws IOException {
+        OrdRune rune = OrdClient.parseRune(fixture("rune-regtest.json"));
+        Assertions.assertEquals(new com.sparrowwallet.drongo.ordinals.RuneId(111, 1), rune.id());
+        Assertions.assertEquals("TESTRUNE•LITECOIN", rune.spacedName());
+        Assertions.assertEquals(2, rune.divisibility());
+        Assertions.assertEquals("T", rune.symbol());
+    }
+
+    @Test
+    public void runeNameIsValidatedBeforeRequest() {
+        //No server listens here; a name failing validation must throw before any connection is tried
+        OrdClient client = new OrdClient("http://127.0.0.1:9");
+        Assertions.assertThrows(IllegalArgumentException.class, () -> client.rune("not/a/rune"));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> client.rune(""));
+    }
+
+    @Test
+    public void malformedRuneIdRejected() {
+        Assertions.assertThrows(IOException.class, () -> OrdClient.parseRune("{\"entry\":{\"spaced_rune\":\"AB\",\"divisibility\":0},\"id\":\"x\"}"));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.parseRune("{\"entry\":{\"spaced_rune\":\"AB\",\"divisibility\":99},\"id\":\"1:1\"}"));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.parseRune("{\"entry\":{\"spaced_rune\":\"a b\",\"divisibility\":0},\"id\":\"1:1\"}"));
+    }
+
+    @Test
     public void mainnetOutputWithInscription() throws IOException {
         OrdOutput output = OrdClient.parseOutput(OUTPOINT, fixture("output-inscription-mainnet.json"));
         Assertions.assertEquals(OUTPOINT, output.outpoint());

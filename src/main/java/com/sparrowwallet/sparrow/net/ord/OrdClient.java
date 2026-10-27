@@ -153,6 +153,14 @@ public class OrdClient {
         return parseInscription(json("/inscription/" + id, null));
     }
 
+    /** A rune by its spaced name, as shown in output balances. */
+    public OrdRune rune(String spacedName) throws IOException {
+        if(spacedName == null || !RUNE_NAME.matcher(spacedName).matches()) {
+            throw new IllegalArgumentException("Invalid rune name " + spacedName);
+        }
+        return parseRune(json("/rune/" + java.net.URLEncoder.encode(spacedName, StandardCharsets.UTF_8), null));
+    }
+
     /** The inscription's content, at most MAX_CONTENT_BYTES. */
     public byte[] content(String id) throws IOException {
         requireId(id);
@@ -373,6 +381,21 @@ public class OrdClient {
             return NO_SYMBOL;
         }
         return node.asText();
+    }
+
+    static OrdRune parseRune(String json) throws IOException {
+        JsonNode node = readTree(json);
+        JsonNode entry = node.path("entry");
+        String name = entry.path("spaced_rune").asText("");
+        JsonNode divisibility = entry.path("divisibility");
+        if(!RUNE_NAME.matcher(name).matches() || !divisibility.isInt() || divisibility.asInt() < 0 || divisibility.asInt() > MAX_DIVISIBILITY) {
+            throw new IOException("Unexpected rune from inscriptions server");
+        }
+        try {
+            return new OrdRune(com.sparrowwallet.drongo.ordinals.RuneId.parse(node.path("id").asText("")), name, divisibility.asInt(), symbol(entry.path("symbol")));
+        } catch(IllegalArgumentException e) {
+            throw new IOException("Unexpected rune id from inscriptions server");
+        }
     }
 
     static OrdInscription parseInscription(String json) throws IOException {
