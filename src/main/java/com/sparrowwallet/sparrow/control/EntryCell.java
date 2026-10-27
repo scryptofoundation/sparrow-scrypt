@@ -403,6 +403,10 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
     }
 
     private static boolean canRBF(BlockTransaction blockTransaction, Wallet wallet) {
+        //The RBF rebuild drops protected inputs and the runestone, so it would turn an inscription or rune send into a plain payment
+        if(com.sparrowwallet.drongo.ordinals.CollectibleTransactions.movesCollectibles(wallet, blockTransaction.getTransaction())) {
+            return false;
+        }
         return Config.get().isMempoolFullRbf() || blockTransaction.getTransaction().isReplaceByFee() || wallet.isSilentPaymentsTransaction(blockTransaction);
     }
 

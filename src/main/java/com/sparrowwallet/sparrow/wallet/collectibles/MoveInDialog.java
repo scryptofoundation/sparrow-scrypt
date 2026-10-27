@@ -100,15 +100,19 @@ public final class MoveInDialog {
                         throw new IllegalStateException("Connect to a Litecoin server first.");
                     }
                     ElectrumServer electrumServer = new ElectrumServer();
-                    List<MoveIn.Found> unclassified = new ArrayList<>();
-                    int done = 0;
+                    record Owned(OrdWalletDump.DumpedKey key, ScriptType type) {}
+                    Map<Address, Owned> owners = new LinkedHashMap<>();
                     for(OrdWalletDump.DumpedKey key : keys) {
-                        updateMessage("Looking up the addresses of key " + (done + 1) + " of " + keys.size() + "...");
-                        updateProgress(done++, keys.size());
                         for(Map.Entry<ScriptType, Address> entry : OrdWalletDump.addresses(key).entrySet()) {
-                            for(TransactionOutput output : electrumServer.getUtxos(entry.getValue())) {
-                                unclassified.add(new MoveIn.Found(output, key, entry.getKey(), List.of(), false));
-                            }
+                            owners.put(entry.getValue(), new Owned(key, entry.getKey()));
+                        }
+                    }
+                    updateMessage("Looking up " + owners.size() + " addresses of " + keys.size() + " keys...");
+                    List<MoveIn.Found> unclassified = new ArrayList<>();
+                    for(Map.Entry<Address, List<TransactionOutput>> entry : electrumServer.getUtxos(new ArrayList<>(owners.keySet())).entrySet()) {
+                        Owned owner = owners.get(entry.getKey());
+                        for(TransactionOutput output : entry.getValue()) {
+                            unclassified.add(new MoveIn.Found(output, owner.key(), owner.type(), List.of(), false));
                         }
                     }
                     if(unclassified.isEmpty()) {
@@ -226,7 +230,13 @@ public final class MoveInDialog {
             return;
         }
 
-        Transaction transaction = MoveIn.sweep(found, inscriptionDestinations, runesDestination, plainDestination, feeRate.get(), AppServices.getMinimumRelayFeeRate());
+        Transaction transaction;
+        try {
+            transaction = MoveIn.sweep(found, inscriptionDestinations, runesDestination, plainDestination, feeRate.get(), AppServices.getMinimumRelayFeeRate());
+        } finally {
+            //Signed or not, the keys are no longer needed (the caller clears them again on every other path)
+            OrdWalletDump.clear(found.stream().map(MoveIn.Found::key).distinct().toList());
+        }
         EventManager.get().post(new ViewTransactionEvent(owner, transaction));
         AppServices.showAlertDialog("Signed", "The move-in transaction is signed and open in a new tab. Check it and broadcast it from there.\n\n"
                 + "The dump file still holds ord's private keys in plain text: delete it now (and empty the recycle bin).", Alert.AlertType.INFORMATION, ButtonType.OK);

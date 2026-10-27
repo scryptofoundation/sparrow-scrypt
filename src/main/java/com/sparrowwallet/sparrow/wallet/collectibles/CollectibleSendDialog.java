@@ -76,7 +76,13 @@ public final class CollectibleSendDialog {
         Task<OrdRune> lookup = new Task<>() {
             @Override
             protected OrdRune call() throws Exception {
-                return OrdClient.forApp(url).rune(runeName);
+                //The app's settings resolve per coin, and the unified app refuses a thread with no coin scope
+                com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(holdingWallets.getFirst().getCoin());
+                try {
+                    return OrdClient.forApp(url).rune(runeName);
+                } finally {
+                    com.sparrowwallet.drongo.Coin.endScope(previousCoin);
+                }
             }
         };
         lookup.setOnSucceeded(event -> sendRunes(owner, holdingWallets, lookup.getValue()));

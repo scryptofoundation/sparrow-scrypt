@@ -1243,19 +1243,33 @@ public class ElectrumServer {
     }
 
     public List<TransactionOutput> getUtxos(Address address) throws ServerException {
-        Wallet wallet = new Wallet(address.toString());
-        Map<String, String> pathScriptHashes = new HashMap<>();
-        pathScriptHashes.put("m/0", getScriptHash(address));
-        Map<String, ScriptHashTx[]> historyResult = electrumServerRpc.getScriptHashHistory(getTransport(), wallet, pathScriptHashes, true);
-        Set<String> txids = Arrays.stream(historyResult.get("m/0")).map(scriptHashTx -> scriptHashTx.tx_hash).collect(Collectors.toSet());
+        return getUtxos(List.of(address)).get(address);
+    }
+
+    /** The unspent outputs of each address, with one history request and one transactions request for all of them. */
+    public Map<Address, List<TransactionOutput>> getUtxos(List<Address> addresses) throws ServerException {
+        Wallet wallet = new Wallet(addresses.isEmpty() ? "" : addresses.getFirst().toString());
+        Map<String, String> pathScriptHashes = new LinkedHashMap<>();
+        for(int i = 0; i < addresses.size(); i++) {
+            pathScriptHashes.put("m/" + i, getScriptHash(addresses.get(i)));
+        }
+        Map<String, ScriptHashTx[]> historyResult = addresses.isEmpty() ? Map.of() : electrumServerRpc.getScriptHashHistory(getTransport(), wallet, pathScriptHashes, true);
+        Set<String> txids = historyResult.values().stream().filter(Objects::nonNull).flatMap(Arrays::stream).map(scriptHashTx -> scriptHashTx.tx_hash).collect(Collectors.toSet());
+
+        Map<Address, List<TransactionOutput>> utxos = new LinkedHashMap<>();
+        for(Address address : addresses) {
+            utxos.put(address, new ArrayList<>());
+        }
         if(txids.isEmpty()) {
             //An empty batch gets no reply from ElectrumX, so never send one
-            return new ArrayList<>();
+            return utxos;
         }
 
         Map<String, String> transactionsResult = electrumServerRpc.getTransactions(getTransport(), wallet, txids);
-        List<TransactionOutput> transactionOutputs = new ArrayList<>();
-        Script outputScript = address.getOutputScript();
+        Map<Script, Address> byScript = new HashMap<>();
+        for(Address address : addresses) {
+            byScript.put(address.getOutputScript(), address);
+        }
         String strErrorTx = Sha256Hash.ZERO_HASH.toString();
         List<Transaction> transactions = new ArrayList<>();
         for(String txid : transactionsResult.keySet()) {
@@ -1268,8 +1282,9 @@ public class ElectrumServer {
             try {
                 Transaction transaction = new Transaction(Utils.hexToBytes(strRawTx));
                 for(TransactionOutput txOutput : transaction.getOutputs()) {
-                    if(txOutput.getScript().equals(outputScript)) {
-                        transactionOutputs.add(txOutput);
+                    Address address = byScript.get(txOutput.getScript());
+                    if(address != null) {
+                        utxos.get(address).add(txOutput);
                     }
                 }
                 transactions.add(transaction);
@@ -1280,11 +1295,13 @@ public class ElectrumServer {
 
         for(Transaction transaction : transactions) {
             for(TransactionInput txInput : transaction.getInputs()) {
-                transactionOutputs.removeIf(txOutput -> txOutput.getHash().equals(txInput.getOutpoint().getHash()) && txOutput.getIndex() == txInput.getOutpoint().getIndex());
+                for(List<TransactionOutput> transactionOutputs : utxos.values()) {
+                    transactionOutputs.removeIf(txOutput -> txOutput.getHash().equals(txInput.getOutpoint().getHash()) && txOutput.getIndex() == txInput.getOutpoint().getIndex());
+                }
             }
         }
 
-        return transactionOutputs;
+        return utxos;
     }
 
     public static Map<String, WalletNode> getAllScriptHashes(Wallet wallet) {
