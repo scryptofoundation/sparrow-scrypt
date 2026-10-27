@@ -11,7 +11,10 @@ import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -21,7 +24,15 @@ import java.util.Optional;
  */
 public final class InscriptionPreview {
     public static final int MAX_SIDE = 4096;
-    public static final long MAX_PIXELS = 16_777_216L;
+    public static final long MAX_PIXELS = 2048L * 2048L;
+    private static final int IMAGE_CACHE_SIZE = 128;
+    //Decoded previews keyed by caller key and size, so refreshing the view does not decode again
+    private static final Map<String, Image> images = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Image> eldest) {
+            return size() > IMAGE_CACHE_SIZE;
+        }
+    });
     public static final int MAX_TEXT_CHARS = 20_000;
 
     public enum Kind { IMAGE, TEXT, PLACEHOLDER }
@@ -135,9 +146,22 @@ public final class InscriptionPreview {
     }
 
     public static Node node(String contentType, byte[] bytes, double size) {
+        return node(null, contentType, bytes, size);
+    }
+
+    /** As {@link #node(String, byte[], double)}, reusing the decoded image for the same key and size. */
+    public static Node node(String key, String contentType, byte[] bytes, double size) {
         Kind kind = bytes == null ? Kind.PLACEHOLDER : kind(contentType, bytes);
         if(kind == Kind.IMAGE && safeToDecode(bytes)) {
-            Image image = new Image(new ByteArrayInputStream(bytes));
+            String cacheKey = key == null ? null : key + "@" + size;
+            Image image = cacheKey == null ? null : images.get(cacheKey);
+            if(image == null) {
+                //Decoded at display size, so the full-resolution pixels are not kept
+                image = new Image(new ByteArrayInputStream(bytes), size, size, true, true);
+                if(cacheKey != null && !image.isError()) {
+                    images.put(cacheKey, image);
+                }
+            }
             if(!image.isError()) {
                 ImageView view = new ImageView(image);
                 view.setPreserveRatio(true);

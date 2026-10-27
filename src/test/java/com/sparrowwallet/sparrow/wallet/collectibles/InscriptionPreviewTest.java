@@ -53,7 +53,10 @@ public class InscriptionPreviewTest {
     public void hugePngIsNotSafe() {
         Assertions.assertFalse(InscriptionPreview.safeToDecode(png(100000, 100000)));
         Assertions.assertFalse(InscriptionPreview.safeToDecode(png(4096, 4097)));
-        Assertions.assertTrue(InscriptionPreview.safeToDecode(png(4096, 4096)));
+        //A solid 4096x4096 PNG is a few KB to inscribe but 64 MB decoded; a handful would exhaust the heap
+        Assertions.assertFalse(InscriptionPreview.safeToDecode(png(4096, 4096)));
+        Assertions.assertTrue(InscriptionPreview.safeToDecode(png(2048, 2048)));
+        Assertions.assertFalse(InscriptionPreview.safeToDecode(png(2048, 2049)));
         Assertions.assertFalse(InscriptionPreview.safeToDecode(new byte[] {(byte)0x89, 'P', 'N', 'G'}));
     }
 

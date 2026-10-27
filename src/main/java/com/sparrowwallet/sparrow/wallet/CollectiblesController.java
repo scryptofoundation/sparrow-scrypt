@@ -348,7 +348,8 @@ public class CollectiblesController extends WalletFormController implements Init
             return InscriptionPreview.placeholder(loaded.error() != null ? loaded.error()
                     : (loaded.inscription() != null && loaded.inscription().contentType() != null ? loaded.inscription().contentType() : "No preview"), size);
         }
-        return InscriptionPreview.node(loaded.inscription() == null ? null : loaded.inscription().contentType(), loaded.content(), size);
+        String key = loaded.inscription() == null ? null : loaded.inscription().id();
+        return InscriptionPreview.node(key, loaded.inscription() == null ? null : loaded.inscription().contentType(), loaded.content(), size);
     }
 
     /** Details and content for an inscription, from the cache or fetched in the background, handed back on the FX thread. */
