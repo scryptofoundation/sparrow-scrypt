@@ -1,0 +1,2 @@
+create table pendingMint (id identity not null, kind integer not null, keyPath varchar(255) not null, scriptHash varbinary(32) not null, commitTxid varbinary(32) not null, commitVout integer not null, commitValue bigint not null, contentType varchar(255) not null, etching varchar(1024), wallet bigint not null);
+alter table pendingMint add constraint pendingMint_wallet foreign key (wallet) references wallet;

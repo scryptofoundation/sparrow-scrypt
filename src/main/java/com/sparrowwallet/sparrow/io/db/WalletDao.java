@@ -46,6 +46,9 @@ public interface WalletDao {
     @CreateSqlObject
     LitVmLinkDao createLitVmLinkDao();
 
+    @CreateSqlObject
+    PendingMintDao createPendingMintDao();
+
     @SqlQuery("select wallet.id, wallet.name, wallet.label, wallet.network, wallet.coin, wallet.policyType, wallet.scriptType, wallet.storedBlockHeight, wallet.gapLimit, wallet.watchLast, wallet.birthDate, policy.id, policy.name, policy.script from wallet left join policy on wallet.defaultPolicy = policy.id")
     @RegisterRowMapper(WalletMapper.class)
     List<Wallet> loadAllWallets();
@@ -146,6 +149,8 @@ public interface WalletDao {
 
         wallet.setLitVmLink(createLitVmLinkDao().getForWalletId(wallet.getId()));
 
+        wallet.getPendingMints().addAll(createPendingMintDao().getForWalletId(wallet.getId()));
+
         Map<Sha256Hash, UtxoMixData> utxoMixes = createUtxoMixDataDao().getForWalletId(wallet.getId());
         wallet.getUtxoMixes().putAll(utxoMixes);
     }
@@ -167,6 +172,7 @@ public interface WalletDao {
             createMixConfigDao().addMixConfig(wallet);
             createUtxoMixDataDao().addUtxoMixData(wallet);
             createLitVmLinkDao().addLitVmLink(wallet);
+            createPendingMintDao().addPendingMints(wallet);
         } finally {
             setSchema(DbPersistence.DEFAULT_SCHEMA);
         }

@@ -358,6 +358,11 @@ public class DbPersistence implements Persistence {
                     litVmLinkDao.replace(wallet);
                 }
 
+                if(dirtyPersistables.pendingMints) {
+                    PendingMintDao pendingMintDao = handle.attach(PendingMintDao.class);
+                    pendingMintDao.replace(wallet);
+                }
+
                 if(!dirtyPersistables.changedUtxoMixes.isEmpty()) {
                     UtxoMixDataDao utxoMixDataDao = handle.attach(UtxoMixDataDao.class);
                     for(Map.Entry<Sha256Hash, UtxoMixData> utxoMixDataEntry : dirtyPersistables.changedUtxoMixes.entrySet()) {
@@ -874,6 +879,13 @@ public class DbPersistence implements Persistence {
     }
 
     @Subscribe
+    public void walletPendingMintsChanged(WalletPendingMintsChangedEvent event) {
+        if(persistsFor(event.getWallet())) {
+            updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).pendingMints = true);
+        }
+    }
+
+    @Subscribe
     public void walletUtxoMixesChanged(WalletUtxoMixesChangedEvent event) {
         if(persistsFor(event.getWallet())) {
             updateExecutor.execute(() -> {
@@ -925,6 +937,7 @@ public class DbPersistence implements Persistence {
         public WalletTable walletTable = null;
         public boolean mixConfig;
         public boolean litVmLink;
+        public boolean pendingMints;
         public final Map<Sha256Hash, UtxoMixData> changedUtxoMixes = new HashMap<>();
         public final Map<Sha256Hash, UtxoMixData> removedUtxoMixes = new HashMap<>();
         public final List<Keystore> labelKeystores = new ArrayList<>();
