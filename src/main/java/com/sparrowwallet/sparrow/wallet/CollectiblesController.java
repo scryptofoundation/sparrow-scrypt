@@ -3,12 +3,16 @@ package com.sparrowwallet.sparrow.wallet;
 import com.google.common.eventbus.Subscribe;
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.protocol.ScriptType;
+import com.sparrowwallet.drongo.ordinals.InscriptionMint;
 import com.sparrowwallet.drongo.wallet.BlockTransactionHashIndex;
+import com.sparrowwallet.drongo.wallet.PendingMint;
 import com.sparrowwallet.drongo.wallet.Status;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.event.CollectiblesUpdatedEvent;
+import com.sparrowwallet.sparrow.event.NewBlockEvent;
+import com.sparrowwallet.sparrow.event.WalletPendingMintsChangedEvent;
 import com.sparrowwallet.sparrow.event.WalletUtxoStatusChangedEvent;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdInscription;
@@ -19,8 +23,11 @@ import com.sparrowwallet.sparrow.settings.SettingsGroup;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
+import com.sparrowwallet.sparrow.wallet.collectibles.MintFlow;
+import com.sparrowwallet.sparrow.wallet.collectibles.MintInscriptionDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.MoveInDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.ReleaseDialog;
+import com.sparrowwallet.sparrow.wallet.collectibles.TaprootWallets;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.fxml.FXML;
@@ -73,6 +80,21 @@ public class CollectiblesController extends WalletFormController implements Init
     private Button moveInButton;
 
     @FXML
+    private MenuButton mintButton;
+
+    @FXML
+    private Tab pendingTab;
+
+    @FXML
+    private TableView<PendingMint> pendingTable;
+
+    @FXML
+    private Button finishButton;
+
+    @FXML
+    private Button forgetButton;
+
+    @FXML
     private TilePane inscriptionTiles;
 
     @FXML
@@ -114,6 +136,10 @@ public class CollectiblesController extends WalletFormController implements Init
         });
         refreshButton.setOnAction(event -> holdingWallets().forEach(CollectiblesManager.get()::refresh));
         moveInButton.setOnAction(event -> MoveInDialog.start(moveInButton.getScene().getWindow(), getWalletForm()));
+        MenuItem mintInscription = new MenuItem("Inscription...");
+        mintInscription.setOnAction(event -> MintInscriptionDialog.start(mintButton.getScene().getWindow(), getWalletForm()));
+        mintButton.getItems().setAll(mintInscription);
+        initializePending();
 
         TableColumn<RuneRow, String> name = new TableColumn<>("Rune");
         name.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().name()));
@@ -188,6 +214,81 @@ public class CollectiblesController extends WalletFormController implements Init
         if(holdingWallets().contains(event.getWallet())) {
             Platform.runLater(this::refresh);
         }
+    }
+
+    @Subscribe
+    public void walletPendingMintsChanged(WalletPendingMintsChangedEvent event) {
+        Platform.runLater(this::refreshPending);
+    }
+
+    @Subscribe
+    public void newBlock(NewBlockEvent event) {
+        Platform.runLater(this::refreshPending);
+    }
+
+    private Optional<Wallet> taprootWallet() {
+        return TaprootWallets.find(getWalletForm().getWallet(), AppServices.get().getOpenWallets().keySet());
+    }
+
+    private void initializePending() {
+        TableColumn<PendingMint, String> kind = new TableColumn<>("Kind");
+        kind.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().getKind() == PendingMint.Kind.ETCH ? "Etch" : "Inscription"));
+        TableColumn<PendingMint, String> what = new TableColumn<>("Content");
+        what.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().getEtching() != null ? row.getValue().getEtching().name().toString() : row.getValue().getContentType()));
+        TableColumn<PendingMint, String> commit = new TableColumn<>("Commit");
+        commit.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().getCommitTxid().toString().substring(0, 16) + "…"));
+        TableColumn<PendingMint, String> status = new TableColumn<>("Status");
+        status.setCellValueFactory(row -> new ReadOnlyStringWrapper(pendingStatus(row.getValue())));
+        pendingTable.getColumns().setAll(List.of(kind, what, commit, status));
+        pendingTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        pendingTable.setPlaceholder(new Label("No pending mints"));
+        finishButton.disableProperty().bind(pendingTable.getSelectionModel().selectedItemProperty().isNull());
+        forgetButton.disableProperty().bind(pendingTable.getSelectionModel().selectedItemProperty().isNull());
+        finishButton.setOnAction(event -> finishSelected());
+        forgetButton.setOnAction(event -> taprootWallet().ifPresent(taproot -> MintFlow.forget(taproot, pendingTable.getSelectionModel().getSelectedItem())));
+        refreshPending();
+    }
+
+    private String pendingStatus(PendingMint mint) {
+        int confirmations = MintFlow.confirmations(holdingWallets(), mint.getCommitTxid());
+        if(mint.getKind() == PendingMint.Kind.ETCH) {
+            return confirmations >= InscriptionMint.COMMIT_CONFIRMATIONS ? "Ready to reveal"
+                    : "Commit " + confirmations + " of " + InscriptionMint.COMMIT_CONFIRMATIONS + " confirmations";
+        }
+        return confirmations == 0 ? "Commit unconfirmed, ready to reveal" : "Commit confirmed, ready to reveal";
+    }
+
+    private void refreshPending() {
+        List<PendingMint> pending = taprootWallet().map(MintFlow::pendingHolder).map(Wallet::getPendingMints).map(List::copyOf).orElse(List.of());
+        pendingTable.getItems().setAll(pending);
+        pendingTab.setText(pending.isEmpty() ? "Pending mints" : "Pending mints (" + pending.size() + ")");
+    }
+
+    private void finishSelected() {
+        PendingMint mint = pendingTable.getSelectionModel().getSelectedItem();
+        Optional<Wallet> taproot = taprootWallet();
+        if(mint == null || taproot.isEmpty()) {
+            return;
+        }
+        javafx.stage.Window owner = finishButton.getScene().getWindow();
+        byte[] content = null;
+        boolean defaultEtch = false;
+        if(mint.getKind() == PendingMint.Kind.ETCH) {
+            try {
+                MintFlow.rebuild(mint, taproot.get(), null);
+                defaultEtch = true;
+            } catch(IllegalArgumentException e) {
+                //The etching was inscribed with content of its own
+            }
+        }
+        if(!defaultEtch) {
+            Optional<byte[]> chosen = MintInscriptionDialog.askContent(owner, mint);
+            if(chosen.isEmpty()) {
+                return;
+            }
+            content = chosen.get();
+        }
+        MintFlow.finish(owner, taproot.get(), mint, content, message -> MintInscriptionDialog.showDone(owner, message));
     }
 
     @Subscribe

@@ -16,6 +16,7 @@
             <HBox spacing="10" alignment="CENTER_LEFT">
                 <Label text="Collectibles" styleClass="collectibles-title" />
                 <Region HBox.hgrow="ALWAYS" />
+                <MenuButton fx:id="mintButton" text="Mint" />
                 <Button fx:id="moveInButton" text="Move in from ord-litecoin wallet..." />
                 <Button fx:id="refreshButton" text="Refresh" />
             </HBox>
@@ -54,6 +55,15 @@
                     <TableView fx:id="runesTable" VBox.vgrow="ALWAYS" />
                     <HBox spacing="10" alignment="CENTER_RIGHT">
                         <Button fx:id="sendRunesButton" text="Send..." />
+                    </HBox>
+                </VBox>
+            </Tab>
+            <Tab fx:id="pendingTab" text="Pending mints">
+                <VBox spacing="10">
+                    <TableView fx:id="pendingTable" VBox.vgrow="ALWAYS" />
+                    <HBox spacing="10" alignment="CENTER_RIGHT">
+                        <Button fx:id="forgetButton" text="Forget..." />
+                        <Button fx:id="finishButton" text="Finish..." />
                     </HBox>
                 </VBox>
             </Tab>
