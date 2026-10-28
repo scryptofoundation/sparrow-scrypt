@@ -13,6 +13,7 @@ import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.event.CollectiblesUpdatedEvent;
 import com.sparrowwallet.sparrow.event.NewBlockEvent;
 import com.sparrowwallet.sparrow.event.StatusEvent;
+import com.sparrowwallet.sparrow.event.WalletHistoryChangedEvent;
 import com.sparrowwallet.sparrow.event.WalletPendingMintsChangedEvent;
 import com.sparrowwallet.sparrow.event.WalletUtxoStatusChangedEvent;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
@@ -237,6 +238,14 @@ public class CollectiblesController extends WalletFormController implements Init
     @Subscribe
     public void newBlock(NewBlockEvent event) {
         Platform.runLater(this::refreshPending);
+    }
+
+    //A new block reaches this view before the wallet learns its commit is in it, so confirmations count from the history update
+    @Subscribe
+    public void walletHistoryChanged(WalletHistoryChangedEvent event) {
+        if(holdingWallets().contains(event.getWallet())) {
+            Platform.runLater(this::refreshPending);
+        }
     }
 
     private Optional<Wallet> taprootWallet() {
