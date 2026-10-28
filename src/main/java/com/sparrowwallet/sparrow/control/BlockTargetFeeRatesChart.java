@@ -67,8 +67,8 @@ public class BlockTargetFeeRatesChart extends LineChart<String, Number> {
         UnitFormat format = Config.get().getUnitFormat() == null ? UnitFormat.DOT : Config.get().getUnitFormat();
         XYChart.Data<String, Number> first = data.getFirst();
         XYChart.Data<String, Number> last = data.getLast();
-        return "Fee rates by target blocks, from " + format.getCurrencyFormat().format(first.getYValue()) + " sats/vB for " + first.getXValue() + " block"
-                + (first.getXValue().equals("1") ? "" : "s") + " to " + format.getCurrencyFormat().format(last.getYValue()) + " sats/vB for " + last.getXValue() + " blocks";
+        return "Fee rates by target blocks, from " + format.getCurrencyFormat().format(first.getYValue()) + " lits/vB for " + first.getXValue() + " block"
+                + (first.getXValue().equals("1") ? "" : "s") + " to " + format.getCurrencyFormat().format(last.getYValue()) + " lits/vB for " + last.getXValue() + " blocks";
     }
 
     public void select(Integer targetBlocks) {

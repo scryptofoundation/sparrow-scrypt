@@ -435,7 +435,7 @@ public class BitcoindClient {
             }
 
             if(results.size() != importDescriptors.size()) {
-                String error = "Bitcoin Core returned " + results.size() + " results for " + importDescriptors.size() + " imported descriptors";
+                String error = "Litecoin Core returned " + results.size() + " results for " + importDescriptors.size() + " imported descriptors";
                 log.error(error);
                 postImportFailure(importingDescriptors.keySet().stream().collect(Collectors.toMap(descriptor -> descriptor, descriptor -> error, (a, b) -> a, LinkedHashMap::new)));
                 throw new ImportFailedException(error);

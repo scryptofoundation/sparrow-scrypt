@@ -2317,11 +2317,11 @@ public class AppController implements Initializable {
         if(unit == null || unit.equals(BitcoinUnit.AUTO)) {
             unit = totalAmount >= BitcoinUnit.getAutoThreshold() ? BitcoinUnit.BTC : BitcoinUnit.SATOSHIS;
         }
-        String amount = unit.equals(BitcoinUnit.BTC) ? format.formatBtcValue(totalAmount) + " BTC" : format.formatSatsValue(totalAmount) + " sats";
+        String amount = unit.equals(BitcoinUnit.BTC) ? format.formatBtcValue(totalAmount) + " LTC" : format.formatSatsValue(totalAmount) + " lits";
         String outputDesc = unknownScriptOutputs.size() == 1 ? "an output" : unknownScriptOutputs.size() + " outputs";
         Optional<ButtonType> result = AppServices.showWarningDialog("Unknown Script Type",
                 "This transaction contains " + outputDesc + " of a non-standard or unrecognised script type, totalling " + amount + ".\n\n" +
-                        "Sparrow cannot resolve these outputs to addresses, so they will not appear in the transaction diagram. " +
+                        "Sparrow-LTC cannot resolve these outputs to addresses, so they will not appear in the transaction diagram. " +
                         "Review the individual output(s) in the transaction tree carefully before signing or broadcasting.\n\n" +
                         "Open the transaction?", ButtonType.YES, ButtonType.NO);
         return result.isPresent() && result.get() == ButtonType.YES;
@@ -3246,8 +3246,8 @@ public class AppController implements Initializable {
     @Subscribe
     public void cormorantImportStatus(CormorantImportStatusEvent event) {
         String walletNames = event.getWallets().stream().map(Wallet::getFullDisplayName).collect(Collectors.joining(", "));
-        AppServices.showErrorDialog("Error importing Bitcoin Core descriptors",
-                "Bitcoin Core did not import " + (walletNames.isEmpty() ? "one or more descriptors" : "the descriptors for " + walletNames) + ":\n\n" + event.getErrorMessage() + "\n\n" +
+        AppServices.showErrorDialog("Error importing Litecoin Core descriptors",
+                "Litecoin Core did not import " + (walletNames.isEmpty() ? "one or more descriptors" : "the descriptors for " + walletNames) + ":\n\n" + event.getErrorMessage() + "\n\n" +
                         "Transactions and balances may be incomplete until the import succeeds.");
     }
 

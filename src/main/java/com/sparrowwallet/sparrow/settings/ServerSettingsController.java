@@ -859,10 +859,10 @@ public class ServerSettingsController extends SettingsDetailController {
 
             //A host that is not an IP literal is not resolved here, so it can only be reported as unconfirmed
             String location = InetAddresses.isInetAddress(coreServer.getHost()) ? " is not on" : " could not be confirmed to be on";
-            StringBuilder warning = new StringBuilder("Bitcoin Core at " + coreServer.getHostAndPort() + location + " this computer or your local network.\n");
+            StringBuilder warning = new StringBuilder("Litecoin Core at " + coreServer.getHostAndPort() + location + " this computer or your local network.\n");
             if(AppServices.isUsingProxy()) {
                 String proxy = config.isUseProxy() ? "configured proxy" : "internal Tor proxy";
-                warning.append("\nConnections to Bitcoin Core are made directly, and the " + proxy + " is only used for onion addresses. ");
+                warning.append("\nConnections to Litecoin Core are made directly, and the " + proxy + " is only used for onion addresses. ");
                 warning.append("Your IP address will be visible to the node.\n");
             }
             if(coreServer.getProtocol() == Protocol.HTTP) {
@@ -870,10 +870,10 @@ public class ServerSettingsController extends SettingsDetailController {
             } else if(Storage.getCertificateFile(coreServer.getHost()) == null) {
                 warning.append("\nThe certificate presented by the node on the first connection will be trusted and required on all connections thereafter.\n");
             }
-            warning.append("\nConnecting to the Bitcoin Core RPC interface over an untrusted network is not recommended by either Sparrow or Bitcoin Core. ");
+            warning.append("\nConnecting to the Litecoin Core RPC interface over an untrusted network is not recommended by either Sparrow-LTC or Litecoin Core. ");
             warning.append("Consider using a node on this computer or your local network, connecting over a Tor onion address, or tunnelling to it over a VPN or SSH.");
 
-            AppServices.showWarningDialog("Remote Bitcoin Core node", warning.toString());
+            AppServices.showWarningDialog("Remote Litecoin Core node", warning.toString());
         }
     }
 

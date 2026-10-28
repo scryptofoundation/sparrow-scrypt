@@ -2451,7 +2451,7 @@ public class ElectrumServer {
                 return minFeeRate;
             }
 
-            log.warn("Server returned an out of range minimum relay fee of " + minFeeRateBtcKb + " BTC/kB, using default");
+            log.warn("Server returned an out of range minimum relay fee of " + minFeeRateBtcKb + " LTC/kB, using default");
         }
 
         return Transaction.DEFAULT_MIN_RELAY_FEE;

@@ -95,7 +95,7 @@ public class RecentBlocksView extends Pane {
         for(BlockCube cube : cubes.subList(0, Math.min(3, cubes.size()))) {
             summary.append(", ").append(cube.isConfirmed() ? "block " + cube.getHeight() : "next block");
             if(cube.getMedianFee() >= 0.0d) {
-                summary.append(" ~").append(Math.round(Math.max(cube.getMedianFee(), 1.0d))).append(" sats/vB");
+                summary.append(" ~").append(Math.round(Math.max(cube.getMedianFee(), 1.0d))).append(" lits/vB");
             }
             if(cube.isConfirmed()) {
                 summary.append(cube.getTxCount() > 0 ? " with " + cube.getTxCount() + " transactions " : " ").append(getSpokenElapsed(cube.getElapsed()));

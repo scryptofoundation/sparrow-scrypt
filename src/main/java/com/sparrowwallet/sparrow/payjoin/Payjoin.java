@@ -307,7 +307,7 @@ public class Payjoin {
         // Once signed, the fee rate of the payjoin transaction must not be less than the minfeerate we requested
         double proposalFeeRate = getProposalFeeRate(original, proposal);
         if(proposalFeeRate < minFeeRate) {
-            throw new PayjoinReceiverException("The fee rate of the payjoin transaction of " + String.format("%.2f", proposalFeeRate) + " sats/vB is less than the requested minimum of " + String.format("%.2f", minFeeRate) + " sats/vB");
+            throw new PayjoinReceiverException("The fee rate of the payjoin transaction of " + String.format("%.2f", proposalFeeRate) + " lits/vB is less than the requested minimum of " + String.format("%.2f", minFeeRate) + " lits/vB");
         }
 
         //Add global pubkey map for signing
