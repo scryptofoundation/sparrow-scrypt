@@ -72,7 +72,12 @@ public class WalletImportDialog extends Dialog<List<Wallet>> {
             }
         }
 
-        importAccordion.getPanes().sort(Comparator.comparing(o -> ((TitledDescriptionPane) o).getTitle()));
+        for(SeedWallets.SeedWallet seedWallet : SeedWallets.ALL) {
+            importAccordion.getPanes().add(new SeedWalletImportPane(seedWallet));
+        }
+
+        //Case-insensitive so lowercase app names like luckycoinwallet sort among the others
+        importAccordion.getPanes().sort(Comparator.comparing(o -> ((TitledDescriptionPane) o).getTitle(), String.CASE_INSENSITIVE_ORDER));
 
         MnemonicWalletKeystoreImportPane mnemonicImportPane = new MnemonicWalletKeystoreImportPane(new Bip39());
         importAccordion.getPanes().add(0, mnemonicImportPane);
