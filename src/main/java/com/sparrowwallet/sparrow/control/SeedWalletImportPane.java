@@ -59,7 +59,7 @@ public class SeedWalletImportPane extends MnemonicKeystorePane {
 
     @Override
     protected void onWordChange(boolean empty, boolean validWords, boolean validChecksum) {
-        boolean valid = !empty && validWords && validChecksum;
+        boolean valid = !empty && validWords && SeedWallets.isValidPhrase(wordEntriesProperty.get());
         nextButton.setDisable(!valid);
         validLabel.setVisible(valid);
         invalidLabel.setVisible(!valid && !empty);

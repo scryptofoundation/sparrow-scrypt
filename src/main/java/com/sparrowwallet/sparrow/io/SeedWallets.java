@@ -59,6 +59,18 @@ public class SeedWallets {
     );
 
     /**
+     * All six apps make BIP39 phrases. The import pane's base class leaves checksum checking to the subclass.
+     */
+    public static boolean isValidPhrase(List<String> words) {
+        try {
+            Bip39MnemonicCode.INSTANCE.check(words);
+            return true;
+        } catch(Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Builds the wallet under an explicit scope for the account's coin, as for {@link CakeWallet}: xpub headers and
      * address encoding resolve the active coin, which on the FX thread is whichever wallet tab happens to be focused.
      */

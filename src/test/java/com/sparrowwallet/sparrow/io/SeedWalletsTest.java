@@ -41,6 +41,12 @@ public class SeedWalletsTest {
     }
 
     @Test
+    public void acceptsOnlyValidBip39Phrases() {
+        Assertions.assertTrue(SeedWallets.isValidPhrase(WORDS));
+        Assertions.assertFalse(SeedWallets.isValidPhrase(Arrays.asList("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon".split(" "))));
+    }
+
+    @Test
     public void nintondoAddsBellsPassphraseAtBitcoinPath() throws Exception {
         Assertions.assertEquals("m/44'/0'/0'", seedWallet("Nintondo").accountFor(Coin.BELLSCOIN).derivationPath());
         Assertions.assertEquals("BMb5oFUiW5cYqA4zfEtyQiZgW884vg1vKT", firstAddress("Nintondo", Coin.BELLSCOIN, ""));
