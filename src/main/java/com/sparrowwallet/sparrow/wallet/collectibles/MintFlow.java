@@ -479,7 +479,8 @@ public final class MintFlow {
     }
 
     private static void broadcastReveal(Wallet holder, PendingMint mint, Transaction reveal, Consumer<String> done) {
-        ElectrumServer.BroadcastTransactionService revealBroadcast = new ElectrumServer.BroadcastTransactionService(reveal, mint.getCommitValue() - CollectibleTransactions.POSTAGE);
+        long revealFee = mint.getCommitValue() - reveal.getOutputs().stream().mapToLong(TransactionOutput::getValue).sum();
+        ElectrumServer.BroadcastTransactionService revealBroadcast = new ElectrumServer.BroadcastTransactionService(reveal, revealFee);
         revealBroadcast.setOnSucceeded(event -> {
             removePending(holder, mint);
             done.accept("Reveal " + reveal.getTxId() + " broadcast. The " + (mint.getKind() == PendingMint.Kind.ETCH ? "rune and its inscription appear" : "inscription appears")
@@ -529,7 +530,9 @@ public final class MintFlow {
         text.append("Inscription: ").append(inscription.body().length).append(" bytes of ").append(inscription.contentType()).append(".\n");
         text.append("Lands at: ").append(plan.destination()).append(" in ").append(taproot.getFullDisplayName()).append(".\n\n");
         text.append("Commit (paid from ").append(funding.getFullDisplayName()).append("): fee ").append(commit.getFee()).append(" litoshis.\n");
-        text.append("Reveal: fee ").append(plan.revealFee()).append(" litoshis, postage ").append(CollectibleTransactions.POSTAGE).append(" litoshis.\n");
+        long postage = plan.commitValue() - plan.revealFee();
+        text.append("Reveal: fee ").append(plan.revealFee()).append(" litoshis, postage ").append(postage).append(" litoshis")
+                .append(postage > CollectibleTransactions.POSTAGE ? " (for the inscription and the premine).\n" : ".\n");
         text.append("Total: ").append(commit.getFee() + plan.commitValue()).append(" litoshis.\n\n");
         if(request.etching() != null) {
             text.append("The reveal can be signed once the commit is ").append(InscriptionMint.COMMIT_CONFIRMATIONS)

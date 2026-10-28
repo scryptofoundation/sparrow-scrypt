@@ -100,6 +100,30 @@ public class PendingMintPersistenceTest extends IoTest {
         Assertions.assertEquals(COMMIT, loaded.getFirst().getCommitTxid());
     }
 
+    @Test
+    public void pendingMintIsOnDiskWhenSaveReturnsUnencrypted() throws IOException, MnemonicException, StorageException {
+        System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, "true");
+        Storage storage = new Storage(getFile("sparrow-single-seed-wallet"));
+        Wallet wallet = storage.loadEncryptedWallet("pass").getWallet();
+        wallet.decrypt("pass");
+        //Moving to the database format names the file after the wallet; keep it apart from the encrypted tests' file
+        wallet.setName("unencrypted" + System.nanoTime());
+        File tempWallet = File.createTempFile("sparrow", "tmp");
+        tempWallet.deleteOnExit();
+        Storage saved = new Storage(tempWallet);
+        saved.setEncryptionPubKey(Storage.NO_PASSWORD_KEY);
+        saved.saveWallet(wallet);
+
+        Storage open = new Storage(saved.getWalletFile());
+        Wallet opened = open.loadUnencryptedWallet().getWallet();
+        opened.getPendingMints().add(inscription());
+        open.savePendingMints(opened);
+
+        List<PendingMint> loaded = new Storage(open.getWalletFile()).loadUnencryptedWallet().getWallet().getPendingMints();
+        Assertions.assertEquals(1, loaded.size());
+        Assertions.assertEquals(COMMIT, loaded.getFirst().getCommitTxid());
+    }
+
     @AfterEach
     void tearDown() {
         System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, "false");
