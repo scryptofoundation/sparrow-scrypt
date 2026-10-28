@@ -8,11 +8,16 @@ var servers = map[int]*mwebd.Server{}
 
 //export start
 func start(chain, dataDir, proxy *C.char) C.int {
-	server, err := mwebd.NewServer2(&mwebd.ServerArgs{
+	args := &mwebd.ServerArgs{
 		Chain:     C.GoString(chain),
 		DataDir:   C.GoString(dataDir),
 		ProxyAddr: C.GoString(proxy),
-	})
+	}
+	// Regtest has no DNS seeds, so connect to the local node's default regtest port
+	if args.Chain == "regtest" {
+		args.PeerAddr = "127.0.0.1:19444"
+	}
+	server, err := mwebd.NewServer2(args)
 	if err != nil {
 		return 0
 	}
