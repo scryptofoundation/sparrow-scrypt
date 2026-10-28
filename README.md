@@ -91,15 +91,15 @@ When not explicitly configured using the command line argument above, Sparrow-LT
 
 Testnet3, testnet4, regtest and signet configurations (along with their wallets) are stored in subfolders to allow easy switching between networks.
 
-On macOS and Linux, Sparrow also supports the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). 
-This is opt in: for each category below, if the corresponding directory already exists, Sparrow uses it, otherwise it continues to use the home folder above. Categories are resolved independently, so files can be moved across one at a time.
+On macOS and Linux, Sparrow-LTC also supports the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). 
+This is opt in: for each category below, if the corresponding directory already exists, Sparrow-LTC uses it, otherwise it continues to use the home folder above. Categories are resolved independently, so files can be moved across one at a time.
 
 | Category | Location | Contents                              |
 |----------| -------- |---------------------------------------|
-| Config   | `$XDG_CONFIG_HOME/sparrow` (default `~/.config/sparrow`) | `config`, `network-*` markers         |
-| Data     | `$XDG_DATA_HOME/sparrow` (default `~/.local/share/sparrow`) | `wallets`, `certs`, `lark`            |
-| State    | `$XDG_STATE_HOME/sparrow` (default `~/.local/state/sparrow`) | `sparrow.log`, `tor/work`, lock files |
-| Cache    | `$XDG_CACHE_HOME/sparrow` (default `~/.cache/sparrow`) | `tor/cache`                           |
+| Config   | `$XDG_CONFIG_HOME/sparrow-ltc` (default `~/.config/sparrow-ltc`) | `config`, `network-*` markers         |
+| Data     | `$XDG_DATA_HOME/sparrow-ltc` (default `~/.local/share/sparrow-ltc`) | `wallets`, `certs`, `lark`            |
+| State    | `$XDG_STATE_HOME/sparrow-ltc` (default `~/.local/state/sparrow-ltc`) | `sparrow.log`, `tor/work`, lock files |
+| Cache    | `$XDG_CACHE_HOME/sparrow-ltc` (default `~/.cache/sparrow-ltc`) | `tor/cache`                           |
 
 Specifying a home folder with the `-d` argument disables XDG resolution entirely, and stores all files in the given folder.
 
