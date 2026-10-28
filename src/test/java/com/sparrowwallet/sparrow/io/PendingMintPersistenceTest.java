@@ -80,6 +80,26 @@ public class PendingMintPersistenceTest extends IoTest {
         Assertions.assertEquals(PendingMint.Kind.ETCH, loaded.getFirst().getKind());
     }
 
+    @Test
+    public void pendingMintIsOnDiskWhenSaveReturns() throws IOException, MnemonicException, StorageException {
+        //A mint's commit is broadcast only once its record is written, so savePendingMints waits for the write
+        System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, "true");
+        Storage storage = new Storage(getFile("sparrow-single-seed-wallet"));
+        Wallet wallet = storage.loadEncryptedWallet("pass").getWallet();
+        Storage saved = save(storage, wallet);
+
+        //Loading moves the saved file to the database format, as the app does
+        Storage open = new Storage(saved.getWalletFile());
+        Wallet opened = open.loadEncryptedWallet("pass").getWallet();
+        opened.getPendingMints().add(inscription());
+        open.savePendingMints(opened);
+        Assertions.assertNotNull(opened.getPendingMints().getFirst().getId());
+
+        List<PendingMint> loaded = new Storage(open.getWalletFile()).loadEncryptedWallet("pass").getWallet().getPendingMints();
+        Assertions.assertEquals(1, loaded.size());
+        Assertions.assertEquals(COMMIT, loaded.getFirst().getCommitTxid());
+    }
+
     @AfterEach
     void tearDown() {
         System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, "false");

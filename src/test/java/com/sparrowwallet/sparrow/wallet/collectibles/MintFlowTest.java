@@ -2,6 +2,8 @@ package com.sparrowwallet.sparrow.wallet.collectibles;
 
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.crypto.Argon2KeyDeriver;
+import com.sparrowwallet.drongo.crypto.Key;
 import com.sparrowwallet.drongo.ordinals.*;
 import com.sparrowwallet.drongo.policy.Policy;
 import com.sparrowwallet.drongo.policy.PolicyType;
@@ -90,6 +92,43 @@ public class MintFlowTest {
         //Postage, the reveal fee and the commit fee (one taproot input, the commit output and change: 154 vB)
         Assertions.assertEquals(plan.commitValue() + (long)Math.ceil(154 * 2.0), pegOut.getAmount());
         Assertions.assertTrue(pegOut.getAmount() > CollectibleTransactions.POSTAGE + plan.revealFee());
+    }
+
+    @Test
+    public void encryptedTaprootChildDecryptsForTheReveal() throws Exception {
+        Wallet segwit = wallet("segwit", ScriptType.P2WPKH, KeystoreSource.SW_SEED);
+        Wallet child = segwit.addTaprootChildWallet();
+        //Encrypted the way SameSeedChildWallets does it: the taproot child is not nested, so it is encrypted on its own
+        Argon2KeyDeriver keyDeriver = new Argon2KeyDeriver();
+        Key key = keyDeriver.deriveKey("pass");
+        child.encrypt(key);
+        segwit.encrypt(key);
+        Assertions.assertTrue(segwit.isEncrypted());
+        Assertions.assertTrue(child.isEncrypted());
+        //Decrypting the master leaves its taproot child encrypted
+        Wallet decryptedMaster = segwit.copy();
+        decryptedMaster.decrypt("pass");
+        Assertions.assertTrue(decryptedMaster.getChildWallet(child.getName()).isEncrypted());
+
+        WalletNode node = child.getFreshNode(KeyPurpose.RECEIVE);
+        Wallet decrypted = MintFlow.decryptedCopy(child, "pass");
+        Assertions.assertFalse(decrypted.isEncrypted());
+        Assertions.assertArrayEquals(node.getPubKey().getPubKey(),
+                decrypted.getKeystores().getFirst().getKey(new WalletNode(decrypted, node.getDerivationPath())).getPubKey());
+        Assertions.assertTrue(child.isEncrypted(), "the open wallet stays encrypted");
+        decrypted.clearPrivate();
+
+        Wallet funding = MintFlow.decryptedCopy(segwit, "pass");
+        Assertions.assertFalse(funding.isEncrypted());
+        funding.clearPrivate();
+    }
+
+    @Test
+    public void finishOffersAFileForEveryContentType() {
+        //A .txt file minted from disk may hold line endings a text box cannot reproduce
+        Assertions.assertEquals(EnumSet.of(MintInscriptionDialog.Source.FILE, MintInscriptionDialog.Source.TEXT),
+                MintInscriptionDialog.finishSources(Inscription.TEXT));
+        Assertions.assertEquals(EnumSet.of(MintInscriptionDialog.Source.FILE), MintInscriptionDialog.finishSources("image/png"));
     }
 
     @Test

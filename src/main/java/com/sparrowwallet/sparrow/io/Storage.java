@@ -247,6 +247,11 @@ public class Storage {
         }
     }
 
+    /** Writes the wallet's pending mints, returning once they are on disk. Not for the FX thread. */
+    public void savePendingMints(Wallet wallet) throws StorageException {
+        persistence.savePendingMints(this, wallet);
+    }
+
     public boolean isPersisted(Wallet wallet) {
         return persistence.isPersisted(this, wallet);
     }

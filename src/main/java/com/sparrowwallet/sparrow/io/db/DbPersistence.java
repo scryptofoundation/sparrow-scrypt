@@ -36,7 +36,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -186,6 +188,32 @@ public class DbPersistence implements Persistence {
                 Coin.endScope(previousCoin);
             }
         });
+    }
+
+    @Override
+    public void savePendingMints(Storage storage, Wallet wallet) throws StorageException {
+        String password = getDatasourcePassword();
+        //On the update thread, after any update already queued, so a later queued update cannot interleave
+        Future<?> write = updateExecutor.submit(() -> {
+            Coin previousCoin = Coin.beginScope(wallet.getCoin());
+            try {
+                getJdbi(storage, password).useTransaction(handle -> {
+                    handle.attach(WalletDao.class).setSchema(getSchema(wallet));
+                    handle.attach(PendingMintDao.class).replace(wallet);
+                });
+            } finally {
+                Coin.endScope(previousCoin);
+            }
+            return null;
+        });
+        try {
+            write.get();
+        } catch(ExecutionException e) {
+            throw new StorageException("Could not save the pending mint: " + e.getCause().getMessage(), e.getCause());
+        } catch(InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StorageException("Interrupted while saving the pending mint", e);
+        }
     }
 
     private synchronized void createUpdateExecutor(Wallet masterWallet) {

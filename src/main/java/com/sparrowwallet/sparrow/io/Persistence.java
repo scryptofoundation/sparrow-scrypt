@@ -16,6 +16,10 @@ public interface Persistence {
     File storeWallet(Storage storage, Wallet wallet, ECKey encryptionPubKey) throws IOException, StorageException;
     void updateWallet(Storage storage, Wallet wallet) throws IOException, StorageException;
     void updateWallet(Storage storage, Wallet wallet, ECKey encryptionPubKey) throws IOException, StorageException;
+    /** Writes the wallet's pending mints and returns only once they are on disk. */
+    default void savePendingMints(Storage storage, Wallet wallet) throws StorageException {
+        throw new StorageException("This wallet file cannot hold pending mints");
+    }
     boolean isPersisted(Storage storage, Wallet wallet);
     ECKey getEncryptionKey(CharSequence password) throws IOException, StorageException;
     AsymmetricKeyDeriver getKeyDeriver();

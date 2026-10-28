@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.EnumSet;
 import java.util.Optional;
 
 /**
@@ -168,20 +169,37 @@ public final class MintInscriptionDialog {
         }
     }
 
-    /** Asks for the content a pending mint was started with: text for a text mint, else a file. */
+    enum Source { FILE, TEXT }
+
+    /** How a pending mint's content can be given again: always as a file (a text file's line endings survive only that way), and as typed text for text. */
+    static EnumSet<Source> finishSources(String contentType) {
+        return contentType.startsWith("text/plain") ? EnumSet.of(Source.FILE, Source.TEXT) : EnumSet.of(Source.FILE);
+    }
+
+    /** Asks for the content a pending mint was started with: a file, or for a text mint the typed text. */
     public static Optional<byte[]> askContent(Window owner, PendingMint mint) {
-        if(!mint.getContentType().startsWith("text/plain")) {
+        if(!finishSources(mint.getContentType()).contains(Source.TEXT)) {
             return chooseFile(owner).map(Content::body);
         }
         TextInputDialog dialog = new TextInputDialog();
         dialog.initOwner(owner);
         dialog.setTitle("Finish Mint");
-        dialog.setHeaderText("Enter exactly the text this mint was started with");
+        dialog.setHeaderText("Enter exactly the text this mint was started with, or choose the file it was made from");
         TextArea area = new TextArea();
         area.setPrefRowCount(5);
         area.setWrapText(true);
         dialog.getDialogPane().setContent(area);
-        dialog.setResultConverter(button -> button == ButtonType.OK ? area.getText() : null);
-        return dialog.showAndWait().map(value -> value.getBytes(StandardCharsets.UTF_8));
+        ButtonType fileButton = new ButtonType("Choose file...", ButtonBar.ButtonData.LEFT);
+        dialog.getDialogPane().getButtonTypes().add(fileButton);
+        boolean[] fromFile = {false};
+        dialog.setResultConverter(button -> {
+            fromFile[0] = button == fileButton;
+            return button == ButtonType.OK ? area.getText() : null;
+        });
+        Optional<String> text = dialog.showAndWait();
+        if(fromFile[0]) {
+            return chooseFile(owner).map(Content::body);
+        }
+        return text.map(value -> value.getBytes(StandardCharsets.UTF_8));
     }
 }

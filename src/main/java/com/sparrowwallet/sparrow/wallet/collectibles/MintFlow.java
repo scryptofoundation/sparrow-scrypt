@@ -26,6 +26,7 @@ import com.sparrowwallet.sparrow.event.WalletDataChangedEvent;
 import com.sparrowwallet.sparrow.event.WalletPendingMintsChangedEvent;
 import com.sparrowwallet.sparrow.io.Storage;
 import com.sparrowwallet.sparrow.net.ElectrumServer;
+import javafx.concurrent.Task;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.stage.Window;
@@ -40,8 +41,8 @@ import java.util.function.Consumer;
  * Minting an inscription or etching a rune from a software wallet of the seed (spec: Goals 5 and 6). The commit is
  * paid from the open wallet and signed with its keystore; the reveal is signed with the taproot wallet's next receive
  * key, derived for that one signature, and lands its postage on that key's own address. Before the commit is
- * broadcast, a pending record (recovery data only, see {@link PendingMint}) is saved on the taproot wallet's master,
- * so a commit is never left on chain with nothing on disk to rebuild its script from. The record goes once the reveal
+ * broadcast, a pending record (recovery data only, see {@link PendingMint}) is written to the taproot wallet master's
+ * file, so a commit is never left on chain with nothing on disk to rebuild its script from. The record goes once the reveal
  * is broadcast. An etch always waits: ord accepts it only once the commit is {@link InscriptionMint#COMMIT_CONFIRMATIONS}
  * deep, so it is finished later from the pending list.
  *
@@ -93,8 +94,7 @@ public final class MintFlow {
         if(checked != null && !Arrays.equals(inscription.runeCommitment(), checked.name().commitment())) {
             throw new IllegalArgumentException("The envelope does not commit to the rune being etched");
         }
-        return new InscriptionMint.Plan(inscription, node.getPubKey(), node.getAddress(),
-                etching == null ? null : Runestone.script(List.of(), 0, etching, null), revealFeeRate);
+        return new InscriptionMint.Plan(inscription, node.getPubKey(), node.getAddress(), checked, revealFeeRate);
     }
 
     /** An etch's envelope: the given content, or by default the spaced rune name as text; with the rune's commitment. */
@@ -257,39 +257,22 @@ public final class MintFlow {
 
         Wallet holder = pendingHolder(taproot);
         boolean needsReveal = request.signNow();
-        withDecrypted(owner, master(funding), decryptedFunding -> {
+        List<Wallet> signers = needsReveal && taproot != funding ? List.of(funding, taproot) : List.of(funding);
+        withDecrypted(owner, signers, decrypted -> {
             Transaction commitTx;
+            Transaction reveal = null;
             try {
-                commitTx = signCommit(child(decryptedFunding, funding), commit);
+                commitTx = signCommit(decrypted.get(funding), commit);
+                if(needsReveal) {
+                    reveal = signReveal(decrypted.get(taproot), node.getDerivationPath(), plan, commitTx.getOutputs().getFirst());
+                }
             } catch(Exception e) {
-                AppServices.showErrorDialog("Cannot sign the commit", e.getMessage());
+                AppServices.showErrorDialog("Cannot sign the mint", e.getMessage());
                 return;
             } finally {
-                if(!needsReveal || master(taproot) != master(funding)) {
-                    decryptedFunding.clearPrivate();
-                }
+                decrypted.values().forEach(Wallet::clearPrivate);
             }
-            if(!needsReveal) {
-                broadcast(owner, holder, plan, node, commitTx, commit.getFee(), null, request.etching(), confirmText);
-                return;
-            }
-            Consumer<Wallet> signReveal = decryptedTaprootMaster -> {
-                Transaction reveal;
-                try {
-                    reveal = signReveal(child(decryptedTaprootMaster, taproot), node.getDerivationPath(), plan, commitTx.getOutputs().getFirst());
-                } catch(Exception e) {
-                    AppServices.showErrorDialog("Cannot sign the reveal", e.getMessage());
-                    return;
-                } finally {
-                    decryptedTaprootMaster.clearPrivate();
-                }
-                broadcast(owner, holder, plan, node, commitTx, commit.getFee(), reveal, null, confirmText);
-            };
-            if(master(taproot) == master(funding)) {
-                signReveal.accept(decryptedFunding);
-            } else {
-                withDecrypted(owner, master(taproot), signReveal);
-            }
+            broadcast(holder, plan, node, commitTx, commit.getFee(), reveal, request.etching(), confirmText);
         });
     }
 
@@ -325,15 +308,15 @@ public final class MintFlow {
                 AppServices.showErrorDialog("Cannot finish the mint", e.getMessage());
                 return;
             }
-            withDecrypted(owner, master(taproot), decrypted -> {
+            withDecrypted(owner, List.of(taproot), decrypted -> {
                 Transaction reveal;
                 try {
-                    reveal = signReveal(child(decrypted, taproot), mint.getKeyPath(), plan, commitOutput);
+                    reveal = signReveal(decrypted.get(taproot), mint.getKeyPath(), plan, commitOutput);
                 } catch(Exception e) {
                     AppServices.showErrorDialog("Cannot sign the reveal", e.getMessage());
                     return;
                 } finally {
-                    decrypted.clearPrivate();
+                    decrypted.values().forEach(Wallet::clearPrivate);
                 }
                 broadcastReveal(pendingHolder(taproot), mint, reveal, done);
             });
@@ -356,9 +339,16 @@ public final class MintFlow {
         return wallet.isMasterWallet() ? wallet : wallet.getMasterWallet();
     }
 
-    /** The copy of the wallet inside a decrypted copy of its master. */
-    private static Wallet child(Wallet decryptedMaster, Wallet wallet) {
-        return wallet.isMasterWallet() ? decryptedMaster : decryptedMaster.getChildWallet(wallet.getName());
+    /**
+     * A copy of the wallet with its keys decrypted. Each wallet is decrypted itself: decrypting a master leaves a child
+     * that is not nested, such as the Taproot wallet, encrypted.
+     */
+    static Wallet decryptedCopy(Wallet wallet, CharSequence password) {
+        Wallet copy = wallet.copy();
+        if(copy.isEncrypted()) {
+            copy.decrypt(password);
+        }
+        return copy;
     }
 
     private static Transaction signCommit(Wallet decryptedFunding, WalletTransaction commit) throws Exception {
@@ -370,41 +360,102 @@ public final class MintFlow {
 
     private static Transaction signReveal(Wallet decryptedTaproot, String keyPath, InscriptionMint.Plan plan, TransactionOutput commitOutput) throws MnemonicException {
         ECKey key = decryptedTaproot.getKeystores().getFirst().getKey(new WalletNode(decryptedTaproot, keyPath));
-        return InscriptionMint.reveal(plan, commitOutput, key);
+        try {
+            return InscriptionMint.reveal(plan, commitOutput, key);
+        } finally {
+            key.clear();
+        }
     }
 
-    /** Hands a decrypted copy of the master (with its children) to then, asking for the password when the file is encrypted. */
-    private static void withDecrypted(Window owner, Wallet master, Consumer<Wallet> then) {
-        if(!master.isEncrypted()) {
-            then.accept(master.copy());
+    /**
+     * Hands decrypted copies of the wallets (keyed by the open wallet) to then, asking once for each encrypted wallet
+     * file's password. then clears them.
+     */
+    private static void withDecrypted(Window owner, List<Wallet> wallets, Consumer<Map<Wallet, Wallet>> then) {
+        Map<Wallet, Wallet> decrypted = new IdentityHashMap<>();
+        wallets.stream().filter(wallet -> !wallet.isEncrypted()).forEach(wallet -> decrypted.put(wallet, wallet.copy()));
+        decryptFiles(owner, wallets.stream().filter(Wallet::isEncrypted).toList(), decrypted, then);
+    }
+
+    private static void decryptFiles(Window owner, List<Wallet> encrypted, Map<Wallet, Wallet> decrypted, Consumer<Map<Wallet, Wallet>> then) {
+        if(encrypted.isEmpty()) {
+            then.accept(decrypted);
             return;
         }
+        Wallet master = master(encrypted.getFirst());
+        List<Wallet> file = encrypted.stream().filter(wallet -> master(wallet) == master).toList();
+        List<Wallet> rest = encrypted.stream().filter(wallet -> master(wallet) != master).toList();
         Storage storage = AppServices.get().getOpenWallets().get(master);
         WalletPasswordDialog dlg = new WalletPasswordDialog(master.getMasterName(), WalletPasswordDialog.PasswordRequirement.LOAD);
         dlg.initOwner(owner);
         Optional<SecureString> password = dlg.showAndWait();
         if(password.isEmpty()) {
+            decrypted.values().forEach(Wallet::clearPrivate);
             return;
         }
         String walletId = storage.getWalletId(master);
-        Storage.DecryptWalletService decryptWalletService = new Storage.DecryptWalletService(master.copy(), password.get());
-        decryptWalletService.setOnSucceeded(event -> {
+        Task<List<Wallet>> decrypt = new Task<>() {
+            @Override
+            protected List<Wallet> call() {
+                List<Wallet> copies = new ArrayList<>();
+                try {
+                    for(Wallet wallet : file) {
+                        copies.add(decryptedCopy(wallet, password.get()));
+                    }
+                    return copies;
+                } catch(RuntimeException e) {
+                    copies.forEach(Wallet::clearPrivate);
+                    throw e;
+                } finally {
+                    password.get().clear();
+                }
+            }
+        };
+        decrypt.setOnSucceeded(event -> {
             EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.END, "Done"));
-            then.accept(decryptWalletService.getValue());
+            for(int i = 0; i < file.size(); i++) {
+                decrypted.put(file.get(i), decrypt.getValue().get(i));
+            }
+            decryptFiles(owner, rest, decrypted, then);
         });
-        decryptWalletService.setOnFailed(event -> {
+        decrypt.setOnFailed(event -> {
             EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.END, "Failed"));
-            AppServices.showErrorDialog("Incorrect Password", decryptWalletService.getException().getMessage());
+            decrypted.values().forEach(Wallet::clearPrivate);
+            AppServices.showErrorDialog("Incorrect Password", decrypt.getException().getMessage());
         });
         EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.START, "Decrypting wallet..."));
-        decryptWalletService.start();
+        Thread thread = new Thread(decrypt, "Decrypt for mint");
+        thread.setDaemon(true);
+        thread.start();
     }
 
-    private static void broadcast(Window owner, Wallet holder, InscriptionMint.Plan plan, WalletNode node, Transaction commitTx, long commitFee,
+    /**
+     * Saves the pending record and only once it is on disk broadcasts the commit (and the reveal, when signed now):
+     * a commit on chain with no record would leave its output spendable by nobody.
+     */
+    private static void broadcast(Wallet holder, InscriptionMint.Plan plan, WalletNode node, Transaction commitTx, long commitFee,
                                   Transaction reveal, Runestone.Etching etching, Consumer<String> done) {
         PendingMint mint = pendingRecord(plan, node, commitTx, etching);
+        Storage storage = AppServices.get().getOpenWallets().get(holder);
+        if(storage == null) {
+            AppServices.showErrorDialog("Cannot mint", "The taproot wallet " + holder.getFullDisplayName() + " is not open, so the pending mint cannot be saved. Nothing was broadcast.");
+            return;
+        }
         addPending(holder, mint);
+        Task<Void> save = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                storage.savePendingMints(holder);
+                return null;
+            }
+        };
         ElectrumServer.BroadcastTransactionService commitBroadcast = new ElectrumServer.BroadcastTransactionService(commitTx, commitFee);
+        save.setOnSucceeded(event -> commitBroadcast.start());
+        save.setOnFailed(event -> {
+            log.error("Error saving pending mint", save.getException());
+            removePending(holder, mint);
+            AppServices.showErrorDialog("Cannot mint", "The pending mint could not be saved, so nothing was broadcast: " + save.getException().getMessage());
+        });
         commitBroadcast.setOnSucceeded(event -> {
             if(reveal != null) {
                 broadcastReveal(holder, mint, reveal, done);
@@ -417,10 +468,14 @@ public final class MintFlow {
         });
         commitBroadcast.setOnFailed(event -> {
             log.error("Error broadcasting mint commit", commitBroadcast.getException());
-            removePending(holder, mint);
-            AppServices.showErrorDialog("Could not broadcast the commit", commitBroadcast.getException().getMessage());
+            //The server may have taken the commit even though the answer was lost, so the record stays
+            AppServices.showErrorDialog("Could not broadcast the commit", commitBroadcast.getException().getMessage()
+                    + "\n\nThe commit may still have reached the network, so the mint stays under Pending mints. Finish it from there if the commit shows up, "
+                    + "or Forget it once you are sure it never will.");
         });
-        commitBroadcast.start();
+        Thread thread = new Thread(save, "Save pending mint");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private static void broadcastReveal(Wallet holder, PendingMint mint, Transaction reveal, Consumer<String> done) {
