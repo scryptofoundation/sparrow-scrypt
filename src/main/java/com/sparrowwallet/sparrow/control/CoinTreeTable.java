@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.drongo.BitcoinUnit;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.wallet.SortDirection;
 import com.sparrowwallet.drongo.wallet.TableType;
 import com.sparrowwallet.drongo.wallet.Wallet;
@@ -15,13 +16,19 @@ import com.sparrowwallet.sparrow.event.WalletDataChangedEvent;
 import com.sparrowwallet.sparrow.event.WalletHistoryStatusEvent;
 import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.io.Storage;
+import com.sparrowwallet.sparrow.net.ElectrumServer;
 import com.sparrowwallet.sparrow.net.ServerType;
+import com.sparrowwallet.sparrow.net.cormorant.Cormorant;
+import com.sparrowwallet.sparrow.net.cormorant.bitcoind.BitcoindClient;
 import com.sparrowwallet.sparrow.wallet.Entry;
 import io.reactivex.Observable;
 import io.reactivex.subjects.PublishSubject;
 import javafx.application.Platform;
+import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.Pos;
+import javafx.scene.AccessibleAttribute;
+import javafx.scene.AccessibleRole;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.StackPane;
@@ -41,6 +48,24 @@ public class CoinTreeTable extends TreeTableView<Entry> {
 
     private final PublishSubject<WalletTableChangedEvent> walletTableSubject = PublishSubject.create();
     private final Observable<WalletTableChangedEvent> walletTableEvents = walletTableSubject.debounce(1, TimeUnit.SECONDS);
+
+    public CoinTreeTable() {
+        setRowFactory(_ -> new TreeTableRow<>() {
+            @Override
+            public Object queryAccessibleAttribute(AccessibleAttribute attribute, Object... parameters) {
+                //Empty rows fill the space below the last entry and have nothing to read
+                if(isEmpty()) {
+                    if(attribute == AccessibleAttribute.ROLE) {
+                        return AccessibleRole.NODE;
+                    } else if(attribute == AccessibleAttribute.CHILDREN) {
+                        return FXCollections.emptyObservableList();
+                    }
+                }
+
+                return super.queryAccessibleAttribute(attribute, parameters);
+            }
+        });
+    }
 
     public TableType getTableType() {
         return tableType;
@@ -106,7 +131,7 @@ public class CoinTreeTable extends TreeTableView<Entry> {
                         setPlaceholder(new Label("Error loading transactions: " + event.getErrorMessage()));
                     } else if(event.isLoading()) {
                         if(event.getStatusMessage() != null) {
-                            setPlaceholder(new Label(event.getStatusMessage() + "..."));
+                            setPlaceholder(new Label(event.getStatusMessage() + (event.getStatusMessage().contains("...") ? "" : "...")));
                         } else {
                             setPlaceholder(new Label("Loading transactions..."));
                         }
@@ -122,7 +147,7 @@ public class CoinTreeTable extends TreeTableView<Entry> {
         StackPane stackPane = new StackPane();
         stackPane.getChildren().add(AppServices.isConnecting() ? new Label("Loading transactions...") : new Label("No transactions"));
 
-        if(Config.get().getServerType() == ServerType.BITCOIN_CORE && !AppServices.isConnecting()) {
+        if((Config.get().getServerType() == ServerType.BITCOIN_CORE || wallet.getPolicyType() == PolicyType.SINGLE_SP) && !AppServices.isConnecting() && !isFullyScanned(wallet)) {
             Hyperlink hyperlink = new Hyperlink();
             hyperlink.setTranslateY(30);
             hyperlink.setOnAction(event -> {
@@ -133,6 +158,7 @@ public class CoinTreeTable extends TreeTableView<Entry> {
                     Storage storage = AppServices.get().getOpenWallets().get(wallet);
                     Wallet pastWallet = wallet.copy();
                     wallet.setBirthDate(optDate.get());
+                    wallet.setBirthHeight(null);
                     //Trigger background save of birthdate
                     EventManager.get().post(new WalletDataChangedEvent(wallet));
                     //Trigger full wallet rescan
@@ -148,10 +174,45 @@ public class CoinTreeTable extends TreeTableView<Entry> {
             }
 
             stackPane.getChildren().add(hyperlink);
+        } else if(!AppServices.isConnecting() && Config.get().getServerType() == ServerType.BITCOIN_CORE && isFullyScanned(wallet)) {
+            Date prunedDate = getPrunedDate();
+            if(prunedDate != null) {
+                DateFormat dateFormat = new SimpleDateFormat(DateStringConverter.FORMAT_PATTERN);
+                Label prunedLabel = new Label("Scanned to pruned start date of " + dateFormat.format(prunedDate));
+                prunedLabel.setTranslateY(30);
+                stackPane.getChildren().add(prunedLabel);
+            }
         }
 
         stackPane.setAlignment(Pos.CENTER);
         return stackPane;
+    }
+
+    private boolean isFullyScanned(Wallet wallet) {
+        if(wallet.getPolicyType() == PolicyType.SINGLE_SP) {
+            return wallet.isValid() && ElectrumServer.isSilentPaymentsFullyCovered(wallet.getSilentPaymentScanAddress());
+        }
+
+        if(Config.get().getServerType() == ServerType.BITCOIN_CORE) {
+            Date prunedDate = getPrunedDate();
+            return prunedDate != null && wallet.getBirthDate() != null && !wallet.getBirthDate().after(prunedDate);
+        }
+
+        return false;
+    }
+
+    private static Date getPrunedDate() {
+        Cormorant cormorant = ElectrumServer.getCormorant();
+        if(cormorant == null) {
+            return null;
+        }
+
+        BitcoindClient bitcoindClient = cormorant.getBitcoindClient();
+        if(bitcoindClient == null || !bitcoindClient.isPruned()) {
+            return null;
+        }
+
+        return bitcoindClient.getCachedPrunedDate();
     }
 
     protected void setupColumnSort(int defaultColumnIndex, TreeTableColumn.SortType defaultSortType) {
@@ -208,7 +269,6 @@ public class CoinTreeTable extends TreeTableView<Entry> {
         return null;
     }
 
-    @SuppressWarnings("deprecation")
     protected void setupColumnWidths() {
         Double[] savedWidths = getSavedColumnWidths();
         for(int i = 0; i < getColumns().size(); i++) {
@@ -216,8 +276,7 @@ public class CoinTreeTable extends TreeTableView<Entry> {
             column.setPrefWidth(savedWidths != null && getColumns().size() == savedWidths.length ? savedWidths[i] : STANDARD_WIDTH);
         }
 
-        //TODO: Replace with TreeTableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN when JavaFX 20+ has headless support
-        setColumnResizePolicy(TreeTableView.CONSTRAINED_RESIZE_POLICY);
+        setColumnResizePolicy(TreeTableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
 
         getColumns().getLast().widthProperty().addListener((_, _, _) -> walletTableChanged());
 
