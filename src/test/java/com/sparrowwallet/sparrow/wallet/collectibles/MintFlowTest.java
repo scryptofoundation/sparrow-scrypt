@@ -73,6 +73,26 @@ public class MintFlowTest {
     }
 
     @Test
+    public void mwebStartsWithPegOutToTaproot() throws Exception {
+        Wallet mweb = new Wallet("mweb");
+        mweb.setPolicyType(PolicyType.SINGLE);
+        mweb.setScriptType(ScriptType.MWEB);
+        mweb.setCoin(Coin.LITECOIN);
+        Assertions.assertTrue(MintFlow.needsPegOut(mweb));
+        Assertions.assertFalse(MintFlow.needsPegOut(taproot));
+
+        WalletNode revealNode = taproot.getFreshNode(KeyPurpose.RECEIVE);
+        InscriptionMint.Plan plan = MintFlow.plan(revealNode, Inscription.text("hello litecoin"), null, 2.0);
+        Payment pegOut = MintFlow.pegOutForMint(taproot, plan, 2.0);
+        Assertions.assertEquals(ScriptType.P2TR, pegOut.getAddress().getScriptType());
+        Assertions.assertNotEquals(ScriptType.MWEB, pegOut.getAddress().getScriptType());
+        Assertions.assertTrue(taproot.getWalletAddresses().containsKey(pegOut.getAddress()), "lands in the taproot wallet");
+        //Postage, the reveal fee and the commit fee (one taproot input, the commit output and change: 154 vB)
+        Assertions.assertEquals(plan.commitValue() + (long)Math.ceil(154 * 2.0), pegOut.getAmount());
+        Assertions.assertTrue(pegOut.getAmount() > CollectibleTransactions.POSTAGE + plan.revealFee());
+    }
+
+    @Test
     public void hardwareAndWatchOnlyAreRefused() throws Exception {
         Assertions.assertTrue(MintFlow.refusal(taproot).isEmpty());
         Assertions.assertTrue(MintFlow.refusal(wallet("segwit", ScriptType.P2WPKH, KeystoreSource.SW_SEED)).isEmpty());

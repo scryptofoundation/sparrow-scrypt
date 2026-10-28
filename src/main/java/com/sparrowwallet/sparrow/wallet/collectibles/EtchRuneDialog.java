@@ -3,7 +3,7 @@ package com.sparrowwallet.sparrow.wallet.collectibles;
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.ordinals.RuneName;
 import com.sparrowwallet.drongo.ordinals.Runestone;
-import com.sparrowwallet.drongo.protocol.ScriptType;
+import com.sparrowwallet.drongo.ordinals.InscriptionMint;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.control.FeeRangeSlider;
@@ -36,9 +36,16 @@ public final class EtchRuneDialog {
 
     public static void start(Window owner, WalletForm walletForm) {
         Wallet funding = MintFlow.fundingWallet(walletForm.getWallet());
-        if(funding.getScriptType() == ScriptType.MWEB) {
-            AppServices.showErrorDialog("Cannot etch", "An etching is paid from public coins: ord does not follow coins into MWEB. "
-                    + "Move coins to this seed's public wallet first, then etch from there.");
+        if(MintFlow.needsPegOut(funding)) {
+            TaprootWallets.ensure(walletForm, owner, taproot -> ask(owner).ifPresent(form -> {
+                try {
+                    InscriptionMint.Plan plan = MintFlow.plan(MintFlow.revealNode(taproot), MintFlow.etchInscription(form.etching(), form.contentType(), form.content()),
+                            form.etching(), form.feeRate());
+                    MintFlow.startFromMweb(owner, funding, taproot, MintFlow.pegOutForMint(taproot, plan, form.feeRate()), "etching a rune");
+                } catch(Exception e) {
+                    AppServices.showErrorDialog("Cannot etch", e.getMessage());
+                }
+            }));
             return;
         }
         Optional<String> refusal = MintFlow.refusal(funding);

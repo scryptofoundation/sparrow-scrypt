@@ -4,7 +4,6 @@ import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.ordinals.CollectibleTransactions;
-import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.psbt.PSBT;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletTransaction;
@@ -31,9 +30,9 @@ public final class MintRuneDialog {
 
     public static void start(Window owner, WalletForm walletForm, String presetName) {
         Wallet funding = MintFlow.fundingWallet(walletForm.getWallet());
-        if(funding.getScriptType() == ScriptType.MWEB) {
-            AppServices.showErrorDialog("Cannot mint", "A rune mint is paid from public coins: ord does not follow coins into MWEB. "
-                    + "Move coins to this seed's public wallet first, then mint from there.");
+        if(MintFlow.needsPegOut(funding)) {
+            TaprootWallets.ensure(walletForm, owner, taproot -> MintFlow.startFromMweb(owner, funding, taproot,
+                    MintFlow.pegOutForRuneMint(taproot, AppServices.getDefaultFeeRate()), "minting a rune"));
             return;
         }
         String url = CollectiblesManager.serverUrl(funding);

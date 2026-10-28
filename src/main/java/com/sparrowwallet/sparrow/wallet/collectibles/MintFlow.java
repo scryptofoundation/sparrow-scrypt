@@ -9,6 +9,7 @@ import com.sparrowwallet.drongo.ordinals.Inscription;
 import com.sparrowwallet.drongo.ordinals.InscriptionMint;
 import com.sparrowwallet.drongo.ordinals.Runestone;
 import com.sparrowwallet.drongo.policy.PolicyType;
+import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.protocol.Sha256Hash;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.protocol.TransactionOutput;
@@ -17,6 +18,8 @@ import com.sparrowwallet.drongo.wallet.*;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.control.WalletPasswordDialog;
+import com.sparrowwallet.sparrow.event.SendActionEvent;
+import com.sparrowwallet.sparrow.event.SpendUtxoEvent;
 import com.sparrowwallet.sparrow.event.StorageEvent;
 import com.sparrowwallet.sparrow.event.TimedEvent;
 import com.sparrowwallet.sparrow.event.WalletDataChangedEvent;
@@ -58,7 +61,7 @@ public final class MintFlow {
         }
     }
 
-    /** The wallet whose plain LTC pays the commit: the open wallet. */
+    /** The wallet whose plain LTC pays the commit: the open wallet (an MWEB view first moves coins out, see {@link #needsPegOut}). */
     public static Wallet fundingWallet(Wallet open) {
         return open;
     }
@@ -163,6 +166,50 @@ public final class MintFlow {
             node = taproot.getFreshNode(KeyPurpose.RECEIVE, node);
         }
         return node;
+    }
+
+    //A commit spending one taproot output to the commit output and change, in virtual bytes
+    private static final int COMMIT_VBYTES = 154;
+    //A rune mint spending one taproot output to the postage, the runestone and change
+    private static final int RUNE_MINT_VBYTES = 175;
+
+    /** True when a mint from this wallet starts by moving coins out of MWEB: ord does not see MWEB coins. */
+    public static boolean needsPegOut(Wallet open) {
+        return open.getScriptType() == ScriptType.MWEB;
+    }
+
+    /**
+     * The peg-out that funds a mint from the MWEB view: to a taproot receive address (not the reveal's), for the
+     * commit output (postage and reveal fee) plus the commit's own fee. The commit is then paid from the taproot wallet.
+     */
+    public static Payment pegOutForMint(Wallet taproot, InscriptionMint.Plan plan, double feeRate) {
+        WalletNode node = taproot.getFreshNode(KeyPurpose.RECEIVE, revealNode(taproot));
+        return new Payment(node.getAddress(), "Mint funding", plan.commitValue() + (long)Math.ceil(COMMIT_VBYTES * feeRate), false);
+    }
+
+    /** The peg-out that funds a rune mint from the MWEB view: postage plus the mint's fee, to a taproot receive address. */
+    public static Payment pegOutForRuneMint(Wallet taproot, double feeRate) {
+        WalletNode node = taproot.getFreshNode(KeyPurpose.RECEIVE);
+        return new Payment(node.getAddress(), "Rune mint funding", CollectibleTransactions.POSTAGE + (long)Math.ceil(RUNE_MINT_VBYTES * feeRate), false);
+    }
+
+    /**
+     * Step 1 of minting from the MWEB view: explains the three steps and opens the MWEB wallet's Send tab with the
+     * peg-out to the taproot wallet filled in. Once it has PEGOUT_MATURITY_THRESHOLD confirmations, the mint is
+     * made from the taproot wallet, paid from those coins.
+     */
+    public static void startFromMweb(Window owner, Wallet mweb, Wallet taproot, Payment pegOut, String what) {
+        String text = "Coins in MWEB are not seen by ord, so " + what + " from MWEB takes three steps:\n\n"
+                + "1. Move " + pegOut.getAmount() + " litoshis out of MWEB to " + pegOut.getAddress() + " in " + taproot.getFullDisplayName()
+                + " (postage and fees). The Send tab opens with this filled in: sign and broadcast it there.\n"
+                + "2. Once that move has " + Transaction.PEGOUT_MATURITY_THRESHOLD + " confirmations, open Collectibles in "
+                + taproot.getFullDisplayName() + " and mint again. The commit is paid from the moved coins.\n"
+                + "3. The reveal lands the result in the taproot wallet.\n\nNothing is sent to MWEB at any step.";
+        Optional<ButtonType> answer = AppServices.showAlertDialog("Mint from MWEB", text, Alert.AlertType.CONFIRMATION, ButtonType.CANCEL, ButtonType.OK);
+        if(answer.isPresent() && answer.get() == ButtonType.OK) {
+            EventManager.get().post(new SendActionEvent(mweb, new ArrayList<>(mweb.getSpendableUtxos().keySet())));
+            javafx.application.Platform.runLater(() -> EventManager.get().post(new SpendUtxoEvent(mweb, List.of(pegOut), null, null)));
+        }
     }
 
     /** Confirmations of a wallet transaction as the wallet knows it, 0 when unknown or unconfirmed. */

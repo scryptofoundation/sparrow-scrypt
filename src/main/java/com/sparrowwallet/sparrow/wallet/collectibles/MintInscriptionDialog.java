@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.wallet.collectibles;
 
 import com.sparrowwallet.drongo.ordinals.Inscription;
+import com.sparrowwallet.drongo.ordinals.InscriptionMint;
 import com.sparrowwallet.drongo.wallet.PendingMint;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
@@ -36,8 +37,18 @@ public final class MintInscriptionDialog {
             AppServices.showErrorDialog("Cannot mint", refusal.get());
             return;
         }
-        TaprootWallets.ensure(walletForm, owner, taproot -> ask(owner).ifPresent(request ->
-                MintFlow.mint(owner, MintFlow.fundingWallet(open), taproot, request, message -> showDone(owner, message))));
+        TaprootWallets.ensure(walletForm, owner, taproot -> ask(owner).ifPresent(request -> {
+            if(MintFlow.needsPegOut(open)) {
+                try {
+                    InscriptionMint.Plan plan = MintFlow.plan(MintFlow.revealNode(taproot), request.inscription(), null, request.feeRate());
+                    MintFlow.startFromMweb(owner, open, taproot, MintFlow.pegOutForMint(taproot, plan, request.feeRate()), "minting an inscription");
+                } catch(Exception e) {
+                    AppServices.showErrorDialog("Cannot mint", e.getMessage());
+                }
+                return;
+            }
+            MintFlow.mint(owner, MintFlow.fundingWallet(open), taproot, request, message -> showDone(owner, message));
+        }));
     }
 
     public static void showDone(Window owner, String message) {
