@@ -27,7 +27,7 @@ import java.util.Optional;
 public final class MintInscriptionDialog {
     private MintInscriptionDialog() {}
 
-    private record Content(String contentType, byte[] body) {}
+    record Content(String contentType, byte[] body) {}
 
     public static void start(Window owner, WalletForm walletForm) {
         Wallet open = walletForm.getWallet();

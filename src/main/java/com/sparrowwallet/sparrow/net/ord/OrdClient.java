@@ -286,12 +286,14 @@ public class OrdClient {
         }
     }
 
-    static OrdStatus parseStatus(String json) throws IOException {
+    public static OrdStatus parseStatus(String json) throws IOException {
         JsonNode node = readTree(json);
         if(!node.path("chain").isTextual()) {
             throw new IOException("Not an ord server status");
         }
-        return new OrdStatus(node.path("chain").asText(), node.path("rune_index").asBoolean(false), node.path("height").asLong(0));
+        JsonNode minimum = node.path("minimum_rune_for_next_block");
+        String minimumRune = minimum.isTextual() && RUNE_NAME.matcher(minimum.asText()).matches() ? minimum.asText() : null;
+        return new OrdStatus(node.path("chain").asText(), node.path("rune_index").asBoolean(false), node.path("height").asLong(0), minimumRune);
     }
 
     static List<OrdOutput> parseOutputs(List<String> outpoints, String json) throws IOException {
@@ -383,7 +385,23 @@ public class OrdClient {
         return node.asText();
     }
 
-    static OrdRune parseRune(String json) throws IOException {
+    private static com.sparrowwallet.drongo.ordinals.Runestone.Terms terms(JsonNode terms) {
+        if(!terms.isObject()) {
+            return null;
+        }
+        return new com.sparrowwallet.drongo.ordinals.Runestone.Terms(unsigned(terms.path("amount")), unsigned(terms.path("cap")),
+                height(terms.path("height").path(0)), height(terms.path("height").path(1)), height(terms.path("offset").path(0)), height(terms.path("offset").path(1)));
+    }
+
+    private static java.math.BigInteger unsigned(JsonNode node) {
+        return node.isIntegralNumber() && node.bigIntegerValue().signum() >= 0 ? node.bigIntegerValue() : null;
+    }
+
+    private static Long height(JsonNode node) {
+        return node.isIntegralNumber() && node.canConvertToLong() && node.asLong() >= 0 ? node.asLong() : null;
+    }
+
+    public static OrdRune parseRune(String json) throws IOException {
         JsonNode node = readTree(json);
         JsonNode entry = node.path("entry");
         String name = entry.path("spaced_rune").asText("");
@@ -392,7 +410,8 @@ public class OrdClient {
             throw new IOException("Unexpected rune from inscriptions server");
         }
         try {
-            return new OrdRune(com.sparrowwallet.drongo.ordinals.RuneId.parse(node.path("id").asText("")), name, divisibility.asInt(), symbol(entry.path("symbol")));
+            return new OrdRune(com.sparrowwallet.drongo.ordinals.RuneId.parse(node.path("id").asText("")), name, divisibility.asInt(), symbol(entry.path("symbol")),
+                    node.path("mintable").asBoolean(false), terms(entry.path("terms")), unsigned(entry.path("mints")));
         } catch(IllegalArgumentException e) {
             throw new IOException("Unexpected rune id from inscriptions server");
         }

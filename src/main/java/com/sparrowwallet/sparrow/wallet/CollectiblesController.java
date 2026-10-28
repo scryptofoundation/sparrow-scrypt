@@ -12,6 +12,7 @@ import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.event.CollectiblesUpdatedEvent;
 import com.sparrowwallet.sparrow.event.NewBlockEvent;
+import com.sparrowwallet.sparrow.event.StatusEvent;
 import com.sparrowwallet.sparrow.event.WalletPendingMintsChangedEvent;
 import com.sparrowwallet.sparrow.event.WalletUtxoStatusChangedEvent;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
@@ -24,7 +25,9 @@ import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
 import com.sparrowwallet.sparrow.wallet.collectibles.MintFlow;
+import com.sparrowwallet.sparrow.wallet.collectibles.EtchRuneDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.MintInscriptionDialog;
+import com.sparrowwallet.sparrow.wallet.collectibles.MintRuneDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.MoveInDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.ReleaseDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.TaprootWallets;
@@ -111,6 +114,9 @@ public class CollectiblesController extends WalletFormController implements Init
 
     private String selectedId;
 
+    //Etchings already announced as ready to reveal, so the status bar says it once
+    private final Set<com.sparrowwallet.drongo.protocol.Sha256Hash> announcedReady = new HashSet<>();
+
     private record Holding(Wallet wallet, BlockTransactionHashIndex utxo, OrdOutput output, String serverUrl) {
     }
 
@@ -138,7 +144,14 @@ public class CollectiblesController extends WalletFormController implements Init
         moveInButton.setOnAction(event -> MoveInDialog.start(moveInButton.getScene().getWindow(), getWalletForm()));
         MenuItem mintInscription = new MenuItem("Inscription...");
         mintInscription.setOnAction(event -> MintInscriptionDialog.start(mintButton.getScene().getWindow(), getWalletForm()));
-        mintButton.getItems().setAll(mintInscription);
+        MenuItem mintRune = new MenuItem("Rune...");
+        mintRune.setOnAction(event -> {
+            RuneRow selected = runesTable.getSelectionModel().getSelectedItem();
+            MintRuneDialog.start(mintButton.getScene().getWindow(), getWalletForm(), selected == null ? null : selected.name());
+        });
+        MenuItem etchRune = new MenuItem("Etch rune...");
+        etchRune.setOnAction(event -> EtchRuneDialog.start(mintButton.getScene().getWindow(), getWalletForm()));
+        mintButton.getItems().setAll(mintInscription, mintRune, etchRune);
         initializePending();
 
         TableColumn<RuneRow, String> name = new TableColumn<>("Rune");
@@ -261,6 +274,13 @@ public class CollectiblesController extends WalletFormController implements Init
     private void refreshPending() {
         List<PendingMint> pending = taprootWallet().map(MintFlow::pendingHolder).map(Wallet::getPendingMints).map(List::copyOf).orElse(List.of());
         pendingTable.getItems().setAll(pending);
+        pendingTable.refresh();
+        for(PendingMint mint : pending) {
+            if(mint.getKind() == PendingMint.Kind.ETCH && MintFlow.confirmations(holdingWallets(), mint.getCommitTxid()) >= InscriptionMint.COMMIT_CONFIRMATIONS
+                    && announcedReady.add(mint.getCommitTxid())) {
+                EventManager.get().post(new StatusEvent("The etching of " + mint.getEtching().name() + " is ready to reveal: finish it from Collectibles > Pending mints."));
+            }
+        }
         pendingTab.setText(pending.isEmpty() ? "Pending mints" : "Pending mints (" + pending.size() + ")");
     }
 
