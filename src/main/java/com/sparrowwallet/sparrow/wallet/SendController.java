@@ -329,9 +329,9 @@ public class SendController extends WalletFormController implements Initializabl
 
         recentBlocksView.managedProperty().bind(recentBlocksView.visibleProperty());
         recentBlocksView.visibleProperty().bind(Bindings.equal(feeRatesSelectionProperty, FeeRatesSelection.RECENT_BLOCKS));
-        List<BlockSummary> blockSummaries = AppServices.getBlockSummaries().values().stream().sorted().toList();
+        List<BlockSummary> blockSummaries = AppServices.getBlockSummaries(getWalletForm().getWallet().coin()).values().stream().sorted().toList();
         if(!blockSummaries.isEmpty()) {
-            recentBlocksView.update(blockSummaries, AppServices.getNextBlockMedianFeeRate());
+            recentBlocksView.update(blockSummaries, AppServices.getNextBlockMedianFeeRate(getWalletForm().getWallet().coin()));
         }
 
         feeRatesSelectionProperty.addListener((_, oldValue, newValue) -> {
@@ -1464,6 +1464,12 @@ public class SendController extends WalletFormController implements Initializabl
 
     @Subscribe
     public void feeRatesUpdated(FeeRatesUpdatedEvent event) {
+        //Rates come from the connected coin's server; another coin's Send tab must not take them
+        com.sparrowwallet.drongo.Coin ratesCoin = com.sparrowwallet.sparrow.net.ElectrumServer.getConnectedCoin();
+        if(ratesCoin != null && ratesCoin != getWalletForm().getWallet().coin()) {
+            return;
+        }
+
         blockTargetFeeRatesChart.update(event.getTargetBlockFeeRates());
         blockTargetFeeRatesChart.select(getTargetBlocks());
         if(targetBlocksField.isVisible()) {
@@ -1501,7 +1507,14 @@ public class SendController extends WalletFormController implements Initializabl
 
     @Subscribe
     public void blockSummary(BlockSummaryEvent event) {
-        Platform.runLater(() -> recentBlocksView.update(AppServices.getBlockSummaries().values().stream().sorted().toList(), AppServices.getNextBlockMedianFeeRate()));
+        com.sparrowwallet.drongo.Coin summaryCoin = com.sparrowwallet.sparrow.net.ElectrumServer.getConnectedCoin();
+        if(summaryCoin != null && summaryCoin != getWalletForm().getWallet().coin()) {
+            return;
+        }
+
+        //Every wallet's Send tab hears every coin's blocks; each shows only its own coin's
+        com.sparrowwallet.drongo.Coin coin = getWalletForm().getWallet().coin();
+        Platform.runLater(() -> recentBlocksView.update(AppServices.getBlockSummaries(coin).values().stream().sorted().toList(), AppServices.getNextBlockMedianFeeRate(coin)));
     }
 
     @Subscribe

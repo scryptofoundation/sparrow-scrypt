@@ -96,8 +96,6 @@ public class AppServices {
     //their fee slider range extends far higher (up to 2^17) than Litecoin's Bitcoin-scale range. Without this
     //the estimated rate falls off the top of the slider and the send fee cannot be positioned or calculated.
     private static final List<Double> HIGH_FEE_RATES_RANGE = List.of(1d, 2d, 4d, 8d, 16d, 32d, 64d, 128d, 256d, 512d, 1024d, 2048d, 4096d, 8192d, 16384d, 32768d, 65536d, 131072d);
-    public static final double FALLBACK_FEE_RATE = 20000d / 1000;
-    public static final double TESTNET_FALLBACK_FEE_RATE = 1000d / 1000;
 
     private static AppServices INSTANCE;
 
@@ -135,7 +133,7 @@ public class AppServices {
 
     private static BlockHeader latestBlockHeader;
 
-    private static final Map<Integer, BlockSummary> blockSummaries = new ConcurrentHashMap<>();
+    private static final CoinBlockSummaries blockSummaries = new CoinBlockSummaries();
 
     //Keyed per coin for the same reason the exchange rates below are: these chains do not share a fee
     //scale, and ElectrumServer.getFeeEstimates seeds a new connection from this cache, so a single map
@@ -143,7 +141,6 @@ public class AppServices {
     //that will not relay under 100, or Dogecoin's thousands to Litecoin.
     private static final Map<com.sparrowwallet.drongo.Coin, Map<Integer, Double>> targetBlockFeeRates = new ConcurrentHashMap<>();
 
-    private static Double nextBlockMedianFeeRate;
 
     private static final TreeMap<Date, Set<MempoolRateSize>> mempoolHistogram = new TreeMap<>();
 
@@ -753,7 +750,11 @@ public class AppServices {
     }
 
     public static Map<Integer, BlockSummary> getBlockSummaries() {
-        return blockSummaries;
+        return getBlockSummaries(com.sparrowwallet.drongo.Coin.get());
+    }
+
+    public static Map<Integer, BlockSummary> getBlockSummaries(com.sparrowwallet.drongo.Coin coin) {
+        return blockSummaries.get(coin);
     }
 
     public static Double getDefaultFeeRate() {
@@ -797,11 +798,17 @@ public class AppServices {
     }
 
     public static Double getNextBlockMedianFeeRate() {
+        return getNextBlockMedianFeeRate(com.sparrowwallet.drongo.Coin.get());
+    }
+
+    public static Double getNextBlockMedianFeeRate(com.sparrowwallet.drongo.Coin coin) {
+        Double nextBlockMedianFeeRate = blockSummaries.getNextBlockMedianFeeRate(coin);
         return nextBlockMedianFeeRate == null ? getDefaultFeeRate() : nextBlockMedianFeeRate;
     }
 
     public static double getFallbackFeeRate() {
-        return Network.get() == Network.MAINNET ? FALLBACK_FEE_RATE : TESTNET_FALLBACK_FEE_RATE;
+        //Never below the coin's recommended rate: a flat 1 sat/vB on testnet (or 20 on mainnet) is under DINGO's and LKY's floor
+        return com.sparrowwallet.drongo.Coin.get().getFallbackFeeRate(Network.get());
     }
 
     public static Map<Integer, Double> getTargetBlockFeeRates() {
@@ -1312,7 +1319,7 @@ public class AppServices {
             fetchFeeRates();
         }
 
-        if(!blockSummaries.containsKey(currentBlockHeight)) {
+        if(!blockSummaries.get(getServerCoin()).containsKey(currentBlockHeight)) {
             fetchBlockSummaries(Collections.emptyList());
         }
     }
@@ -1334,22 +1341,24 @@ public class AppServices {
 
     @Subscribe
     public void blockSummary(BlockSummaryEvent event) {
-        blockSummaries.putAll(event.getBlockSummaryMap());
-        if(AppServices.currentBlockHeight != null) {
-            blockSummaries.keySet().removeIf(height -> AppServices.currentBlockHeight - height > 5);
-        }
-        nextBlockMedianFeeRate = event.getNextBlockMedianFeeRate();
+        //Same coin as the server that produced them; currentBlockHeight is that server's tip
+        blockSummaries.update(getServerCoin(), event.getBlockSummaryMap(), event.getNextBlockMedianFeeRate(), AppServices.currentBlockHeight);
     }
 
     @Subscribe
     public void feesUpdated(FeeRatesUpdatedEvent event) {
+        //Filed under the coin whose server produced them, not the focused one - the rates came from the
+        //connection, and focus can move while a fetch is in flight
+        com.sparrowwallet.drongo.Coin ratesCoin = getServerCoin();
         if(event.getTargetBlockFeeRates() != null) {
-            //Filed under the coin whose server produced them, not the focused one - the rates came from the
-            //connection, and focus can move while a fetch is in flight
-            com.sparrowwallet.drongo.Coin ratesCoin = ElectrumServer.getConnectedCoin();
-            targetBlockFeeRates.put(ratesCoin == null ? com.sparrowwallet.drongo.Coin.get() : ratesCoin, event.getTargetBlockFeeRates());
+            targetBlockFeeRates.put(ratesCoin, event.getTargetBlockFeeRates());
         }
-        nextBlockMedianFeeRate = event.getNextBlockMedianFeeRate();
+        blockSummaries.setNextBlockMedianFeeRate(ratesCoin, event.getNextBlockMedianFeeRate());
+    }
+
+    private static com.sparrowwallet.drongo.Coin getServerCoin() {
+        com.sparrowwallet.drongo.Coin connectedCoin = ElectrumServer.getConnectedCoin();
+        return connectedCoin == null ? com.sparrowwallet.drongo.Coin.get() : connectedCoin;
     }
 
     @Subscribe
