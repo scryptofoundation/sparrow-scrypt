@@ -685,7 +685,15 @@ public class SettingsController extends WalletFormController implements Initiali
             Wallet childWallet = master.addMwebChildWallet();
             setTransparentLabel(master);
             return childWallet;
-        }, childWallet -> saveMasterLabel(masterWallet), () -> enableMweb(null));
+        }, childWallet -> {
+            saveMasterLabel(masterWallet);
+            //The same-seed private side is this wallet's own MWEB account, so link it now: Move to Private and Move to
+            //Public otherwise stayed hidden until the user found Link Private Wallet
+            if(!WalletLink.isLinked(masterWallet)) {
+                WalletLink.link(masterWallet, childWallet);
+                EventManager.get().post(new WalletLinkChangedEvent(masterWallet));
+            }
+        }, () -> enableMweb(null));
     }
 
     //Once MWEB is enabled the wallet reads as Public/Private: label the master (transparent) account "Public"
