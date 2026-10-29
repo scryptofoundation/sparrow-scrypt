@@ -13,8 +13,10 @@ import com.sparrowwallet.drongo.wallet.Payment;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
+import com.google.common.eventbus.Subscribe;
 import com.sparrowwallet.sparrow.event.SendActionEvent;
 import com.sparrowwallet.sparrow.event.SpendUtxoEvent;
+import com.sparrowwallet.sparrow.event.WalletHistoryChangedEvent;
 import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.wallet.WalletForm;
 import javafx.application.Platform;
@@ -56,9 +58,30 @@ public class LitVmBridgePane extends LitVmFlowPane {
 
     private record Entry(String kind, String hash) {}
 
+    private boolean listening;
+
+    @Subscribe
+    public void walletHistoryChanged(WalletHistoryChangedEvent event) {
+        if(event.getWallet().getCoin() == Coin.JUNKCOIN) {
+            Platform.runLater(this::refresh);
+        }
+    }
+
     public LitVmBridgePane(WalletForm walletForm, LitVmRpcClient l2, Consumer<String> status, Runnable onBalancesChanged) {
         super(walletForm, status, onBalancesChanged);
         this.l2 = l2;
+
+        //A deposit is sent from the Junkcoin wallet's Send tab, so it only shows here once that wallet syncs it. Listen
+        //for that while on screen (the event bus holds its listeners strongly, so not after the pane is gone).
+        sceneProperty().addListener((observable, oldScene, newScene) -> {
+            if(newScene != null && !listening) {
+                EventManager.get().register(this);
+                listening = true;
+            } else if(newScene == null && listening) {
+                EventManager.get().unregister(this);
+                listening = false;
+            }
+        });
 
         Label jkcTitle = new Label("Junkcoin bridge (JKC testnet to " + JunkcoinBridge.WJKC.symbol() + ")");
         jkcTitle.setStyle("-fx-font-weight: bold;");
@@ -418,7 +441,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         Payment payment = new Payment(custody, "Junkcoin bridge deposit to " + address, sats, false);
         EventManager.get().post(new SendActionEvent(sendingWallet, new ArrayList<>(sendingWallet.getSpendableUtxos().keySet())));
         Platform.runLater(() -> EventManager.get().post(new SpendUtxoEvent(sendingWallet, List.of(payment), List.of(JunkcoinBridge.depositData(address)), null)));
-        status.accept("Send the deposit from " + sendingWallet.getFullDisplayName() + ". It shows up here once that wallet sees it; press Refresh.");
+        status.accept("Send the deposit from " + sendingWallet.getFullDisplayName() + ". It shows up here once that wallet sees it.");
     }
 
     private void checkDeposit() {
