@@ -27,7 +27,7 @@ public class SparrowWallet {
     //alongside Sparrow-LTC rather than one launch being forwarded into the other's already-running window).
     public static String APP_ID = "sparrow";
     public static String APP_NAME = "Sparrow-LTC";
-    public static final String APP_VERSION = "2.5.6";
+    public static final String APP_VERSION = "2.5.7";
     public static final String APP_VERSION_SUFFIX = "";
     //Follows APP_NAME, so it is reassigned with it in main()
     public static String APP_HOME_PROPERTY = ApplicationDir.getHomeProperty(APP_NAME);

@@ -24,6 +24,7 @@ import com.sparrowwallet.sparrow.io.bbqr.BBQRType;
 import com.sparrowwallet.sparrow.net.ElectrumServer;
 import com.sparrowwallet.sparrow.net.ServerType;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.collections.FXCollections;
 import javafx.event.ActionEvent;
@@ -83,10 +84,7 @@ public class SettingsController extends WalletFormController implements Initiali
     private RangeSlider multisigControl;
 
     @FXML
-    private CopyableLabel multisigLowLabel;
-
-    @FXML
-    private CopyableLabel multisigHighLabel;
+    private CopyableLabel multisigLabel;
 
     @FXML
     private StackPane keystoreTabsPane;
@@ -204,8 +202,9 @@ public class SettingsController extends WalletFormController implements Initiali
             EventManager.get().post(new SettingsChangedEvent(walletForm.getWallet(), SettingsChangedEvent.Type.SCRIPT_TYPE));
         });
 
-        multisigLowLabel.textProperty().bind(multisigControl.lowValueProperty().asString("%.0f") );
-        multisigHighLabel.textProperty().bind(multisigControl.highValueProperty().asString("%.0f"));
+        multisigLabel.textProperty().bind(Bindings.format("%.0f / %.0f", multisigControl.lowValueProperty(), multisigControl.highValueProperty()));
+        //Spoken as "2 of 3" rather than with a slash
+        multisigLabel.accessibleTextProperty().bind(Bindings.format("%.0f of %.0f", multisigControl.lowValueProperty(), multisigControl.highValueProperty()));
 
         multisigControl.lowValueProperty().addListener((observable, oldValue, threshold) -> {
             EventManager.get().post(new SettingsChangedEvent(walletForm.getWallet(), SettingsChangedEvent.Type.MUTLISIG_THRESHOLD));
@@ -285,7 +284,7 @@ public class SettingsController extends WalletFormController implements Initiali
             if(walletForm.getWallet().getPolicyType() == PolicyType.SINGLE_SP && walletForm.getWallet().getBirthDate() == null && walletForm.getStorage().getEncryptionPubKey() == null) {
                 walletForm.getWallet().setBirthDate(new Date());
             }
-            saveWallet(false, false);
+            saveWallet(false, false, false);
 
             Wallet wallet = walletForm.getWallet();
             if(wallet.getPolicyType() == PolicyType.MULTI_HD && wallet.getDefaultPolicy().getNumSignaturesRequired() < wallet.getKeystores().size() && addressChange) {
@@ -675,7 +674,7 @@ public class SettingsController extends WalletFormController implements Initiali
         if(optApply.isPresent() && optApply.get() && walletForm.getWallet().isValid()) {
             revert.setDisable(true);
             apply.setDisable(true);
-            saveWallet(false, true);
+            saveWallet(false, true, false);
         }
     }
 
@@ -1226,7 +1225,7 @@ public class SettingsController extends WalletFormController implements Initiali
     }
 
     //Returns true if the wallet save was initiated, and false if it was abandoned without any change to the wallet or its storage
-    private boolean saveWallet(boolean changePassword, boolean suggestChangePassword) {
+    private boolean saveWallet(boolean changePassword, boolean suggestChangePassword, boolean deleteBackups) {
         ECKey existingPubKey = walletForm.getStorage().getEncryptionPubKey();
 
         WalletPasswordDialog.PasswordRequirement requirement;
@@ -1249,7 +1248,7 @@ public class SettingsController extends WalletFormController implements Initiali
             }
         }
 
-        WalletPasswordDialog dlg = new WalletPasswordDialog(null, requirement, suggestChangePassword);
+        WalletPasswordDialog dlg = new WalletPasswordDialog(null, requirement, suggestChangePassword, walletForm.getStorage().isInWalletsDir());
         dlg.initOwner(apply.getScene().getWindow());
         Optional<SecureString> password = walletForm.isLocked() ? Optional.empty() : dlg.showAndWait();
         if(password.isPresent() && walletForm.isLocked()) {
@@ -1274,6 +1273,9 @@ public class SettingsController extends WalletFormController implements Initiali
                 try {
                     walletForm.getStorage().setEncryptionPubKey(Storage.NO_PASSWORD_KEY);
                     walletForm.saveAndRefresh();
+                    if(deleteBackups) {
+                        walletForm.deleteBackups();
+                    }
                     EventManager.get().post(new RequestOpenWalletsEvent());
                 } catch (IOException | StorageException e) {
                     log.error("Error saving wallet", e);
@@ -1303,10 +1305,6 @@ public class SettingsController extends WalletFormController implements Initiali
 
                         Wallet masterWallet = walletForm.getWallet().isMasterWallet() ? walletForm.getWallet() : walletForm.getWallet().getMasterWallet();
                         if(dlg.isChangePassword()) {
-                            if(dlg.isDeleteBackups()) {
-                                walletForm.deleteBackups();
-                            }
-
                             masterWallet.decrypt(key);
                             for(Wallet childWallet : masterWallet.getChildWallets()) {
                                 if(!childWallet.isNested()) {
@@ -1315,7 +1313,7 @@ public class SettingsController extends WalletFormController implements Initiali
                             }
 
                             //If a new password is not provided, re-encrypt with the existing key rather than leaving the wallet decrypted for the session
-                            if(!saveWallet(true, false)) {
+                            if(!saveWallet(true, false, dlg.isDeleteBackups())) {
                                 masterWallet.encrypt(key);
                                 for(Wallet childWallet : masterWallet.getChildWallets()) {
                                     if(!childWallet.isNested()) {
@@ -1326,10 +1324,6 @@ public class SettingsController extends WalletFormController implements Initiali
                             return;
                         }
 
-                        if(dlg.isDeleteBackups()) {
-                            walletForm.deleteBackups();
-                        }
-
                         masterWallet.encrypt(key);
                         for(Wallet childWallet : masterWallet.getChildWallets()) {
                             if(!childWallet.isNested()) {
@@ -1338,6 +1332,9 @@ public class SettingsController extends WalletFormController implements Initiali
                         }
                         walletForm.getStorage().setEncryptionPubKey(encryptionPubKey);
                         walletForm.saveAndRefresh();
+                        if(deleteBackups || dlg.isDeleteBackups()) {
+                            walletForm.deleteBackups();
+                        }
                         EventManager.get().post(new RequestOpenWalletsEvent());
                     } catch (Exception e) {
                         log.error("Error saving wallet", e);

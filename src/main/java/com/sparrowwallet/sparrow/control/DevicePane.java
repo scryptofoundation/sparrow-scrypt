@@ -296,6 +296,8 @@ public class DevicePane extends TitledDescriptionPane {
 
     private void createImportButton() {
         importButton = requiredDerivation == null ? new SplitMenuButton() : new Button();
+        //A split button is not named by its text for screen readers
+        importButton.accessibleTextProperty().bind(importButton.textProperty());
         importButton.setAlignment(Pos.CENTER_RIGHT);
         importButton.setText("Import Keystore");
         importButton.setOnAction(event -> {
@@ -415,6 +417,8 @@ public class DevicePane extends TitledDescriptionPane {
         }
 
         getPrivateKeyButton = currentSlot > 0 ? new SplitMenuButton() : new Button();
+        //A split button is not named by its text for screen readers
+        getPrivateKeyButton.accessibleTextProperty().bind(getPrivateKeyButton.textProperty());
         getPrivateKeyButton.setAlignment(Pos.CENTER_RIGHT);
         getPrivateKeyButton.setText("Get Private Key");
         getPrivateKeyButton.setOnAction(event -> {
@@ -484,6 +488,8 @@ public class DevicePane extends TitledDescriptionPane {
             sendPin(pinField.getText());
         });
         vBox.getChildren().addAll(pinField, enterPinButton);
+        labelPinField(pinField, vBox);
+        keepFocusWhenDisabled(enterPinButton);
 
         GridPane gridPane = new GridPane();
         gridPane.setHgap(10);
@@ -531,6 +537,8 @@ public class DevicePane extends TitledDescriptionPane {
         });
 
         SplitMenuButton sendPassphraseButton = new SplitMenuButton();
+        //A split button is not named by its text for screen readers
+        sendPassphraseButton.accessibleTextProperty().bind(sendPassphraseButton.textProperty());
         sendPassphraseButton.setText("Send Passphrase");
         setDefaultButton(sendPassphraseButton);
         sendPassphraseButton.setOnAction(event -> {
@@ -593,6 +601,8 @@ public class DevicePane extends TitledDescriptionPane {
         promptPinService.setOnSucceeded(workerStateEvent -> {
             Boolean result = promptPinService.getValue();
             if(result) {
+                //Clears an earlier error, which no longer applies once the PIN can be entered
+                setDefaultStatus();
                 setContent(getPinEntry());
                 setExpanded(true);
             } else {
@@ -1305,6 +1315,7 @@ public class DevicePane extends TitledDescriptionPane {
         confirmationBox.getChildren().add(confirmationPin);
 
         Button initializeButton = new Button("Initialize");
+        keepFocusWhenDisabled(initializeButton);
         initializeButton.setDefaultButton(true);
         initializeButton.setOnAction(event -> {
             initializeButton.setDisable(true);
@@ -1378,6 +1389,7 @@ public class DevicePane extends TitledDescriptionPane {
         initTypeBox.getChildren().addAll(automatic, advanced, entropy);
 
         Button initializeButton = new Button("Initialize");
+        keepFocusWhenDisabled(initializeButton);
         initializeButton.setDefaultButton(true);
         initializeButton.setOnAction(event -> {
             initializeButton.setDisable(true);
@@ -1432,6 +1444,7 @@ public class DevicePane extends TitledDescriptionPane {
         contentBox.setAlignment(Pos.TOP_RIGHT);
         contentBox.setSpacing(20);
         contentBox.getChildren().add(pinField);
+        labelPinField(pinField, contentBox);
         contentBox.setPadding(new Insets(10, 30, 10, 30));
         contentBox.setPrefHeight(50);
 

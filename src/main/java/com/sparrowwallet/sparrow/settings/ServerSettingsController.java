@@ -232,6 +232,8 @@ public class ServerSettingsController extends SettingsDetailController {
         publicElectrumForm.managedProperty().bind(publicElectrumForm.visibleProperty());
         coreForm.managedProperty().bind(coreForm.visibleProperty());
         electrumForm.managedProperty().bind(electrumForm.visibleProperty());
+        //The results area is blank until a connection is tested, and an empty, unnamed Tab stop tells a screen reader user nothing
+        testResults.focusTraversableProperty().bind(testResults.textProperty().isNotEmpty());
         serverTypeToggleGroup.selectedToggleProperty().addListener((observable, oldValue, newValue) -> {
             if(serverTypeToggleGroup.getSelectedToggle() != null) {
                 ServerType existingType = config.getServerType();
@@ -330,7 +332,7 @@ public class ServerSettingsController extends SettingsDetailController {
         recentCoreServers.setCellFactory(value -> new ServerCell());
         recentCoreServers.setItems(getObservableServerList(Config.get().getRecentCoreServers()));
         recentCoreServers.prefWidthProperty().bind(coreHost.widthProperty());
-        recentCoreServers.valueProperty().addListener((observable, oldValue, newValue) -> {
+        coreHost.<Server>setOnChoose(newValue -> {
             if(newValue != null) {
                 if(newValue == MANAGE_ALIASES_SERVER) {
                     ServerAliasDialog serverAliasDialog = new ServerAliasDialog(ServerType.BITCOIN_CORE);
@@ -376,7 +378,7 @@ public class ServerSettingsController extends SettingsDetailController {
         recentElectrumServers.setCellFactory(value -> new ServerCell());
         recentElectrumServers.setItems(getObservableServerList(Config.get().getRecentElectrumServers()));
         recentElectrumServers.prefWidthProperty().bind(electrumHost.widthProperty());
-        recentElectrumServers.valueProperty().addListener((observable, oldValue, newValue) -> {
+        electrumHost.<Server>setOnChoose(newValue -> {
             if(newValue != null) {
                 if(newValue == MANAGE_ALIASES_SERVER) {
                     ServerAliasDialog serverAliasDialog = new ServerAliasDialog(ServerType.ELECTRUM_SERVER);
@@ -494,6 +496,8 @@ public class ServerSettingsController extends SettingsDetailController {
             setFieldsEditable(true);
             editConnection.setVisible(false);
             testConnection.setVisible(true);
+            //The button pressed is hidden, so focus moves to the one that takes its place rather than falling to the dialog's Close button
+            testConnection.requestFocus();
         });
 
         PublicElectrumServer configPublicElectrumServer = PublicElectrumServer.fromServer(config.getPublicElectrumServer());
@@ -717,6 +721,8 @@ public class ServerSettingsController extends SettingsDetailController {
         if(serverBanner != null) {
             testResults.setText(testResults.getText() + "\nServer Banner: " + serverBanner);
         }
+        //Focus moves to the result so it is read out once the test finishes
+        testResults.requestFocus();
     }
 
     private void showConnectionFailure(Throwable exception) {
@@ -765,6 +771,7 @@ public class ServerSettingsController extends SettingsDetailController {
 
         testResults.setText("Could not connect:\n\n" + reason);
         testConnection.setGraphic(getGlyph(FontAwesome5.Glyph.EXCLAMATION_CIRCLE, "failure"));
+        testResults.requestFocus();
     }
 
     //Inscription and rune checks are Litecoin only. The public server indexes mainnet only, so other networks offer

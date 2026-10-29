@@ -33,12 +33,16 @@ import javafx.application.Application;
 import javafx.application.ColorScheme;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ReadOnlyProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
+import javafx.collections.ListChangeListener;
+import javafx.collections.ObservableList;
 import javafx.concurrent.ScheduledService;
 import javafx.concurrent.Service;
 import javafx.concurrent.Task;
+import javafx.event.EventHandler;
 import javafx.concurrent.Worker;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.AccessibleRole;
@@ -49,6 +53,7 @@ import javafx.scene.TraversalDirection;
 import javafx.scene.control.*;
 import javafx.scene.control.Dialog;
 import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.text.Font;
 import javafx.stage.Screen;
@@ -75,7 +80,9 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.sparrowwallet.sparrow.AppController.CONNECTION_FAILED_PREFIX;
 import static com.sparrowwallet.sparrow.control.DownloadVerifierDialog.*;
@@ -102,6 +109,17 @@ public class AppServices {
     //their fee slider range extends far higher (up to 2^17) than Litecoin's Bitcoin-scale range. Without this
     //the estimated rate falls off the top of the slider and the send fee cannot be positioned or calculated.
     private static final List<Double> HIGH_FEE_RATES_RANGE = List.of(1d, 2d, 4d, 8d, 16d, 32d, 64d, 128d, 256d, 512d, 1024d, 2048d, 4096d, 8192d, 16384d, 32768d, 65536d, 131072d);
+    private static final EventHandler<javafx.scene.input.KeyEvent> FORWARD_UNUSED_ESCAPE = event -> {
+        if(event.getCode() == KeyCode.ESCAPE && event.getTarget() instanceof Node node && node.getParent() != null && isEscapeUnused(node)) {
+            event.consume();
+            node.getParent().fireEvent(event);
+        }
+    };
+    private static final ChangeListener<Boolean> NOT_FOCUS_TRAVERSABLE = (observable, wasTraversable, traversable) -> {
+        if(traversable) {
+            ((Node)((ReadOnlyProperty<?>)observable).getBean()).setFocusTraversable(false);
+        }
+    };
 
     private static AppServices INSTANCE;
 
@@ -719,12 +737,48 @@ public class AppServices {
         });
     }
 
-    //Text areas holding keys, addresses or scripts never need a tab character, so Tab moves focus on rather than trapping keyboard users
+    //Text areas holding keys, addresses, scripts or messages to sign never need a typed tab character, so Tab moves focus on rather than trapping keyboard users
     public static void moveFocusOnTab(Node node) {
         node.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
             if(event.getCode() == KeyCode.TAB && !event.isShortcutDown() && !event.isControlDown() && !event.isAltDown()) {
                 node.requestFocusTraversal(event.isShiftDown() ? TraversalDirection.PREVIOUS : TraversalDirection.NEXT);
                 event.consume();
+            }
+        });
+    }
+
+    //Menu buttons consume Escape even when their menu is closed, and tables consume it even when no cell is being edited, so Escape on a
+    //split button or in a table such as the search results did not close its dialog. Like a combo box, these pass Escape on to their parent.
+    public static void forwardUnusedEscape() {
+        Window.getWindows().addListener((ListChangeListener<Window>)change -> {
+            while(change.next()) {
+                for(Window window : change.getAddedSubList()) {
+                    window.removeEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, FORWARD_UNUSED_ESCAPE);
+                    window.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, FORWARD_UNUSED_ESCAPE);
+                }
+            }
+        });
+    }
+
+    private static boolean isEscapeUnused(Node node) {
+        return switch(node) {
+            case MenuButton menuButton -> !menuButton.isShowing();
+            case TableView<?> tableView -> tableView.getEditingCell() == null;
+            case TreeTableView<?> treeTableView -> treeTableView.getEditingCell() == null;
+            default -> false;
+        };
+    }
+
+    //Charts make every data point a Tab stop while a screen reader is on, including points created before it started.
+    //The charts here are read as a one-line summary, so their points are kept out of the Tab order.
+    public static void keepChartPointsOutOfTabOrder(ObservableList<Node> plotChildren) {
+        plotChildren.addListener((ListChangeListener<Node>)change -> {
+            while(change.next()) {
+                for(Node node : change.getAddedSubList()) {
+                    node.focusTraversableProperty().removeListener(NOT_FOCUS_TRAVERSABLE);
+                    node.focusTraversableProperty().addListener(NOT_FOCUS_TRAVERSABLE);
+                    node.setFocusTraversable(false);
+                }
             }
         });
     }
@@ -1047,6 +1101,17 @@ public class AppServices {
             //macOS has no accessibility role for DIALOG and exposes it as an unknown element around the whole dialog
             if(OsType.getCurrent() == OsType.MACOS && stage.getScene().getRoot().getAccessibleRole() == AccessibleRole.DIALOG) {
                 stage.getScene().getRoot().setAccessibleRole(AccessibleRole.PARENT);
+            }
+            //The icon an alert style puts in the dialog header is otherwise read as an unnamed image
+            if(stage.getScene().getRoot() instanceof DialogPane dialogPane) {
+                Consumer<Node> nameAlertIcon = graphic -> {
+                    if(graphic instanceof ImageView && graphic.getAccessibleText() == null) {
+                        Stream.of("warning", "error", "information", "confirmation").filter(dialogPane.getStyleClass()::contains).findFirst()
+                                .ifPresent(kind -> graphic.setAccessibleText(Character.toUpperCase(kind.charAt(0)) + kind.substring(1)));
+                    }
+                };
+                dialogPane.graphicProperty().addListener((_, _, graphic) -> nameAlertIcon.accept(graphic));
+                nameAlertIcon.accept(dialogPane.getGraphic());
             }
         }
     }

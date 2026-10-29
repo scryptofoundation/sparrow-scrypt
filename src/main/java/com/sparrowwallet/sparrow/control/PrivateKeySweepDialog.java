@@ -77,6 +77,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
         dialogPane.getStylesheets().add(AppServices.class.getResource("general.css").toExternalForm());
         dialogPane.getStylesheets().add(AppServices.class.getResource("dialog.css").toExternalForm());
         AppServices.setStageIcon(dialogPane.getScene().getWindow());
+        setTitle("Sweep Private Key");
         dialogPane.setHeaderText("Sweep Private Key");
         dialogPane.setGraphic(new WalletModelImage(WalletModel.SEED));
 
@@ -151,6 +152,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
         toAddress.getStyleClass().add("fixed-width");
         toAddress.setSkin(new AddressTextFieldSkin(toAddress));
         toWallet = new ComboBox<>();
+        toWallet.setAccessibleText("Choose a wallet to sweep to");
         toWallet.setItems(FXCollections.observableList(AppServices.get().getOpenWallets().keySet().stream()
                 .filter(w -> !w.isWhirlpoolChildWallet() && !w.isBip47()).collect(Collectors.toList())));
         toAddress.setComboProperty(toWallet);
@@ -226,7 +228,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
             createButton.setDisable(!isValidKey() || !isValidToAddress());
         });
 
-        toWallet.valueProperty().addListener((observable, oldValue, selectedWallet) -> {
+        toAddress.<Wallet>setOnChoose(selectedWallet -> {
             if(selectedWallet != null) {
                 if(selectedWallet.getPolicyType() == PolicyType.SINGLE_SP) {
                     toAddress.setText(selectedWallet.getSilentPaymentScanAddress().getSilentPaymentAddress().getAddress());
@@ -265,7 +267,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
 
     private boolean isValidKey() {
         try {
-            DumpedPrivateKey privateKey = getPrivateKey();
+            getPrivateKey().getKey();
             return true;
         } catch(Exception e) {
             return false;
@@ -579,7 +581,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
 
             Glyph key = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.KEY);
             key.setFontSize(50);
-            dialogPane.setGraphic(key);
+            dialogPane.setGraphic(new DecorativePane(key));
 
             final VBox content = new VBox(10);
             content.setPrefHeight(50);

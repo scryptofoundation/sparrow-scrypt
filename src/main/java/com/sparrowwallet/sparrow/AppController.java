@@ -30,6 +30,7 @@ import com.sparrowwallet.sparrow.transaction.TransactionController;
 import com.sparrowwallet.sparrow.transaction.TransactionData;
 import com.sparrowwallet.sparrow.transaction.TransactionView;
 import com.sparrowwallet.sparrow.wallet.Entry;
+import com.sparrowwallet.sparrow.wallet.Function;
 import com.sparrowwallet.sparrow.wallet.WalletController;
 import com.sparrowwallet.sparrow.wallet.WalletForm;
 import com.sparrowwallet.sparrow.wallet.WalletLink;
@@ -194,6 +195,9 @@ public class AppController implements Initializable {
 
     @FXML
     private MenuItem refreshWallet;
+
+    @FXML
+    private Menu goToMenu;
 
     @FXML
     private MenuItem sendToMany;
@@ -447,6 +451,7 @@ public class AppController implements Initializable {
         searchWallet.disableProperty().bind(exportWallet.disableProperty());
         refreshWallet.disableProperty().bind(Bindings.or(exportWallet.disableProperty(), Bindings.or(serverToggle.disableProperty(), AppServices.onlineProperty().not())));
         sendToMany.disableProperty().bind(exportWallet.disableProperty());
+        goToMenu.getItems().forEach(item -> item.disableProperty().bind(exportWallet.disableProperty()));
         sweepPrivateKey.disableProperty().bind(Bindings.or(serverToggle.disableProperty(), AppServices.onlineProperty().not()));
         showPayNym.setDisable(true);
 
@@ -1934,6 +1939,14 @@ public class AppController implements Initializable {
         }
     }
 
+    //Go To and its shortcuts select a wallet function without tabbing back through the current one
+    public void goToFunction(ActionEvent event) {
+        WalletForm selectedWalletForm = getSelectedWalletForm();
+        if(selectedWalletForm != null && event.getSource() instanceof MenuItem item) {
+            EventManager.get().post(new FunctionShortcutEvent(Function.valueOf((String)item.getUserData()), selectedWalletForm.getWallet()));
+        }
+    }
+
     public void showWalletSummary(ActionEvent event) {
         Tab selectedTab = tabs.getSelectionModel().getSelectedItem();
         if(selectedTab != null) {
@@ -2053,6 +2066,8 @@ public class AppController implements Initializable {
 
             tabs.getTabs().add(tab);
             tabs.getSelectionModel().select(tab);
+            //Focus goes to the new tab rather than falling to the status bar from the view the wallet was opened from
+            Platform.runLater(tabs::requestFocus);
 
             File oldWalletFile = renamedWallets.remove(storage.getWalletFile());
             if(oldWalletFile != null) {
@@ -2724,6 +2739,8 @@ public class AppController implements Initializable {
 
             tabs.getTabs().add(tab);
             tabs.getSelectionModel().select(tab);
+            //The view the transaction was opened from is hidden, so focus goes to the new tab rather than falling to the status bar
+            Platform.runLater(tabs::requestFocus);
         } catch(IOException e) {
             throw new RuntimeException(e);
         }
@@ -3057,7 +3074,7 @@ public class AppController implements Initializable {
     }
 
     private void deleteWallet(WalletForm selectedWalletForm) {
-        Optional<ButtonType> optButtonType = AppServices.showWarningDialog("Delete " + selectedWalletForm.getWallet().getMasterName() + "?", "The wallet file and any backups will be deleted. Are you sure?", ButtonType.NO, ButtonType.YES);
+        Optional<ButtonType> optButtonType = AppServices.showWarningDialog("Delete " + selectedWalletForm.getWallet().getMasterName() + "?", "The wallet file" + (selectedWalletForm.getStorage().isInWalletsDir() ? " and any backups" : "") + " will be deleted. Are you sure?", ButtonType.NO, ButtonType.YES);
         if(optButtonType.isPresent() && optButtonType.get() == ButtonType.YES) {
             Storage storage = selectedWalletForm.getStorage();
             if(selectedWalletForm.getMasterWallet().isEncrypted()) {
@@ -3570,6 +3587,10 @@ public class AppController implements Initializable {
                 }
 
                 notificationBuilder.show();
+                //The notification's close button shows only an icon
+                Platform.runLater(() -> Window.getWindows().stream().filter(window -> window instanceof Popup && window.getScene() != null)
+                        .map(window -> window.getScene().getRoot().lookup(".notification-bar .close-button")).filter(Objects::nonNull)
+                        .forEach(closeButton -> closeButton.setAccessibleText("Close")));
             }
         }
     }

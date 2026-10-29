@@ -354,36 +354,7 @@ public class PaymentController extends WalletFormController implements Initializ
     public void initializeView() {
         updateOpenWallets();
         openWallets.prefWidthProperty().bind(address.widthProperty());
-        openWallets.valueProperty().addListener((observable, oldValue, newValue) -> {
-            if(newValue == payNymWallet) {
-                PayNymDialog payNymDialog = new PayNymDialog(sendController.getWalletForm().getWalletId(), PayNymDialog.Operation.SEND);
-                payNymDialog.initOwner(scanQrButton.getScene().getWindow());
-                Optional<PayNym> optPayNym = payNymDialog.showAndWait();
-                optPayNym.ifPresent(this::setPayNym);
-            } else if(newValue == nfcCardWallet) {
-                DeviceGetAddressDialog deviceGetAddressDialog = new DeviceGetAddressDialog(Collections.emptyList());
-                deviceGetAddressDialog.initOwner(scanQrButton.getScene().getWindow());
-                Optional<Address> optAddress = deviceGetAddressDialog.showAndWait();
-                if(optAddress.isPresent()) {
-                    address.setText(optAddress.get().toString());
-                    label.requestFocus();
-                }
-            } else if(newValue != null) {
-                if(newValue.getPolicyType() == PolicyType.SINGLE_SP) {
-                    address.setText(newValue.getSilentPaymentScanAddress().getSilentPaymentAddress().getAddress());
-                } else {
-                    List<Address> existingAddresses = getOtherAddresses();
-                    WalletNode freshNode = newValue.getFreshNode(KeyPurpose.RECEIVE);
-                    Address freshAddress = freshNode.getAddress();
-                    while(existingAddresses.contains(freshAddress) || (freshNode.getLabel() != null && !freshNode.getLabel().isEmpty())) {
-                        freshNode = newValue.getFreshNode(KeyPurpose.RECEIVE, freshNode);
-                        freshAddress = freshNode.getAddress();
-                    }
-                    address.setText(freshAddress.toString());
-                }
-                label.requestFocus();
-            }
-        });
+        address.setOnChoose(this::selectOpenWallet);
         openWallets.setCellFactory(c -> new ListCell<>() {
             @Override
             protected void updateItem(Wallet wallet, boolean empty) {
@@ -613,13 +584,44 @@ public class PaymentController extends WalletFormController implements Initializ
         openWallets.setItems(FXCollections.observableList(openWalletList));
     }
 
+    private void selectOpenWallet(Wallet newValue) {
+        if(newValue == payNymWallet) {
+            PayNymDialog payNymDialog = new PayNymDialog(sendController.getWalletForm().getWalletId(), PayNymDialog.Operation.SEND);
+            payNymDialog.initOwner(scanQrButton.getScene().getWindow());
+            Optional<PayNym> optPayNym = payNymDialog.showAndWait();
+            optPayNym.ifPresent(this::setPayNym);
+        } else if(newValue == nfcCardWallet) {
+            DeviceGetAddressDialog deviceGetAddressDialog = new DeviceGetAddressDialog(Collections.emptyList());
+            deviceGetAddressDialog.initOwner(scanQrButton.getScene().getWindow());
+            Optional<Address> optAddress = deviceGetAddressDialog.showAndWait();
+            if(optAddress.isPresent()) {
+                address.setText(optAddress.get().toString());
+                label.requestFocus();
+            }
+        } else if(newValue != null) {
+            if(newValue.getPolicyType() == PolicyType.SINGLE_SP) {
+                address.setText(newValue.getSilentPaymentScanAddress().getSilentPaymentAddress().getAddress());
+            } else {
+                List<Address> existingAddresses = getOtherAddresses();
+                WalletNode freshNode = newValue.getFreshNode(KeyPurpose.RECEIVE);
+                Address freshAddress = freshNode.getAddress();
+                while(existingAddresses.contains(freshAddress) || (freshNode.getLabel() != null && !freshNode.getLabel().isEmpty())) {
+                    freshNode = newValue.getFreshNode(KeyPurpose.RECEIVE, freshNode);
+                    freshAddress = freshNode.getAddress();
+                }
+                address.setText(freshAddress.toString());
+            }
+            label.requestFocus();
+        }
+    }
+
     private Node getOpenWalletIcon(Wallet wallet) {
         if(wallet == payNymWallet) {
-            return getPayNymGlyph();
+            return new DecorativePane(getPayNymGlyph());
         }
 
         if(wallet == nfcCardWallet) {
-            return getNfcCardGlyph();
+            return new DecorativePane(getNfcCardGlyph());
         }
 
         Wallet masterWallet = wallet.isMasterWallet() ? wallet : wallet.getMasterWallet();
