@@ -162,7 +162,7 @@ public class MnemonicShareKeystoreImportPane extends MnemonicKeystorePane {
                     existing.add(wordEntriesProperty.get());
                 }
 
-                importer.getKeystore(wallet.getScriptType().getDefaultDerivation(), existing, passphraseProperty.get());
+                importer.getKeystore(wallet.getPolicyType(), wallet.getScriptType().getDefaultDerivation(), existing, passphraseProperty.get());
                 validSet = true;
                 complete = true;
             } catch(MnemonicException e) {
@@ -240,7 +240,7 @@ public class MnemonicShareKeystoreImportPane extends MnemonicKeystorePane {
     private boolean importKeystore(List<ChildNumber> derivation, boolean dryrun) {
         importButton.setDisable(true);
         try {
-            Keystore keystore = importer.getKeystore(derivation, mnemonicShares, passphraseProperty.get());
+            Keystore keystore = importer.getKeystore(wallet.getPolicyType(), derivation, mnemonicShares, passphraseProperty.get());
             if(!dryrun) {
                 if(passphraseProperty.get() != null && !passphraseProperty.get().isEmpty()) {
                     KeystorePassphraseDialog keystorePassphraseDialog = new KeystorePassphraseDialog(null, keystore, true);
@@ -270,6 +270,11 @@ public class MnemonicShareKeystoreImportPane extends MnemonicKeystorePane {
     private Node getDerivationEntry(List<ChildNumber> derivation) {
         TextField derivationField = new TextField();
         derivationField.setPromptText("Derivation path");
+        //Screen readers do not read prompt text, and accessible text on a text field would replace the path it reads, so it is named by an unshown label
+        Label derivationLabel = new Label("Derivation path");
+        derivationLabel.setVisible(false);
+        derivationLabel.setManaged(false);
+        derivationLabel.setLabelFor(derivationField);
         derivationField.setText(KeyDerivation.writePath(derivation));
         HBox.setHgrow(derivationField, Priority.ALWAYS);
 
@@ -297,6 +302,7 @@ public class MnemonicShareKeystoreImportPane extends MnemonicKeystorePane {
         HBox contentBox = new HBox();
         contentBox.setAlignment(Pos.TOP_RIGHT);
         contentBox.setSpacing(20);
+        contentBox.getChildren().add(derivationLabel);
         contentBox.getChildren().add(derivationField);
         contentBox.getChildren().add(importDerivationButton);
 
@@ -311,6 +317,17 @@ public class MnemonicShareKeystoreImportPane extends MnemonicKeystorePane {
         entryBox.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
 
         return entryBox;
+    }
+
+    @Override
+    protected String getPassphraseLabel() {
+        return "Global passphrase:";
+    }
+
+    @Override
+    protected String getPassphraseHelpText() {
+        return "Advanced feature: a passphrase provides optional added security, but it is not stored so it must be remembered!\n" +
+                "The passphrase applies to the reconstructed secret, and not to any individual share.";
     }
 
     public static Glyph getIncompleteGlyph() {

@@ -63,7 +63,6 @@ public final class SameSeedChildWallets {
             EventManager.get().post(new StorageEvent(walletId, TimedEvent.Action.END, "Done"));
             ECKey encryptionFullKey = keyDerivationService.getValue();
             Key key = new Key(encryptionFullKey.getPrivKeyBytes(), walletForm.getStorage().getKeyDeriver().getSalt(), EncryptionType.Deriver.ARGON2);
-            encryptionFullKey.clear();
             masterWallet.decrypt(key);
             Wallet childWallet;
             try {

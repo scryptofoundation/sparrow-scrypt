@@ -38,7 +38,7 @@
                         <ToggleGroup fx:id="serverTypeToggleGroup" />
                     </toggleGroup>
                     <buttons>
-                        <ToggleButton fx:id="publicElectrumToggle" text="Public Server" toggleGroup="$serverTypeToggleGroup">
+                        <ToggleButton accessibleRole="RADIO_BUTTON" fx:id="publicElectrumToggle" text="Public Server" toggleGroup="$serverTypeToggleGroup">
                             <graphic>
                                 <Glyph fontFamily="Font Awesome 5 Free Solid" fontSize="12" icon="TOGGLE_ON" styleClass="public-electrum" />
                             </graphic>
@@ -46,7 +46,7 @@
                                 <ServerType fx:constant="PUBLIC_ELECTRUM_SERVER"/>
                             </userData>
                         </ToggleButton>
-                        <ToggleButton text="Private Electrum" toggleGroup="$serverTypeToggleGroup">
+                        <ToggleButton accessibleRole="RADIO_BUTTON" text="Private Electrum" toggleGroup="$serverTypeToggleGroup">
                             <graphic>
                                 <Glyph fontFamily="Font Awesome 5 Free Solid" fontSize="12" icon="TOGGLE_ON" styleClass="private-electrum" />
                             </graphic>
@@ -104,12 +104,12 @@
                         <ToggleGroup fx:id="coreAuthToggleGroup" />
                     </toggleGroup>
                     <buttons>
-                        <ToggleButton text="Default" toggleGroup="$coreAuthToggleGroup">
+                        <ToggleButton accessibleRole="RADIO_BUTTON" text="Default" toggleGroup="$coreAuthToggleGroup">
                             <userData>
                                 <CoreAuthType fx:constant="COOKIE"/>
                             </userData>
                         </ToggleButton>
-                        <ToggleButton text="User / Pass" toggleGroup="$coreAuthToggleGroup">
+                        <ToggleButton accessibleRole="RADIO_BUTTON" text="User / Pass" toggleGroup="$coreAuthToggleGroup">
                             <userData>
                                 <CoreAuthType fx:constant="USERPASS"/>
                             </userData>
@@ -119,7 +119,7 @@
             </Field>
             <Field fx:id="coreDataDirField" text="Data Folder:" styleClass="label-button">
                 <TextField fx:id="coreDataDir"/>
-                <Button fx:id="coreDataDirSelect" maxWidth="35" minWidth="-Infinity" prefWidth="35">
+                <Button accessibleText="Select Data Folder" fx:id="coreDataDirSelect" maxWidth="35" minWidth="-Infinity" prefWidth="35">
                     <graphic>
                         <Glyph fontFamily="FontAwesome" icon="EDIT" fontSize="13" />
                     </graphic>
@@ -153,7 +153,7 @@
             </Field>
             <Field text="Certificate:" styleClass="label-button">
                 <TextField fx:id="electrumCertificate" promptText="Optional server certificate (.crt)"/>
-                <Button fx:id="electrumCertificateSelect" maxWidth="35" minWidth="-Infinity" prefWidth="35">
+                <Button accessibleText="Select Certificate" fx:id="electrumCertificateSelect" maxWidth="35" minWidth="-Infinity" prefWidth="35">
                     <graphic>
                         <Glyph fontFamily="FontAwesome" icon="EDIT" fontSize="13" />
                     </graphic>

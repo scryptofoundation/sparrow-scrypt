@@ -56,7 +56,7 @@ public class MwebServer {
         }
 
         var chain = Network.get().getName();
-        var dataDir = Storage.getSparrowDir().toPath().resolve("mweb");
+        var dataDir = Storage.getDataDir().toPath().resolve("mweb");
         try {
             Files.createDirectories(dataDir);
         } catch (IOException _) {

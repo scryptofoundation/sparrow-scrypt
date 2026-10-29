@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.drongo.Coin;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
 import com.sparrowwallet.sparrow.io.Config;
@@ -51,9 +52,13 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
     }
 
     public WalletNameDialog(String initialName, boolean hasExistingTransactions, Date startDate, boolean rename) {
+        this(initialName, hasExistingTransactions, null, startDate, rename);
+    }
+
+    public WalletNameDialog(String initialName, boolean hasExistingTransactions, PolicyType walletPolicyType, Date startDate, boolean rename) {
         final DialogPane dialogPane = getDialogPane();
         AppServices.setStageIcon(dialogPane.getScene().getWindow());
-        boolean requestBirthDate = !rename && (Config.get().getServerType() == null || Config.get().getServerType() == ServerType.BITCOIN_CORE);
+        boolean requestBirthDate = !rename && (walletPolicyType == PolicyType.SINGLE_SP || Config.get().getServerType() == null || Config.get().getServerType() == ServerType.BITCOIN_CORE);
 
         setTitle("Wallet Name");
         dialogPane.setHeaderText("Enter a name for this wallet:");

@@ -143,7 +143,10 @@ public class PayNymController {
         searchPayNyms.setTextFormatter(new TextFormatter<>(paymentCodeFilter));
         searchPayNyms.addEventFilter(KeyEvent.ANY, event -> {
             if(event.getCode() == KeyCode.ENTER) {
-                findNymProperty.set(searchPayNyms.getText());
+                //An abbreviated payment code is only the display of the one already being searched for
+                if(!searchPayNyms.getText().contains("...")) {
+                    findNymProperty.set(searchPayNyms.getText());
+                }
                 event.consume();
             }
         });
@@ -185,8 +188,8 @@ public class PayNymController {
             walletPayNym = payNym;
             searchPayNyms.setDisable(false);
             payNymName.setText(payNym.nymName());
-            paymentCode.setPaymentCode(payNym.paymentCode());
-            payNymAvatar.setPaymentCode(payNym.paymentCode());
+            paymentCode.setPaymentCode(getMasterWallet().getPaymentCode());
+            payNymAvatar.setPaymentCode(getMasterWallet().getPaymentCode());
             followingList.setUserData(null);
             followingList.setPlaceholder(new Label("No contacts"));
             updateFollowing();
@@ -232,10 +235,12 @@ public class PayNymController {
 
             PayNymService.getPayNym(nymIdentifier, true).subscribe(searchedPayNym -> {
                 findPayNym.setVisible(false);
-                List<PayNym> searchList = new ArrayList<>();
-                searchList.add(searchedPayNym);
-                followingList.setUserData(Boolean.TRUE);
-                followingList.setItems(FXCollections.observableList(searchList));
+                if(nymIdentifier.equals(findNymProperty.get())) {
+                    List<PayNym> searchList = new ArrayList<>();
+                    searchList.add(searchedPayNym);
+                    followingList.setUserData(Boolean.TRUE);
+                    followingList.setItems(FXCollections.observableList(searchList));
+                }
             }, error -> {
                 findPayNym.setVisible(false);
             });
@@ -597,7 +602,7 @@ public class PayNymController {
                 log.error("Error broadcasting notification transaction", failedEvent.getSource().getException());
                 retrievePayNymProgress.setVisible(false);
                 followingList.refresh();
-                AppServices.showErrorDialog("Error broadcasting notification transaction", failedEvent.getSource().getException().getMessage());
+                AppServices.showErrorDialog("Error broadcasting notification transaction", "The server returned an error when broadcasting the notification transaction. The server response is contained in the log (See Help > Show Log File).");
             });
             retrievePayNymProgress.setVisible(true);
             notificationTransactions.put(transaction.getTxId(), payNym);

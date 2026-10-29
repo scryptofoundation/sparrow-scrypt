@@ -42,7 +42,7 @@ public class SparrowLinkExport {
     }
 
     public static byte[] exportJsonWallet(Wallet exportedWallet, Storage storage) throws ExportException {
-        if(exportedWallet.getPolicyType() != PolicyType.SINGLE || exportedWallet.getKeystores().size() != 1) {
+        if(exportedWallet.getPolicyType() != PolicyType.SINGLE_HD || exportedWallet.getKeystores().size() != 1) {
             throw new ExportException("Only single-signature wallets can be pushed to mobile");
         }
         if(exportedWallet.getScriptType() != ScriptType.P2WPKH && exportedWallet.getScriptType() != ScriptType.MWEB) {
@@ -215,7 +215,7 @@ public class SparrowLinkExport {
             throw new ExportException("The wallet seed is unavailable");
         }
         seedObj.addProperty("needsPassphrase", seed.needsPassphrase());
-        seedObj.addProperty("creationTimeSeconds", seed.getCreationTimeSeconds());
+        seedObj.addProperty("creationTimeSeconds", seed.getCreationTimeMillis());
         return seedObj;
     }
 

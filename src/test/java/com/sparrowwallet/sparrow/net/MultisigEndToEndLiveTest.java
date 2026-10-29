@@ -202,10 +202,10 @@ public class MultisigEndToEndLiveTest {
         Wallet funder = new Wallet(coin.getName() + "-multisig-funder");
         funder.setCoin(coin);
         funder.setNetwork(Network.TESTNET);
-        funder.setPolicyType(PolicyType.SINGLE);
+        funder.setPolicyType(PolicyType.SINGLE_HD);
         funder.setScriptType(funderType);
-        funder.getKeystores().add(Keystore.fromSeed(seed, funderType.getDefaultDerivation()));
-        funder.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, funderType, funder.getKeystores(), 1));
+        funder.getKeystores().add(Keystore.fromSeed(seed, PolicyType.SINGLE_HD, funderType.getDefaultDerivation()));
+        funder.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, funderType, funder.getKeystores(), 1));
         funder.setStoredBlockHeight(tip);
         sync(funder);
         long funderBalance = funder.getWalletUtxos().keySet().stream().mapToLong(BlockTransactionHashIndex::getValue).sum();
@@ -235,7 +235,7 @@ public class MultisigEndToEndLiveTest {
         }
         List<String> words = Arrays.asList(Files.readString(seedFile, StandardCharsets.UTF_8).trim().split(" "));
         DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(words), "", 0, DeterministicSeed.Type.BIP39);
-        Keystore keystore = Keystore.fromSeed(seed, scriptType.getDefaultDerivation());
+        Keystore keystore = Keystore.fromSeed(seed, PolicyType.MULTI_HD, scriptType.getDefaultDerivation());
         keystore.setLabel("Cosigner " + number);
         return keystore;
     }
@@ -259,10 +259,10 @@ public class MultisigEndToEndLiveTest {
         Wallet wallet = new Wallet(coin.getName() + "-multisig-" + name);
         wallet.setCoin(coin);
         wallet.setNetwork(Network.TESTNET);
-        wallet.setPolicyType(PolicyType.MULTI);
+        wallet.setPolicyType(PolicyType.MULTI_HD);
         wallet.setScriptType(scriptType);
         wallet.getKeystores().addAll(keystores);
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.MULTI, scriptType, wallet.getKeystores(), THRESHOLD));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.MULTI_HD, scriptType, wallet.getKeystores(), THRESHOLD));
         Assertions.assertTrue(wallet.isValid(), wallet.getName() + " must be a valid wallet");
         return wallet;
     }

@@ -35,10 +35,10 @@ public class CollectibleSendTest {
         previousCoin = Coin.beginScope(Coin.LITECOIN);
         DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(WORDS), "", 0, DeterministicSeed.Type.BIP39);
         wallet = new Wallet("taproot");
-        wallet.setPolicyType(PolicyType.SINGLE);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
         wallet.setScriptType(ScriptType.P2TR);
-        wallet.getKeystores().add(Keystore.fromSeed(seed, ScriptType.P2TR.getDefaultDerivation()));
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, ScriptType.P2TR, wallet.getKeystores(), 1));
+        wallet.getKeystores().add(Keystore.fromSeed(seed, PolicyType.SINGLE_HD, ScriptType.P2TR.getDefaultDerivation()));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, ScriptType.P2TR, wallet.getKeystores(), 1));
         wallet.setCoin(Coin.LITECOIN);
         wallet.getNode(KeyPurpose.RECEIVE).fillToIndex(20);
         nodes = new ArrayList<>(wallet.getNode(KeyPurpose.RECEIVE).getChildren());
@@ -157,19 +157,19 @@ public class CollectibleSendTest {
         Coin previous = Coin.beginScope(Coin.DOGECOIN);
         String dogeAddress;
         try {
-            dogeAddress = ScriptType.P2PKH.getAddress(ECKey.fromPrivate(BigInteger.valueOf(7))).toString();
+            dogeAddress = ScriptType.P2PKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7))).toString();
         } finally {
             Coin.endScope(previous);
         }
         Assertions.assertTrue(CollectibleSend.recipientProblem(dogeAddress).isPresent());
-        Address taproot = ScriptType.P2TR.getAddress(ECKey.fromPrivate(BigInteger.valueOf(7)));
+        Address taproot = ScriptType.P2TR.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
         Assertions.assertTrue(CollectibleSend.recipientProblem(taproot.toString()).isEmpty());
     }
 
     @Test
     public void nonTaprootRecipientWarns() {
-        Address segwit = ScriptType.P2WPKH.getAddress(ECKey.fromPrivate(BigInteger.valueOf(7)));
-        Address taproot = ScriptType.P2TR.getAddress(ECKey.fromPrivate(BigInteger.valueOf(7)));
+        Address segwit = ScriptType.P2WPKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
+        Address taproot = ScriptType.P2TR.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
         Assertions.assertTrue(CollectibleSend.recipientWarning(segwit).isPresent());
         Assertions.assertTrue(CollectibleSend.recipientWarning(taproot).isEmpty());
     }

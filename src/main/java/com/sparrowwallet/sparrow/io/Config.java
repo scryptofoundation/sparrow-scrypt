@@ -23,12 +23,12 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.util.*;
-import java.util.stream.Collectors;
 
 import static com.sparrowwallet.sparrow.AppServices.ENUMERATE_HW_PERIOD_SECS;
 import static com.sparrowwallet.sparrow.net.PagedBatchRequestBuilder.DEFAULT_PAGE_SIZE;
 import static com.sparrowwallet.sparrow.net.TcpTransport.DEFAULT_MAX_TIMEOUT;
 import static com.sparrowwallet.sparrow.wallet.WalletUtxosEntry.DUST_ATTACK_THRESHOLD_SATS;
+import static com.sparrowwallet.sparrow.wallet.WalletUtxosEntry.DUST_ATTACK_THRESHOLD_SP_SATS;
 
 public class Config {
     private static final Logger log = LoggerFactory.getLogger(Config.class);
@@ -61,6 +61,7 @@ public class Config {
     private boolean showDeprecatedImportExport = false;
     private boolean signBsmsExports = false;
     private boolean preventSleep = false;
+    private boolean verifyTransactions = true;
     private Boolean connectToBroadcast;
     private Boolean connectToResolve;
     private Boolean suggestSendToMany;
@@ -72,8 +73,10 @@ public class Config {
     private List<String> litVmBridgeHistory;
     private Integer keyDerivationPeriod;
     private long dustAttackThreshold = DUST_ATTACK_THRESHOLD_SATS;
+    private long dustAttackThresholdSp = DUST_ATTACK_THRESHOLD_SP_SATS;
     private int enumerateHwPeriod = ENUMERATE_HW_PERIOD_SECS;
     private QRDensity qrDensity;
+    private QRDensity qrDensityLevel;
     private QREncoding qrEncoding;
     private WebcamResolution webcamResolution;
     private boolean mirrorCapture = true;
@@ -119,8 +122,8 @@ public class Config {
     }
 
     private static File getConfigFile() {
-        File sparrowDir = Storage.getSparrowDir();
-        return new File(sparrowDir, CONFIG_FILENAME);
+        File configDir = Storage.getConfigDir();
+        return new File(configDir, CONFIG_FILENAME);
     }
 
     private static Config load() {
@@ -406,6 +409,15 @@ public class Config {
         flush();
     }
 
+    public boolean isVerifyTransactions() {
+        return verifyTransactions;
+    }
+
+    public void setVerifyTransactions(boolean verifyTransactions) {
+        this.verifyTransactions = verifyTransactions;
+        flush();
+    }
+
     public Boolean getConnectToBroadcast() {
         return connectToBroadcast;
     }
@@ -503,16 +515,24 @@ public class Config {
         return dustAttackThreshold;
     }
 
+    public long getDustAttackThresholdSp() {
+        return dustAttackThresholdSp;
+    }
+
     public int getEnumerateHwPeriod() {
         return enumerateHwPeriod;
     }
 
+    public QRDensity getLegacyQrDensity() {
+        return qrDensity;
+    }
+
     public QRDensity getQrDensity() {
-        return qrDensity == null ? QRDensity.NORMAL : qrDensity;
+        return qrDensityLevel;
     }
 
     public void setQrDensity(QRDensity qrDensity) {
-        this.qrDensity = qrDensity;
+        this.qrDensityLevel = qrDensity;
         flush();
     }
 
@@ -745,13 +765,6 @@ public class Config {
             editCoinSettings().publicElectrumServer = publicElectrumServer;
         }
         flush();
-    }
-
-    public void changePublicServer() {
-        List<Server> otherServers = PublicElectrumServer.getServers().stream().map(PublicElectrumServer::getServer).filter(server -> !server.equals(getPublicElectrumServer())).collect(Collectors.toList());
-        if(!otherServers.isEmpty()) {
-            setPublicElectrumServer(otherServers.get(new Random().nextInt(otherServers.size())));
-        }
     }
 
     public Server getCoreServer() {

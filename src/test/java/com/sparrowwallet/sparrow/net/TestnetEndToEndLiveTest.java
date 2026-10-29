@@ -196,7 +196,7 @@ public class TestnetEndToEndLiveTest {
 
     private static Wallet signerWallet(Coin coin, ScriptType scriptType, List<String> words) throws MnemonicException {
         DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(words), "", 0, DeterministicSeed.Type.BIP39);
-        Keystore keystore = Keystore.fromSeed(seed, scriptType.getDefaultDerivation());
+        Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, scriptType.getDefaultDerivation());
         return wallet(coin, scriptType, coin.getName() + "-e2e-signer", keystore);
     }
 
@@ -214,10 +214,10 @@ public class TestnetEndToEndLiveTest {
         Wallet wallet = new Wallet(name);
         wallet.setCoin(coin);
         wallet.setNetwork(Network.TESTNET);
-        wallet.setPolicyType(PolicyType.SINGLE);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
         wallet.setScriptType(scriptType);
         wallet.getKeystores().add(keystore);
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
         Assertions.assertTrue(wallet.isValid(), name + " must be a valid wallet");
         return wallet;
     }

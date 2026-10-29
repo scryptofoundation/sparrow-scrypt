@@ -41,14 +41,14 @@ public class LitVmTestWalletCreator {
         Coin previousCoin = Coin.beginScope(coin);
         try {
             DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(Arrays.asList(Files.readString(Path.of(seedPath)).trim().split("\\s+"))), "", 0, DeterministicSeed.Type.BIP39);
-            Keystore keystore = Keystore.fromSeed(seed, scriptType.getDefaultDerivation());
+            Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, scriptType.getDefaultDerivation());
             Wallet wallet = new Wallet(out.getName().replace(".mv.db", ""));
             wallet.setCoin(coin);
             wallet.setNetwork(Network.TESTNET);
-            wallet.setPolicyType(PolicyType.SINGLE);
+            wallet.setPolicyType(PolicyType.SINGLE_HD);
             wallet.setScriptType(scriptType);
             wallet.getKeystores().add(keystore);
-            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
             if(coin == Coin.LITECOIN) {
                 wallet.setLitVmLink(LitVmLink.fromWalletSeed(seed, 0));
             }

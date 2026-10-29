@@ -90,15 +90,15 @@ public class SeedWallets {
         try {
             List<ChildNumber> derivation = KeyDerivation.parsePath(account.derivationPath());
             DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(words), account.hasHiddenPassphrase() ? account.hiddenPassphrase() : passphrase, 0, DeterministicSeed.Type.BIP39);
-            Keystore keystore = Keystore.fromSeed(seed, derivation);
+            Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, derivation);
             keystore.setLabel(seedWallet.name());
 
             Wallet wallet = new Wallet(seedWallet.name() + " " + account.coin().toDisplayString());
             wallet.setCoin(account.coin());
-            wallet.setPolicyType(PolicyType.SINGLE);
+            wallet.setPolicyType(PolicyType.SINGLE_HD);
             wallet.setScriptType(account.scriptType());
             wallet.getKeystores().add(keystore);
-            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, account.scriptType(), wallet.getKeystores(), 1));
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, account.scriptType(), wallet.getKeystores(), 1));
             return wallet;
         } finally {
             Coin.endScope(previousCoin);

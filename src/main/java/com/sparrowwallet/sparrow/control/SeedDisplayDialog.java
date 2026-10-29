@@ -83,7 +83,7 @@ public class SeedDisplayDialog extends Dialog<Void> {
 
         Wallet masterWallet = wallet == null ? null : (wallet.isMasterWallet() ? wallet : wallet.getMasterWallet());
         DeterministicSeed.Type seedType = decryptedKeystore.getSeed().getType();
-        if(masterWallet != null && masterWallet.getPolicyType() == PolicyType.SINGLE && masterWallet.getKeystores().size() == 1
+        if(masterWallet != null && masterWallet.getPolicyType() == PolicyType.SINGLE_HD && masterWallet.getKeystores().size() == 1
                 && (seedType == DeterministicSeed.Type.BIP39 || seedType == DeterministicSeed.Type.ELECTRUM)) {
             final ButtonType backupButtonType = new javafx.scene.control.ButtonType("Save Encrypted Backup...", ButtonBar.ButtonData.LEFT);
             dialogPane.getButtonTypes().add(backupButtonType);

@@ -49,7 +49,7 @@ public final class TaprootWallets {
             return;
         }
         Wallet master = open.isMasterWallet() ? open : open.getMasterWallet();
-        boolean seedWallet = master.getPolicyType() == PolicyType.SINGLE && master.getKeystores().stream().allMatch(keystore -> keystore.getSource() == KeystoreSource.SW_SEED);
+        boolean seedWallet = master.getPolicyType() == PolicyType.SINGLE_HD && master.getKeystores().stream().allMatch(keystore -> keystore.getSource() == KeystoreSource.SW_SEED);
         if(!seedWallet || master.getScriptType() == ScriptType.MWEB) {
             AppServices.showAlertDialog("No taproot wallet", "Inscriptions and runes are kept in a taproot wallet of this seed. This wallet cannot create one "
                     + "(it needs a single-signature wallet with its seed in this app). Open or create a taproot wallet of the same seed and try again.", Alert.AlertType.WARNING, ButtonType.OK);
@@ -64,7 +64,7 @@ public final class TaprootWallets {
     }
 
     private static boolean isTaproot(Wallet wallet) {
-        return wallet != null && wallet.getScriptType() == ScriptType.P2TR && wallet.getPolicyType() == PolicyType.SINGLE && wallet.getCoin() == Coin.LITECOIN;
+        return wallet != null && wallet.getScriptType() == ScriptType.P2TR && wallet.getPolicyType() == PolicyType.SINGLE_HD && wallet.getCoin() == Coin.LITECOIN;
     }
 
     private static String fingerprint(Wallet wallet) {

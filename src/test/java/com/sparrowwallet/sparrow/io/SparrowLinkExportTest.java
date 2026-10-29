@@ -31,11 +31,11 @@ public class SparrowLinkExportTest {
     public void exportRoundTripsThroughDesktopLoad() throws Exception {
         DeterministicSeed seed = new DeterministicSeed(MNEMONIC, "", 0, DeterministicSeed.Type.BIP39);
         Wallet wallet = new Wallet("Link Test");
-        wallet.setPolicyType(PolicyType.SINGLE);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
         wallet.setScriptType(ScriptType.P2WPKH);
-        Keystore keystore = Keystore.fromSeed(seed, ScriptType.P2WPKH.getDefaultDerivation());
+        Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, ScriptType.P2WPKH.getDefaultDerivation());
         wallet.getKeystores().add(keystore);
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, ScriptType.P2WPKH, wallet.getKeystores(), null));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, ScriptType.P2WPKH, wallet.getKeystores(), null));
         Assertions.assertTrue(wallet.isValid());
         Assertions.assertEquals("73c5da0a", keystore.getKeyDerivation().getMasterFingerprint());
 
@@ -59,7 +59,7 @@ public class SparrowLinkExportTest {
         Wallet loaded = walletAndKey.getWallet();
         Assertions.assertEquals("Link Test", loaded.getName());
         Assertions.assertEquals(Network.MAINNET, loaded.getNetwork());
-        Assertions.assertEquals(PolicyType.SINGLE, loaded.getPolicyType());
+        Assertions.assertEquals(PolicyType.SINGLE_HD, loaded.getPolicyType());
         Assertions.assertEquals(ScriptType.P2WPKH, loaded.getScriptType());
         Assertions.assertEquals(1, loaded.getDefaultPolicy().getNumSignaturesRequired());
         Assertions.assertEquals("m/84'/2'/0'", loaded.getKeystores().get(0).getKeyDerivation().getDerivationPath());
@@ -68,7 +68,7 @@ public class SparrowLinkExportTest {
         copy.decrypt(walletAndKey.getKey());
         Assertions.assertEquals(MNEMONIC, copy.getKeystores().get(0).getSeed().getMnemonicString().asString());
 
-        Keystore derived = Keystore.fromSeed(copy.getKeystores().get(0).getSeed(),
+        Keystore derived = Keystore.fromSeed(copy.getKeystores().get(0).getSeed(), PolicyType.SINGLE_HD,
                 copy.getKeystores().get(0).getKeyDerivation().getDerivation());
         Assertions.assertEquals("73c5da0a", derived.getKeyDerivation().getMasterFingerprint());
         Assertions.assertEquals(keystore.getExtendedPublicKey().toString(), derived.getExtendedPublicKey().toString());
@@ -80,11 +80,11 @@ public class SparrowLinkExportTest {
         String mwebMnemonic = "legal winner thank year wave sausage worth useful legal winner thank yellow";
         DeterministicSeed seed = new DeterministicSeed(mwebMnemonic, "", 0, DeterministicSeed.Type.BIP39);
         Wallet wallet = new Wallet("Link Private Test");
-        wallet.setPolicyType(PolicyType.SINGLE);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
         wallet.setScriptType(ScriptType.MWEB);
-        Keystore keystore = Keystore.fromSeed(seed, ScriptType.MWEB.getDefaultDerivation());
+        Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, ScriptType.MWEB.getDefaultDerivation());
         wallet.getKeystores().add(keystore);
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, ScriptType.MWEB, wallet.getKeystores(), null));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, ScriptType.MWEB, wallet.getKeystores(), null));
         Assertions.assertTrue(wallet.isValid());
         Assertions.assertEquals("m/1000'", keystore.getKeyDerivation().getDerivationPath());
 

@@ -3,6 +3,7 @@ package com.sparrowwallet.sparrow.net;
 import com.google.common.net.HostAndPort;
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.sparrow.io.Server;
 
 import java.util.Arrays;
@@ -55,9 +56,14 @@ public enum PublicElectrumServer {
     JUNK_TESTNET_S3NA("jkc-testnet-api.s3na.xyz", "https://jkc-testnet-api.s3na.xyz", Coin.JUNKCOIN, Network.TESTNET);
 
     PublicElectrumServer(String name, String url, Coin coin, Network network) {
+        this(name, url, coin, network, List.of(PolicyType.SINGLE_HD, PolicyType.MULTI_HD));
+    }
+
+    PublicElectrumServer(String name, String url, Coin coin, Network network, List<PolicyType> supportedPolicyTypes) {
         this.server = new Server(url, name);
         this.coin = coin;
         this.network = network;
+        this.supportedPolicyTypes = supportedPolicyTypes;
     }
 
     public static final List<Network> SUPPORTED_NETWORKS = List.of(Network.MAINNET, Network.TESTNET, Network.SIGNET, Network.TESTNET4);
@@ -65,6 +71,7 @@ public enum PublicElectrumServer {
     private final Server server;
     private final Coin coin;
     private final Network network;
+    private final List<PolicyType> supportedPolicyTypes;
 
     public Server getServer() {
         return server;
@@ -80,6 +87,14 @@ public enum PublicElectrumServer {
 
     public Network getNetwork() {
         return network;
+    }
+
+    public boolean isSupportedPolicyType(PolicyType policyType) {
+        return supportedPolicyTypes.contains(policyType);
+    }
+
+    public boolean supportsAllPolicyTypes(List<PolicyType> policyTypes) {
+        return policyTypes.stream().allMatch(this::isSupportedPolicyType);
     }
 
     public static List<PublicElectrumServer> getServers() {
