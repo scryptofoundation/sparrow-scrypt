@@ -1216,12 +1216,20 @@ public class ElectrumServer {
 
             return receivedTxid;
         } catch(ElectrumServerRpcException | IllegalStateException e) {
+            if(!isMwebBroadcastFallback(com.sparrowwallet.drongo.Coin.get(), MwebServer.get() != null)) {
+                throw new ServerException(e.getMessage(), e);
+            }
             try {
                 return MwebServer.get().broadcast(transaction);
             } catch(StatusRuntimeException ex) {
                 throw new ServerException(ex.getMessage(), ex);
             }
         }
+    }
+
+    //Only Litecoin has MWEB, so a rejection on any other coin is reported as is
+    static boolean isMwebBroadcastFallback(com.sparrowwallet.drongo.Coin coin, boolean mwebServerRunning) {
+        return coin == com.sparrowwallet.drongo.Coin.LITECOIN && mwebServerRunning;
     }
 
     public Set<String> getMempoolScriptHashes(Wallet wallet, Sha256Hash txId, Set<WalletNode> transactionNodes) throws ServerException {

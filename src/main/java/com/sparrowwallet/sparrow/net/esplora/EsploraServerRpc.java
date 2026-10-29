@@ -125,7 +125,7 @@ public class EsploraServerRpc implements ElectrumServerRpc {
             }
 
             try {
-                List<EsploraClient.EsploraTransaction> txs = client.getAddressTransactions(address);
+                List<EsploraClient.EsploraTransaction> txs = client.getAddressTransactions(address, pathScriptHashes.get(path));
                 List<ScriptHashTx> scriptHashTxes = new ArrayList<>();
                 for(EsploraClient.EsploraTransaction tx : txs) {
                     if(mempoolOnly && tx.isConfirmed()) {
@@ -159,7 +159,7 @@ public class EsploraServerRpc implements ElectrumServerRpc {
             }
 
             try {
-                List<EsploraClient.EsploraTransaction> txs = client.getAddressTransactions(address);
+                List<EsploraClient.EsploraTransaction> txs = client.getAddressTransactions(address, pathScriptHashes.get(path));
                 statuses.put(path, computeStatus(txs));
             } catch(EsploraException e) {
                 log.warn("Failed to compute status for " + address + " (" + e.getMessage() + ")");

@@ -111,6 +111,28 @@ public class EsploraClient {
         return getList("/address/" + address + "/utxo", EsploraUtxo[].class);
     }
 
+    /**
+     * As {@link #getAddressTransactions(String)}, retried by scripthash when the server refuses the address itself.
+     * jkc-testnet-api.s3na.xyz prints Junkcoin testnet P2SH outputs as "3..." (version 5, as junkcoin-core does) but
+     * answers HTTP 400 "Address on invalid network" when asked for that address. Its scripthash routes still work.
+     */
+    public List<EsploraTransaction> getAddressTransactions(String address, String electrumScripthash) throws EsploraException {
+        try {
+            return getAddressTransactions(address);
+        } catch(EsploraException e) {
+            if(e.getStatus() != 400 || electrumScripthash == null) {
+                throw e;
+            }
+            return getList("/scripthash/" + toEsploraScripthash(electrumScripthash) + "/txs", EsploraTransaction[].class);
+        }
+    }
+
+    /** Electrum scripthashes are the SHA256 of the output script byte-reversed; Esplora takes it in hash order. */
+    static String toEsploraScripthash(String electrumScripthash) {
+        byte[] bytes = com.sparrowwallet.drongo.Utils.hexToBytes(electrumScripthash);
+        return com.sparrowwallet.drongo.Utils.bytesToHex(com.sparrowwallet.drongo.Utils.reverseBytes(bytes));
+    }
+
     /** Raw transaction hex. */
     public String getTransactionHex(String txid) throws EsploraException {
         return getPlainString("/tx/" + txid + "/hex");
@@ -310,7 +332,7 @@ public class EsploraClient {
         try {
             Response response = send(path, null);
             if(response.status() != 200) {
-                throw new EsploraException("Request " + path + " failed (HTTP " + response.status() + "): " + response.body());
+                throw new EsploraException("Request " + path + " failed (HTTP " + response.status() + "): " + response.body(), response.status());
             }
             return response.body();
         } catch(EsploraException e) {
