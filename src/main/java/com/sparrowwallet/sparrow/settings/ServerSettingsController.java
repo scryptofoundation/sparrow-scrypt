@@ -249,7 +249,9 @@ public class ServerSettingsController extends SettingsDetailController {
             serverTypeSegmentedButton.getButtons().remove(publicElectrumToggle);
             serverTypeToggleGroup.getToggles().remove(publicElectrumToggle);
         }
-        serverTypeToggleGroup.selectToggle(serverTypeToggleGroup.getToggles().stream().filter(toggle -> toggle.getUserData() == serverType).findFirst().orElse(null));
+        List<ServerType> offeredTypes = serverTypeToggleGroup.getToggles().stream().map(toggle -> (ServerType)toggle.getUserData()).toList();
+        ServerType selectedType = ServerType.offeredOrElectrum(serverType, offeredTypes);
+        serverTypeToggleGroup.selectToggle(serverTypeToggleGroup.getToggles().stream().filter(toggle -> toggle.getUserData() == selectedType).findFirst().orElse(null));
 
         publicElectrumServer.setItems(FXCollections.observableList(PublicElectrumServer.getServers()));
         publicElectrumServer.getSelectionModel().selectedItemProperty().addListener(getPublicElectrumServerListener(config));
