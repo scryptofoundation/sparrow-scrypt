@@ -17,17 +17,21 @@ public class SeedWalletsTest {
         return SeedWallets.ALL.stream().filter(w -> w.name().equals(name)).findFirst().orElseThrow();
     }
 
-    //First receive addresses computed outside drongo (plain Python BIP39 + BIP32 + P2PKH), so these check the real
-    //derivation rather than restating it. The same script reproduces the well-known Bitcoin and Dogecoin addresses.
-    private static String firstAddress(String walletName, Coin coin, String userPassphrase) throws Exception {
-        SeedWallets.SeedWallet seedWallet = seedWallet(walletName);
+    private static SeedWallets.Account account(String walletName, Coin coin, int index) {
+        return seedWallet(walletName).accountsFor(coin).get(index);
+    }
+
+    //First receive addresses computed outside drongo (plain Python BIP39, BIP32, P2PKH and BIP173), so these check the
+    //real derivation rather than restating it. The same script reproduces the well-known Bitcoin and Dogecoin addresses.
+    private static String firstAddress(String walletName, Coin coin, int index, String userPassphrase) throws Exception {
+        SeedWallets.Account account = account(walletName, coin, index);
         //Built while a Litecoin context is active: the importer must still derive on the wallet's own coin
         Coin previous = Coin.beginScope(Coin.LITECOIN);
         try {
-            Wallet wallet = SeedWallets.createWallet(seedWallet, coin, WORDS, userPassphrase);
+            Wallet wallet = SeedWallets.createWallet(seedWallet(walletName), account, WORDS, userPassphrase);
             Assertions.assertEquals(coin, wallet.coin());
-            Assertions.assertEquals(ScriptType.P2PKH, wallet.getScriptType());
-            Assertions.assertEquals(seedWallet.accountFor(coin).derivationPath(), wallet.getKeystores().getFirst().getKeyDerivation().getDerivationPath());
+            Assertions.assertEquals(account.scriptType(), wallet.getScriptType());
+            Assertions.assertEquals(account.derivationPath(), wallet.getKeystores().getFirst().getKeyDerivation().getDerivationPath());
 
             Coin inner = Coin.beginScope(coin);
             try {
@@ -40,6 +44,10 @@ public class SeedWalletsTest {
         }
     }
 
+    private static String firstAddress(String walletName, Coin coin, String userPassphrase) throws Exception {
+        return firstAddress(walletName, coin, 0, userPassphrase);
+    }
+
     @Test
     public void acceptsOnlyValidBip39Phrases() {
         Assertions.assertTrue(SeedWallets.isValidPhrase(WORDS));
@@ -47,9 +55,16 @@ public class SeedWalletsTest {
     }
 
     @Test
-    public void nintondoAddsBellsPassphraseAtBitcoinPath() throws Exception {
-        Assertions.assertEquals("m/44'/0'/0'", seedWallet("Nintondo").accountFor(Coin.BELLSCOIN).derivationPath());
-        Assertions.assertEquals("BMb5oFUiW5cYqA4zfEtyQiZgW884vg1vKT", firstAddress("Nintondo", Coin.BELLSCOIN, ""));
+    public void nintondoDefaultsToNativeSegwitOverItsLegacyKeys() throws Exception {
+        List<SeedWallets.Account> accounts = seedWallet("Nintondo").accountsFor(Coin.BELLSCOIN);
+        Assertions.assertEquals(2, accounts.size());
+        Assertions.assertEquals(ScriptType.P2WPKH, accounts.get(0).scriptType());
+        Assertions.assertEquals(ScriptType.P2PKH, accounts.get(1).scriptType());
+        //Nintondo derives every address type from the same m/44' keys
+        Assertions.assertEquals("m/44'/0'/0'", accounts.get(0).derivationPath());
+        Assertions.assertEquals("m/44'/0'/0'", accounts.get(1).derivationPath());
+        Assertions.assertEquals("bel1qh07eu8daq4xvgefnq567dfrv8dssxm0ruw2q2a", firstAddress("Nintondo", Coin.BELLSCOIN, 0, ""));
+        Assertions.assertEquals("BMb5oFUiW5cYqA4zfEtyQiZgW884vg1vKT", firstAddress("Nintondo", Coin.BELLSCOIN, 1, ""));
     }
 
     @Test
@@ -79,14 +94,14 @@ public class SeedWalletsTest {
 
     @Test
     public void hiddenPassphraseIsKeptInTheKeystore() throws Exception {
-        Wallet wallet = SeedWallets.createWallet(seedWallet("Nintondo"), Coin.BELLSCOIN, WORDS, "");
+        Wallet wallet = SeedWallets.createWallet(seedWallet("Nintondo"), account("Nintondo", Coin.BELLSCOIN, 0), WORDS, "");
         Assertions.assertEquals("bells", wallet.getKeystores().getFirst().getSeed().getPassphrase().asString());
         Assertions.assertEquals("Nintondo Bellscoin", wallet.getName());
     }
 
     @Test
     public void refusesOwnPassphraseWhenWalletAddsOne() {
-        Assertions.assertThrows(IllegalArgumentException.class, () -> SeedWallets.createWallet(seedWallet("luckycoinwallet"), Coin.LUCKYCOIN, WORDS, "mine"));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> SeedWallets.createWallet(seedWallet("luckycoinwallet"), account("luckycoinwallet", Coin.LUCKYCOIN, 0), WORDS, "mine"));
     }
 
     @Test

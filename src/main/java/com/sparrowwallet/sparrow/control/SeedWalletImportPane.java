@@ -86,10 +86,37 @@ public class SeedWalletImportPane extends MnemonicKeystorePane {
         coinLabel.setVisible(coins.size() > 1);
         coinCombo.setVisible(coins.size() > 1);
 
+        //An app that offers several address types over the same keys lists its default first
+        ComboBox<SeedWallets.Account> accountCombo = new ComboBox<>();
+        accountCombo.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(SeedWallets.Account account) {
+                return account == null ? "" : account.label();
+            }
+
+            @Override
+            public SeedWallets.Account fromString(String string) {
+                return null;
+            }
+        });
+        Label accountLabel = new Label("Address type:");
+        accountLabel.managedProperty().bind(accountLabel.visibleProperty());
+        accountCombo.managedProperty().bind(accountCombo.visibleProperty());
+        accountLabel.visibleProperty().bind(accountCombo.visibleProperty());
+        Runnable updateAccounts = () -> {
+            List<SeedWallets.Account> accounts = seedWallet.accountsFor(coinCombo.getValue());
+            accountCombo.setItems(FXCollections.observableArrayList(accounts));
+            accountCombo.setValue(accounts.getFirst());
+            accountCombo.setVisible(accounts.size() > 1);
+        };
+        updateAccounts.run();
+        coinCombo.valueProperty().addListener((observable, oldValue, newValue) -> updateAccounts.run());
+
         HelpLabel helpLabel = new HelpLabel();
         helpLabel.setHelpText(seedWallet.help());
 
-        HBox optionsBox = new HBox(10, coinLabel, coinCombo, helpLabel);
+        HBox optionsBox = new HBox(10, coinLabel, coinCombo, accountLabel, accountCombo, helpLabel);
+        accountLabel.setTranslateY(1);
         optionsBox.setAlignment(Pos.CENTER_LEFT);
         coinLabel.setTranslateY(1);
 
@@ -99,8 +126,8 @@ public class SeedWalletImportPane extends MnemonicKeystorePane {
         Button importButton = new Button("Import");
         importButton.setDefaultButton(true);
         importButton.setOnAction(event -> {
-            Coin coin = coinCombo.getValue();
-            if(seedWallet.accountFor(coin).hasHiddenPassphrase() && !passphraseProperty.get().isEmpty()) {
+            SeedWallets.Account account = accountCombo.getValue();
+            if(account.hasHiddenPassphrase() && !passphraseProperty.get().isEmpty()) {
                 setError("Import Error", seedWallet.name() + " adds its own passphrase and does not take another one. Clear the passphrase and import again.");
                 return;
             }
@@ -108,7 +135,7 @@ public class SeedWalletImportPane extends MnemonicKeystorePane {
             showHideLink.setVisible(true);
             setExpanded(false);
             try {
-                Wallet wallet = SeedWallets.createWallet(seedWallet, coin, wordEntriesProperty.get(), passphraseProperty.get());
+                Wallet wallet = SeedWallets.createWallet(seedWallet, account, wordEntriesProperty.get(), passphraseProperty.get());
                 EventManager.get().post(new WalletImportEvent(wallet));
             } catch(Exception e) {
                 log.error("Error importing " + seedWallet.name() + " seed", e);
