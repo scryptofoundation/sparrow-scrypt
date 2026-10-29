@@ -1610,14 +1610,14 @@ public class HeadersController extends TransactionFormController implements Init
     }
 
     /**
-     * Wallets on different coins can hold the same keys (one seed, the same derivation path), so any of them "can
-     * sign". Keep only those on the transaction's coin, which is the active coin of the wallet tab it came from; fall
-     * back to all of them when none match (for example a PSBT opened from a file).
+     * Wallets on different coins can hold the same keys, so several "can sign": keep the ones on the transaction's
+     * coin. See {@link SigningWallets}.
      */
-    private static List<Wallet> onTransactionCoin(List<Wallet> wallets) {
-        com.sparrowwallet.drongo.Coin coin = com.sparrowwallet.drongo.Coin.getGlobal();
-        List<Wallet> sameCoin = wallets.stream().filter(wallet -> wallet.getCoin() == coin).collect(Collectors.toList());
-        return sameCoin.isEmpty() ? wallets : sameCoin;
+    private List<Wallet> onTransactionCoin(List<Wallet> wallets) {
+        Transaction transaction = headersForm.getTransaction();
+        return new ArrayList<>(SigningWallets.forTransaction(wallets,
+                wallet -> transaction.getInputs().stream().anyMatch(wallet::isWalletTxo),
+                Wallet::getCoin, com.sparrowwallet.drongo.Coin.getGlobal()));
     }
 
     @Subscribe
