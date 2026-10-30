@@ -10,6 +10,7 @@ import com.sparrowwallet.drongo.dns.DnsPaymentCache;
 import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.protocol.*;
 import com.sparrowwallet.drongo.psbt.*;
+import com.sparrowwallet.drongo.silentpayments.InvalidSilentPaymentException;
 import com.sparrowwallet.drongo.silentpayments.SilentPaymentAddress;
 import com.sparrowwallet.drongo.wallet.*;
 import com.sparrowwallet.hummingbird.UR;
@@ -29,6 +30,7 @@ import com.sparrowwallet.sparrow.transaction.TransactionController;
 import com.sparrowwallet.sparrow.transaction.TransactionData;
 import com.sparrowwallet.sparrow.transaction.TransactionView;
 import com.sparrowwallet.sparrow.wallet.Entry;
+import com.sparrowwallet.sparrow.wallet.Function;
 import com.sparrowwallet.sparrow.wallet.WalletController;
 import com.sparrowwallet.sparrow.wallet.WalletForm;
 import com.sparrowwallet.sparrow.wallet.WalletLink;
@@ -57,6 +59,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.*;
 import javafx.stage.Window;
 import javafx.util.Duration;
@@ -83,6 +86,7 @@ public class AppController implements Initializable {
     private static final Logger log = LoggerFactory.getLogger(AppController.class);
 
     public static final String DRAG_OVER_CLASS = "drag-over";
+    public static final String LONG_TRANSACTION_TAB_CLASS = "long-transaction-tab";
     public static final int TAB_LABEL_MAX_WIDTH = 300;
     public static final double TAB_LABEL_GRAPHIC_OPACITY_INACTIVE = 0.8;
     public static final double TAB_LABEL_GRAPHIC_OPACITY_ACTIVE = 0.95;
@@ -193,6 +197,9 @@ public class AppController implements Initializable {
     private MenuItem refreshWallet;
 
     @FXML
+    private Menu goToMenu;
+
+    @FXML
     private MenuItem sendToMany;
 
     @FXML
@@ -213,6 +220,9 @@ public class AppController implements Initializable {
 
     @FXML
     private StackPane rootStack;
+
+    @FXML
+    private StackPane noTabsPane;
 
     @FXML
     private TabPane tabs;
@@ -335,10 +345,9 @@ public class AppController implements Initializable {
             if(tabs.getTabs().contains(previouslySelectedTab)) {
                 this.previouslySelectedTab = previouslySelectedTab;
             }
-            tabs.getTabs().forEach(tab -> ((Label)tab.getGraphic()).getGraphic().setOpacity(TAB_LABEL_GRAPHIC_OPACITY_INACTIVE));
+            tabs.getTabs().forEach(tab -> tab.getGraphic().setOpacity(TAB_LABEL_GRAPHIC_OPACITY_INACTIVE));
             if(selectedTab != null) {
-                Label tabLabel = (Label)selectedTab.getGraphic();
-                tabLabel.getGraphic().setOpacity(TAB_LABEL_GRAPHIC_OPACITY_ACTIVE);
+                selectedTab.getGraphic().setOpacity(TAB_LABEL_GRAPHIC_OPACITY_ACTIVE);
 
                 TabData tabData = (TabData)selectedTab.getUserData();
                 if(tabData.getType() == TabData.TabType.TRANSACTION) {
@@ -352,6 +361,7 @@ public class AppController implements Initializable {
         //Draggle tabs introduce unwanted movement when selecting between them
         //tabs.setTabDragPolicy(TabPane.TabDragPolicy.REORDER);
         tabs.getTabs().addListener(tabsChangeListener);
+        noTabsPane.visibleProperty().bind(Bindings.isEmpty(tabs.getTabs()));
 
         tabs.getScene().getWindow().setOnCloseRequest(event -> {
             EventManager.get().unregister(this);
@@ -392,8 +402,8 @@ public class AppController implements Initializable {
 
         Theme configTheme = Config.get().getTheme();
         if(configTheme == null) {
-            configTheme = Theme.LIGHT;
-            Config.get().setTheme(Theme.LIGHT);
+            configTheme = Theme.SYSTEM;
+            Config.get().setTheme(Theme.SYSTEM);
         }
         final Theme selectedTheme = configTheme;
         Optional<Toggle> selectedThemeToggle = theme.getToggles().stream().filter(toggle -> selectedTheme.equals(toggle.getUserData())).findFirst();
@@ -441,6 +451,7 @@ public class AppController implements Initializable {
         searchWallet.disableProperty().bind(exportWallet.disableProperty());
         refreshWallet.disableProperty().bind(Bindings.or(exportWallet.disableProperty(), Bindings.or(serverToggle.disableProperty(), AppServices.onlineProperty().not())));
         sendToMany.disableProperty().bind(exportWallet.disableProperty());
+        goToMenu.getItems().forEach(item -> item.disableProperty().bind(exportWallet.disableProperty()));
         sweepPrivateKey.disableProperty().bind(Bindings.or(serverToggle.disableProperty(), AppServices.onlineProperty().not()));
         showPayNym.setDisable(true);
 
@@ -480,7 +491,7 @@ public class AppController implements Initializable {
 
     private void setPlatformApplicationMenu() {
         OsType osType = OsType.getCurrent();
-        if(osType == OsType.MACOS) {
+        if(osType == OsType.MACOS && Interface.get() == Interface.DESKTOP) {
             MenuToolkit tk = MenuToolkit.toolkit();
             MenuItem settings = new MenuItem("Settings...");
             settings.setOnAction(this::openSettings);
@@ -533,7 +544,7 @@ public class AppController implements Initializable {
     }
 
     public void showLogFile(ActionEvent event) throws IOException {
-        File logFile = new File(Storage.getSparrowHome(), "sparrow.log");
+        File logFile = new File(Storage.getStateHome(), "sparrow.log");
         if(logFile.exists()) {
             AppServices.get().getApplication().getHostServices().showDocument(logFile.toPath().toUri().toString());
         } else {
@@ -587,6 +598,8 @@ public class AppController implements Initializable {
             controller.initializeView();
             setStageIcon(stage);
             stage.setOnShowing(event -> {
+                //The macOS application menu reuses a single About stage, so the theme may have changed since it was created
+                controller.refreshTheme();
                 AppServices.moveToActiveWindowScreen(stage, 600, 460);
             });
 
@@ -624,6 +637,10 @@ public class AppController implements Initializable {
     }
 
     public void openTransactionFromFile(ActionEvent event) {
+        openTransactionFromFile(event, null);
+    }
+
+    private void openTransactionFromFile(ActionEvent event, PSBT contextPsbt) {
         Stage window = new Stage();
 
         FileChooser fileChooser = new FileChooser();
@@ -638,19 +655,21 @@ public class AppController implements Initializable {
         List<File> files = fileChooser.showOpenMultipleDialog(window);
         if(files != null) {
             for(File file : files) {
-                openTransactionFile(file);
+                openTransactionFile(file, contextPsbt);
             }
         }
     }
 
-    private void openTransactionFile(File file) {
-        for(Tab tab : tabs.getTabs()) {
-            TabData tabData = (TabData)tab.getUserData();
-            if(tabData instanceof TransactionTabData) {
-                TransactionTabData transactionTabData = (TransactionTabData)tabData;
-                if(file.equals(transactionTabData.getFile())) {
-                    tabs.getSelectionModel().select(tab);
-                    return;
+    private void openTransactionFile(File file, PSBT contextPsbt) {
+        if(contextPsbt == null) {
+            for(Tab tab : tabs.getTabs()) {
+                TabData tabData = (TabData)tab.getUserData();
+                if(tabData instanceof TransactionTabData) {
+                    TransactionTabData transactionTabData = (TransactionTabData)tabData;
+                    if(file.equals(transactionTabData.getFile())) {
+                        tabs.getSelectionModel().select(tab);
+                        return;
+                    }
                 }
             }
         }
@@ -661,9 +680,9 @@ public class AppController implements Initializable {
                 String name = file.getName();
 
                 if(Utils.isHex(bytes) || Utils.isBase64(bytes)) {
-                    addTransactionTab(name, file, new String(bytes, StandardCharsets.UTF_8).trim());
+                    addTransactionTab(name, file, new String(bytes, StandardCharsets.UTF_8).trim(), contextPsbt);
                 } else {
-                    addTransactionTab(name, file, bytes);
+                    addTransactionTab(name, file, bytes, contextPsbt);
                 }
             } catch(IOException e) {
                 showErrorDialog("Error opening file", e.getMessage());
@@ -685,13 +704,16 @@ public class AppController implements Initializable {
         Optional<String> text = dialog.showAndWait();
         if(text.isPresent() && !text.get().isEmpty()) {
             try {
-                addTransactionTab(null, null, text.get().trim());
+                addTransactionTab(null, null, text.get().trim(), null);
             } catch(PSBTParseException e) {
                 showErrorDialog("Invalid PSBT", e.getMessage());
             } catch(TransactionParseException e) {
                 showErrorDialog("Invalid transaction", e.getMessage());
             } catch(ParseException e) {
                 showErrorDialog("Could not recognise input", e.getMessage());
+            } catch(Exception e) {
+                log.error("Could not parse pasted transaction or PSBT", e);
+                showErrorDialog("Could not recognise input", "The pasted text could not be parsed as a transaction or PSBT.");
             }
         }
     }
@@ -754,7 +776,7 @@ public class AppController implements Initializable {
             FileChooser fileChooser = new FileChooser();
             fileChooser.setTitle("Save Transaction");
 
-            String fileName = ((Label)selectedTab.getGraphic()).getText();
+            String fileName = selectedTab.getText();
             if(fileName != null && !fileName.isEmpty()) {
                if(fileName.endsWith(".psbt")) {
                    fileName = fileName.substring(0, fileName.length() - ".psbt".length());
@@ -822,12 +844,15 @@ public class AppController implements Initializable {
         TabData tabData = (TabData)selectedTab.getUserData();
         if(tabData.getType() == TabData.TabType.TRANSACTION) {
             TransactionTabData transactionTabData = (TransactionTabData)tabData;
+            if(!verifyPSBT(transactionTabData.getTransactionData().getSigningWallet(), transactionTabData.getPsbt())) {
+                return;
+            }
 
             Stage window = new Stage();
             FileChooser fileChooser = new FileChooser();
             fileChooser.setTitle("Save PSBT");
 
-            String fileName = ((Label)selectedTab.getGraphic()).getText();
+            String fileName = selectedTab.getText();
             if(fileName != null && !fileName.isEmpty()) {
                 fileName = fileName.replace('/', '_');
                 if(!fileName.endsWith(".psbt")) {
@@ -877,6 +902,10 @@ public class AppController implements Initializable {
         TabData tabData = (TabData)selectedTab.getUserData();
         if(tabData.getType() == TabData.TabType.TRANSACTION) {
             TransactionTabData transactionTabData = (TransactionTabData)tabData;
+            if(!verifyPSBT(transactionTabData.getTransactionData().getSigningWallet(), transactionTabData.getPsbt())) {
+                return;
+            }
+
             String data = asBase64 ? transactionTabData.getPsbt().getForExport().toBase64String() : transactionTabData.getPsbt().getForExport().toString();
 
             ClipboardContent content = new ClipboardContent();
@@ -890,6 +919,9 @@ public class AppController implements Initializable {
         TabData tabData = (TabData)selectedTab.getUserData();
         if(tabData.getType() == TabData.TabType.TRANSACTION) {
             TransactionTabData transactionTabData = (TransactionTabData)tabData;
+            if(!verifyPSBT(transactionTabData.getTransactionData().getSigningWallet(), transactionTabData.getPsbt())) {
+                return;
+            }
 
             byte[] psbtBytes = transactionTabData.getPsbt().getForExport().serialize();
             CryptoPSBT cryptoPSBT = new CryptoPSBT(psbtBytes);
@@ -1112,7 +1144,7 @@ public class AppController implements Initializable {
         Stage window = new Stage();
         DirectoryChooser directoryChooser = new DirectoryChooser();
         directoryChooser.setTitle("Choose " + SparrowWallet.APP_NAME + " Home Folder");
-        directoryChooser.setInitialDirectory(initialDir == null || !initialDir.exists() ? Storage.getSparrowHome() : initialDir);
+        directoryChooser.setInitialDirectory(initialDir == null || !initialDir.exists() ? Storage.getDefaultHome() : initialDir);
         File newHome = directoryChooser.showDialog(window);
 
         if(newHome != null) {
@@ -1169,7 +1201,7 @@ public class AppController implements Initializable {
                     verifyOpened = true;
                 }
             } else {
-                openTransactionFile(file);
+                openTransactionFile(file, null);
             }
         }
     }
@@ -1280,7 +1312,7 @@ public class AppController implements Initializable {
             Storage storage = new Storage(walletFile);
             //The segwit default is invalid on chains without segwit - use the legacy equivalent there
             ScriptType scriptType = nameAndBirthDate.getCoin().supports(ScriptType.P2WPKH) ? ScriptType.P2WPKH : ScriptType.P2PKH;
-            Wallet wallet = new Wallet(nameAndBirthDate.getName(), PolicyType.SINGLE, scriptType, nameAndBirthDate.getBirthDate());
+            Wallet wallet = new Wallet(nameAndBirthDate.getName(), PolicyType.SINGLE_HD, scriptType, nameAndBirthDate.getBirthDate());
             wallet.setCoin(nameAndBirthDate.getCoin());
             addWalletTabOrWindow(storage, wallet, false);
         }
@@ -1388,14 +1420,14 @@ public class AppController implements Initializable {
                             log.error("Error Opening Wallet", exception);
                             showErrorDialog("Error Opening Wallet", exception.getMessage() == null || exception.getMessage().contains("Expected BEGIN_OBJECT") ? "Unsupported wallet file format." : exception.getMessage());
                         }
-                        password.clear();
                     }
+                    password.clear();
                 });
                 EventManager.get().post(new StorageEvent(storage.getWalletId(null), TimedEvent.Action.START, "Decrypting wallet..."));
                 loadWalletService.start();
             }
         } catch(Exception e) {
-            if(e instanceof IOException && e.getMessage().startsWith("The process cannot access the file because another process has locked")) {
+            if(e instanceof IOException && e.getMessage() != null && e.getMessage().startsWith("The process cannot access the file because another process has locked")) {
                 log.error("Error opening wallet", e);
                 showErrorDialog("Error Opening Wallet", "The wallet file is locked. Is another instance of " + SparrowWallet.APP_NAME + " already running?");
             } else if(!attemptImportWallet(file, null)) {
@@ -1408,8 +1440,10 @@ public class AppController implements Initializable {
     private void openWallet(Storage storage, WalletAndKey walletAndKey, AppController appController, boolean forceSameWindow) {
         try {
             storage.restorePublicKeysFromSeed(walletAndKey.getWallet(), walletAndKey.getKey());
-            if(!walletAndKey.getWallet().isValid()) {
-                throw new IllegalStateException("Wallet file is not valid.");
+            try {
+                walletAndKey.getWallet().checkWallet();
+            } catch(InvalidWalletException e) {
+                throw new IllegalStateException("Wallet file is not valid: " + e.getMessage());
             }
             AppController walletAppController = appController.addWalletTabOrWindow(storage, walletAndKey.getWallet(), forceSameWindow);
             for(Map.Entry<WalletAndKey, Storage> entry : walletAndKey.getChildWallets().entrySet()) {
@@ -1427,7 +1461,7 @@ public class AppController implements Initializable {
     }
 
     public void importWallet(ActionEvent event) {
-        List<WalletForm> selectedWalletForms = getSelectedWalletForms();
+        List<WalletForm> selectedWalletForms = getSelectedWalletForms().stream().filter(walletForm -> !walletForm.isLocked()).collect(Collectors.toList());
         WalletImportDialog dlg = new WalletImportDialog(selectedWalletForms);
         dlg.initOwner(rootStack.getScene().getWindow());
         Optional<List<Wallet>> optionalWallets = dlg.showAndWait();
@@ -1436,10 +1470,10 @@ public class AppController implements Initializable {
 
             for(Wallet wallet : wallets) {
                 List<WalletTabData> walletTabData = getOpenWalletTabData();
-                List<ExtendedKey> xpubs = wallet.getKeystores().stream().map(Keystore::getExtendedPublicKey).collect(Collectors.toList());
+                List<ExtendedKey> xpubs = wallet.getKeystores().stream().map(Keystore::getExtendedPublicKey).filter(Objects::nonNull).collect(Collectors.toList());
                 Optional<WalletForm> optNewWalletForm = walletTabData.stream()
                         .map(WalletTabData::getWalletForm)
-                        .filter(wf -> wf.getSettingsWalletForm() != null && wf.getSettingsWalletForm().getWallet().getPolicyType() == PolicyType.MULTI &&
+                        .filter(wf -> wf.getSettingsWalletForm() != null && wf.getSettingsWalletForm().getWallet().getPolicyType() == PolicyType.MULTI_HD &&
                                 wf.getSettingsWalletForm().getWallet().getScriptType() == wallet.getScriptType() && !wf.getSettingsWalletForm().getWallet().isValid() &&
                                 wf.getSettingsWalletForm().getWallet().getKeystores().stream().map(Keystore::getExtendedPublicKey).anyMatch(xpubs::contains)).findFirst();
                 if(optNewWalletForm.isPresent()) {
@@ -1504,7 +1538,14 @@ public class AppController implements Initializable {
             wallet.setCoin(com.sparrowwallet.drongo.Coin.get());
         }
 
-        WalletNameDialog nameDlg = new WalletNameDialog(wallet.getName(), true, wallet.getBirthDate());
+        try {
+            wallet.checkWallet();
+        } catch(InvalidWalletException e) {
+            showErrorDialog("Error Importing Wallet", "The imported wallet is not valid: " + e.getMessage());
+            return;
+        }
+
+        WalletNameDialog nameDlg = new WalletNameDialog(wallet.getName(), true, wallet.getPolicyType(), wallet.getBirthDate(), false);
         nameDlg.setFixedCoin(wallet.getCoin());
         nameDlg.initOwner(rootStack.getScene().getWindow());
         Optional<WalletNameDialog.NameAndBirthDate> optNameAndBirthDate = nameDlg.showAndWait();
@@ -1512,6 +1553,9 @@ public class AppController implements Initializable {
             WalletNameDialog.NameAndBirthDate nameAndBirthDate = optNameAndBirthDate.get();
             wallet.setName(nameAndBirthDate.getName());
             wallet.setBirthDate(nameAndBirthDate.getBirthDate());
+            if(wallet.getPolicyType() == PolicyType.SINGLE_SP && wallet.getBirthDate() == null) {
+                wallet.setBirthDate(new Date());
+            }
         } else {
             return;
         }
@@ -1519,6 +1563,7 @@ public class AppController implements Initializable {
         File walletFile = Storage.getExistingWallet(wallet.getName());
         if(walletFile != null) {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.initOwner(rootStack.getScene().getWindow());
             AppServices.setStageIcon(alert.getDialogPane().getScene().getWindow());
             alert.setTitle("Existing wallet found");
             alert.setHeaderText("Replace existing wallet?");
@@ -1619,7 +1664,6 @@ public class AppController implements Initializable {
                         log.error("Error saving imported wallet", e);
                     } finally {
                         com.sparrowwallet.drongo.Coin.endScope(previousCoin);
-                        encryptionFullKey.clear();
                         if(key != null) {
                             key.clear();
                         }
@@ -1668,9 +1712,9 @@ public class AppController implements Initializable {
     public void signVerifyMessage(ActionEvent event) {
         MessageSignDialog messageSignDialog = null;
         WalletForm selectedWalletForm = getSelectedWalletForm();
-        if(selectedWalletForm != null) {
+        if(selectedWalletForm != null && !selectedWalletForm.isLocked()) {
             Wallet wallet = selectedWalletForm.getWallet();
-            if(wallet.getKeystores().size() == 1) {
+            if(wallet.getPolicyType() == PolicyType.SINGLE_HD || wallet.getPolicyType() == PolicyType.SINGLE_SP) {
                 //Can sign and verify
                 messageSignDialog = new MessageSignDialog(wallet);
             }
@@ -1733,7 +1777,7 @@ public class AppController implements Initializable {
                 bitcoinUnit = wallet.getAutoUnit();
             }
 
-            sendToManyDialog = new SendToManyDialog(bitcoinUnit, initialPayments);
+            sendToManyDialog = new SendToManyDialog(wallet, bitcoinUnit, Config.get().getUnitFormat(), initialPayments);
             sendToManyDialog.initModality(Modality.NONE);
             Optional<List<Payment>> optPayments = sendToManyDialog.showAndWait();
             sendToManyDialog = null;
@@ -1749,7 +1793,7 @@ public class AppController implements Initializable {
     public void sweepPrivateKey(ActionEvent event) {
         Wallet wallet = null;
         WalletForm selectedWalletForm = getSelectedWalletForm();
-        if(selectedWalletForm != null && selectedWalletForm.getWallet().isValid()) {
+        if(selectedWalletForm != null && selectedWalletForm.getWallet().isValid() && !selectedWalletForm.isLocked()) {
             wallet = selectedWalletForm.getWallet();
         }
 
@@ -1895,6 +1939,14 @@ public class AppController implements Initializable {
         }
     }
 
+    //Go To and its shortcuts select a wallet function without tabbing back through the current one
+    public void goToFunction(ActionEvent event) {
+        WalletForm selectedWalletForm = getSelectedWalletForm();
+        if(selectedWalletForm != null && event.getSource() instanceof MenuItem item) {
+            EventManager.get().post(new FunctionShortcutEvent(Function.valueOf((String)item.getUserData()), selectedWalletForm.getWallet()));
+        }
+    }
+
     public void showWalletSummary(ActionEvent event) {
         Tab selectedTab = tabs.getSelectionModel().getSelectedItem();
         if(selectedTab != null) {
@@ -1977,13 +2029,10 @@ public class AppController implements Initializable {
             if(!name.equals(wallet.getName())) {
                 wallet.setName(name);
             }
-            Tab tab = new Tab("");
+            Tab tab = new Tab(name);
             WalletIcon walletIcon = new WalletIcon(storage, wallet);
             walletIcon.setOpacity(TAB_LABEL_GRAPHIC_OPACITY_ACTIVE);
-            Label tabLabel = new Label(name);
-            tabLabel.setGraphic(walletIcon);
-            tabLabel.setGraphicTextGap(5.0);
-            tab.setGraphic(tabLabel);
+            tab.setGraphic(walletIcon);
             tab.setClosable(true);
 
             TabPane subTabs = new TabPane();
@@ -2017,6 +2066,8 @@ public class AppController implements Initializable {
 
             tabs.getTabs().add(tab);
             tabs.getSelectionModel().select(tab);
+            //Focus goes to the new tab rather than falling to the status bar from the view the wallet was opened from
+            Platform.runLater(tabs::requestFocus);
 
             File oldWalletFile = renamedWallets.remove(storage.getWalletFile());
             if(oldWalletFile != null) {
@@ -2109,6 +2160,7 @@ public class AppController implements Initializable {
                 subTabLabel.setTooltip(new Tooltip(label));
             }
             subTab.setGraphic(subTabLabel);
+            subTab.textProperty().bind(subTabLabel.textProperty());
             FXMLLoader walletLoader = new FXMLLoader(getClass().getResource("wallet/wallet.fxml"));
             subTab.setContent(walletLoader.load());
             WalletController controller = walletLoader.getController();
@@ -2461,25 +2513,29 @@ public class AppController implements Initializable {
         return Collections.emptyList();
     }
 
-    private void addTransactionTab(String name, File file, String string) throws ParseException, PSBTParseException, TransactionParseException {
+    private void addTransactionTab(String name, File file, String string, PSBT contextPsbt) throws ParseException, PSBTParseException, TransactionParseException {
         if(Utils.isBase64(string) && !Utils.isHex(string)) {
-            addTransactionTab(name, file, Base64.getDecoder().decode(string));
+            addTransactionTab(name, file, Base64.getDecoder().decode(string), contextPsbt);
         } else if(Utils.isHex(string)) {
-            addTransactionTab(name, file, Utils.hexToBytes(string));
+            addTransactionTab(name, file, Utils.hexToBytes(string), contextPsbt);
         } else {
             throw new ParseException("Input is not base64 or hex", 0);
         }
     }
 
-    private void addTransactionTab(String name, File file, byte[] bytes) throws PSBTParseException, ParseException, TransactionParseException {
+    private void addTransactionTab(String name, File file, byte[] bytes, PSBT contextPsbt) throws PSBTParseException, ParseException, TransactionParseException {
         if(PSBT.isPSBT(bytes)) {
             //Don't verify signatures here - provided PSBT may omit UTXO data that can be found when combining with an existing PSBT
             PSBT psbt = new PSBT(bytes, false);
-            addTransactionTab(name, file, psbt);
+            if(verifyTransactionContext(contextPsbt, null, psbt, "loaded")) {
+                addTransactionTab(name, file, psbt);
+            }
         } else if(Transaction.isTransaction(bytes)) {
             try {
                 Transaction transaction = new Transaction(bytes);
-                addTransactionTab(name, file, transaction);
+                if(verifyTransactionContext(contextPsbt, transaction, null, "loaded")) {
+                    addTransactionTab(name, file, transaction);
+                }
             } catch(Exception e) {
                 throw new TransactionParseException(e.getMessage());
             }
@@ -2588,6 +2644,34 @@ public class AppController implements Initializable {
                 AppServices.showErrorDialog("Invalid PSBT", e.getMessage());
                 return;
             }
+
+            try {
+                psbt.verifySigHashes();
+            } catch(PSBTSignatureException e) {
+                Optional<ButtonType> result = AppServices.showWarningDialog("Non-Default Sighash",
+                        e.getMessage() + "\n\nReview this PSBT carefully before signing.\n\nOpen the transaction?", ButtonType.YES, ButtonType.NO);
+                if(result.isEmpty() || result.get() != ButtonType.YES) {
+                    return;
+                }
+            }
+        }
+
+        //Skip the warning for already-confirmed transactions loaded for inspection
+        if(blockTransaction == null) {
+            List<TransactionOutput> unknownScriptOutputs = new ArrayList<>();
+            for(int i = 0; i < transaction.getOutputs().size(); i++) {
+                TransactionOutput txOutput = transaction.getOutputs().get(i);
+                if(txOutput.getValue() > 0 && txOutput.getScript().getToAddress() == null) {
+                    //Silent payment outputs have an empty script and non-zero value until the recipient script is computed
+                    if(psbt != null && i < psbt.getPsbtOutputs().size() && psbt.getPsbtOutputs().get(i).getSilentPaymentAddress() != null) {
+                        continue;
+                    }
+                    unknownScriptOutputs.add(txOutput);
+                }
+            }
+            if(!unknownScriptOutputs.isEmpty() && !confirmUnknownScriptOutputs(unknownScriptOutputs)) {
+                return;
+            }
         }
 
         try {
@@ -2597,19 +2681,15 @@ public class AppController implements Initializable {
                 tabName = "[" + transaction.getTxId().toString().substring(0, 6) + "]";
             }
 
-            Tab tab = new Tab("");
+            Tab tab = new Tab(tabName);
             Glyph glyph = new Glyph("FontAwesome", FontAwesome.Glyph.SEND);
             glyph.setFontSize(10.0);
-            glyph.setOpacity(TAB_LABEL_GRAPHIC_OPACITY_ACTIVE);
-            Label tabLabel = new Label(tabName);
-            tabLabel.setMaxWidth(TAB_LABEL_MAX_WIDTH);
-            tabLabel.setGraphic(glyph);
-            tabLabel.setGraphicTextGap(5.0);
-            if(TextUtils.computeTextWidth(tabLabel.getFont(), tabName, 0.0D) > TAB_LABEL_MAX_WIDTH) {
-                Tooltip tooltip = new Tooltip(tabName);
-                tabLabel.setTooltip(tooltip);
-            }
-            tab.setGraphic(tabLabel);
+            //Wrapped so the tabs overflow menu, which can only copy Label and ImageView graphics, does not copy the glyph without its font
+            StackPane glyphPane = new StackPane(glyph);
+            glyphPane.setOpacity(TAB_LABEL_GRAPHIC_OPACITY_ACTIVE);
+            setTransactionTabWidth(tab);
+            tab.textProperty().addListener((observable, oldValue, newValue) -> setTransactionTabWidth(tab));
+            tab.setGraphic(glyphPane);
             tab.setContextMenu(getTabContextMenu(tab));
             tab.setClosable(true);
             FXMLLoader transactionLoader = new FXMLLoader(getClass().getResource("transaction/transaction.fxml"));
@@ -2659,6 +2739,8 @@ public class AppController implements Initializable {
 
             tabs.getTabs().add(tab);
             tabs.getSelectionModel().select(tab);
+            //The view the transaction was opened from is hidden, so focus goes to the new tab rather than falling to the status bar
+            Platform.runLater(tabs::requestFocus);
         } catch(IOException e) {
             throw new RuntimeException(e);
         }
@@ -2689,22 +2771,83 @@ public class AppController implements Initializable {
             if(!psbt.isFinalized()) {
                 //As per BIP174, combine PSBTs with matching transactions so long as they are not yet finalized
                 try {
-                    currentPsbt.verifyCombinedSignatures(psbt);
+                    PSBT combinedPsbt = currentPsbt.verifyCombinedSignatures(psbt);
+                    //A combine can resolve a silent payment output script, which is only valid if the metadata provided with it proves the claimed address
+                    verifySilentPaymentScripts(transactionTabData.getTransactionData().getSigningWallet(), combinedPsbt);
                     currentPsbt.combine(psbt);
                     setTabName(tab, name);
                     EventManager.get().post(new PSBTCombinedEvent(currentPsbt));
                 } catch(PSBTSignatureException e) {
                     AppServices.showErrorDialog("Invalid PSBT", e.getMessage());
+                } catch(InvalidSilentPaymentException e) {
+                    AppServices.showErrorDialog("Unverified Silent Payment Outputs", e.getMessage());
                 }
             } else {
                 //If the new PSBT is finalized, copy the finalized fields to the existing unfinalized PSBT
-                transactionTabData.setPsbt(psbt);
-                setTabName(tab, name);
-                EventManager.get().post(new PSBTFinalizedEvent(psbt));
+                try {
+                    //The finalized PSBT replaces the existing one, so its signatures are verified first. A finalized MWEB transaction differs from
+                    //the unfinalized one it was built from, so it cannot be matched against it and is taken as provided
+                    if(psbt.getPsbtKernels().isEmpty()) {
+                        currentPsbt.verifyFinalizedSignatures(psbt);
+                    }
+                    transactionTabData.setPsbt(psbt);
+                    setTabName(tab, name);
+                    EventManager.get().post(new PSBTFinalizedEvent(psbt));
+                } catch(PSBTSignatureException e) {
+                    AppServices.showErrorDialog("Invalid PSBT", e.getMessage());
+                }
             }
         }
 
         tabs.getSelectionModel().select(tab);
+    }
+
+    private boolean verifyPSBT(Wallet signingWallet, PSBT psbt) {
+        try {
+            verifySilentPaymentScripts(signingWallet, psbt);
+        } catch(InvalidSilentPaymentException e) {
+            showErrorDialog("Unverified Silent Payment Outputs", e.getMessage());
+            return false;
+        }
+
+        return true;
+    }
+
+    private void verifySilentPaymentScripts(Wallet signingWallet, PSBT psbt) throws InvalidSilentPaymentException {
+        if(signingWallet != null) {
+            signingWallet.verifySilentPaymentScripts(psbt);
+        }
+    }
+
+    private boolean verifyTransactionContext(PSBT contextPsbt, Transaction transaction, PSBT psbt, String source) {
+        if(contextPsbt == null || matchesOpenTransactionTab(transaction, psbt)) {
+            return true;
+        }
+
+        if(psbt == null && contextPsbt.possibleUnverifiableSilentPaymentsTransaction(transaction)) {
+            AppServices.showErrorDialog("Silent Payments Transaction", "This transaction pays a silent payment address.\n\nThe signing device must return the PSBT rather than the final transaction, so the silent payment outputs can be verified.");
+        } else {
+            AppServices.showErrorDialog("Mismatched Transaction", "The " + source + " transaction does not match the transaction in this or any other open tab.\n\nCheck that the correct transaction was signed and exported from the signing device.");
+        }
+
+        return false;
+    }
+
+    private boolean matchesOpenTransactionTab(Transaction transaction, PSBT psbt) {
+        for(Tab tab : tabs.getTabs()) {
+            TabData tabData = (TabData)tab.getUserData();
+            if(tabData instanceof TransactionTabData transactionTabData) {
+                if(transactionTabData.getPsbt() != null) {
+                    if(psbt != null ? transactionTabData.getPsbt().matches(psbt) : transactionTabData.getPsbt().matches(transaction)) {
+                        return true;
+                    }
+                } else if(transactionTabData.getTransaction().calculateTxId(false).equals(psbt != null ? psbt.getTransaction().getTxId() : transaction.getTxId())) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private boolean openUnverifiableTransaction(String tabName) {
@@ -2717,14 +2860,41 @@ public class AppController implements Initializable {
         return result.isPresent() && result.get() == ButtonType.YES;
     }
 
+    private boolean confirmUnknownScriptOutputs(List<TransactionOutput> unknownScriptOutputs) {
+        long totalAmount = unknownScriptOutputs.stream().mapToLong(TransactionOutput::getValue).sum();
+        UnitFormat format = Config.get().getUnitFormat() == null ? UnitFormat.DOT : Config.get().getUnitFormat();
+        BitcoinUnit unit = Config.get().getBitcoinUnit();
+        if(unit == null || unit.equals(BitcoinUnit.AUTO)) {
+            unit = totalAmount >= BitcoinUnit.getAutoThreshold() ? BitcoinUnit.BTC : BitcoinUnit.SATOSHIS;
+        }
+        String amount = unit.equals(BitcoinUnit.BTC) ? format.formatBtcValue(totalAmount) + " " + BitcoinUnit.BTC.getLabel() : format.formatSatsValue(totalAmount) + " " + BitcoinUnit.SATOSHIS.getLabel();
+        String outputDesc = unknownScriptOutputs.size() == 1 ? "an output" : unknownScriptOutputs.size() + " outputs";
+        Optional<ButtonType> result = AppServices.showWarningDialog("Unknown Script Type",
+                "This transaction contains " + outputDesc + " of a non-standard or unrecognised script type, totalling " + amount + ".\n\n" +
+                        SparrowWallet.APP_NAME + " cannot resolve these outputs to addresses, so they will not appear in the transaction diagram. " +
+                        "Review the individual output(s) in the transaction tree carefully before signing or broadcasting.\n\n" +
+                        "Open the transaction?", ButtonType.YES, ButtonType.NO);
+        return result.isPresent() && result.get() == ButtonType.YES;
+    }
+
     private String getTabName(Tab tab) {
-        return ((Label)tab.getGraphic()).getText();
+        return tab.getText();
     }
 
     private void setTabName(Tab tab, String name){
         if(name != null && !name.isEmpty()) {
-            ((Label)tab.getGraphic()).setText(name);
+            tab.setText(name);
         }
+    }
+
+    //The tab header sizes its label to the label's preferred width, so a long name is capped through the preferred width
+    private void setTransactionTabWidth(Tab tab) {
+        boolean longName = TextUtils.computeTextWidth(Font.getDefault(), tab.getText(), 0.0D) > TAB_LABEL_MAX_WIDTH;
+        tab.getStyleClass().remove(LONG_TRANSACTION_TAB_CLASS);
+        if(longName) {
+            tab.getStyleClass().add(LONG_TRANSACTION_TAB_CLASS);
+        }
+        tab.setTooltip(longName ? new Tooltip(tab.getText()) : null);
     }
 
     private ContextMenu getTabContextMenu(Tab tab) {
@@ -2904,7 +3074,7 @@ public class AppController implements Initializable {
     }
 
     private void deleteWallet(WalletForm selectedWalletForm) {
-        Optional<ButtonType> optButtonType = AppServices.showWarningDialog("Delete " + selectedWalletForm.getWallet().getMasterName() + "?", "The wallet file and any backups will be deleted. Are you sure?", ButtonType.NO, ButtonType.YES);
+        Optional<ButtonType> optButtonType = AppServices.showWarningDialog("Delete " + selectedWalletForm.getWallet().getMasterName() + "?", "The wallet file" + (selectedWalletForm.getStorage().isInWalletsDir() ? " and any backups" : "") + " will be deleted. Are you sure?", ButtonType.NO, ButtonType.YES);
         if(optButtonType.isPresent() && optButtonType.get() == ButtonType.YES) {
             Storage storage = selectedWalletForm.getStorage();
             if(selectedWalletForm.getMasterWallet().isEncrypted()) {
@@ -2915,13 +3085,11 @@ public class AppController implements Initializable {
                     keyDerivationService = new Storage.KeyDerivationService(storage, password.get(), true);
                     keyDerivationService.setOnSucceeded(workerStateEvent -> {
                         EventManager.get().post(new StorageEvent(selectedWalletForm.getWalletId(), TimedEvent.Action.END, "Done"));
-                        ECKey encryptionFullKey = keyDerivationService.getValue();
 
                         try {
                             tabs.getTabs().remove(tabs.getSelectionModel().getSelectedItem());
                             deleteStorage(storage, true);
                         } finally {
-                            encryptionFullKey.clear();
                             keyDerivationService = null;
                         }
                     });
@@ -3088,10 +3256,11 @@ public class AppController implements Initializable {
             Config.get().setTheme(selectedTheme);
         }
 
-        EventManager.get().post(new ThemeChangedEvent(selectedTheme));
+        EventManager.get().post(new ThemeChangedEvent(AppServices.getActiveTheme()));
     }
 
     private void serverToggleStartAnimation() {
+        serverToggleStopAnimation();
         Node thumbArea = serverToggle.lookup(".thumb-area");
         if(thumbArea != null) {
             Timeline timeline = AnimationUtil.getPulse(thumbArea, Duration.millis(600), 1.0, 0.25, 8);
@@ -3118,19 +3287,18 @@ public class AppController implements Initializable {
     }
 
     private void tabLabelStartAnimation(Tab tab) {
-        Label tabLabel = (Label) tab.getGraphic();
-        if(tabLabel.getUserData() == null) {
-            Timeline timeline = AnimationUtil.getPulse(tabLabel.getGraphic(), Duration.millis(1000), tabLabel.getGraphic().getOpacity(), 0.1, 8);
+        Node graphic = tab.getGraphic();
+        if(graphic.getUserData() == null) {
+            Timeline timeline = AnimationUtil.getPulse(graphic, Duration.millis(1000), graphic.getOpacity(), 0.1, 8);
             timeline.play();
-            tabLabel.setUserData(timeline);
+            graphic.setUserData(timeline);
         }
     }
 
     private void tabLabelAddFailure(Tab tab) {
-        Label tabLabel = (Label)tab.getGraphic();
-        WalletIcon walletIcon = (WalletIcon)tabLabel.getGraphic();
+        WalletIcon walletIcon = (WalletIcon)tab.getGraphic();
         if(walletIcon.addFailure()) {
-            tabLabel.setTooltip(new Tooltip("Error loading transaction history from server"));
+            tab.setTooltip(new Tooltip("Error loading transaction history from server"));
         }
     }
 
@@ -3151,20 +3319,19 @@ public class AppController implements Initializable {
     }
 
     private void tabLabelStopAnimation(Tab tab) {
-        Label tabLabel = (Label) tab.getGraphic();
-        if(tabLabel.getUserData() != null) {
-            Animation animation = (Animation)tabLabel.getUserData();
+        Node graphic = tab.getGraphic();
+        if(graphic.getUserData() != null) {
+            Animation animation = (Animation)graphic.getUserData();
             animation.stop();
-            tabLabel.setUserData(null);
-            tabLabel.getGraphic().setOpacity(tab.isSelected() ? TAB_LABEL_GRAPHIC_OPACITY_ACTIVE : TAB_LABEL_GRAPHIC_OPACITY_INACTIVE);
+            graphic.setUserData(null);
+            graphic.setOpacity(tab.isSelected() ? TAB_LABEL_GRAPHIC_OPACITY_ACTIVE : TAB_LABEL_GRAPHIC_OPACITY_INACTIVE);
         }
     }
 
     private void tabLabelRemoveFailure(Tab tab) {
-        Label tabLabel = (Label)tab.getGraphic();
-        WalletIcon walletIcon = (WalletIcon)tabLabel.getGraphic();
+        WalletIcon walletIcon = (WalletIcon)tab.getGraphic();
         walletIcon.removeFailure();
-        tabLabel.setTooltip(null);
+        tab.setTooltip(null);
     }
 
     private void setTorIcon() {
@@ -3192,19 +3359,29 @@ public class AppController implements Initializable {
 
     @Subscribe
     public void themeChanged(ThemeChangedEvent event) {
+        //Owned dialogs follow the main window stylesheets, but these non-modal dialogs have no owner
+        List<Scene> scenes = new ArrayList<>(List.of(tabs.getScene()));
+        if(sendToManyDialog != null) {
+            scenes.add(sendToManyDialog.getDialogPane().getScene());
+        }
+        if(searchWalletDialog != null) {
+            scenes.add(searchWalletDialog.getDialogPane().getScene());
+        }
+
         String darkCss = getClass().getResource("darktheme.css").toExternalForm();
-        if(event.getTheme() == Theme.DARK) {
-            if(!tabs.getScene().getStylesheets().contains(darkCss)) {
-                tabs.getScene().getStylesheets().add(darkCss);
+        for(Scene scene : scenes) {
+            if(event.getTheme() == Theme.DARK) {
+                if(!scene.getStylesheets().contains(darkCss)) {
+                    scene.getStylesheets().add(darkCss);
+                }
+            } else {
+                scene.getStylesheets().remove(darkCss);
             }
-        } else {
-            tabs.getScene().getStylesheets().remove(darkCss);
         }
 
         for(Tab tab : tabs.getTabs()) {
             if(tab.getUserData() instanceof WalletTabData) {
-                Label tabLabel = (Label)tab.getGraphic();
-                WalletIcon walletIcon = (WalletIcon)tabLabel.getGraphic();
+                WalletIcon walletIcon = (WalletIcon)tab.getGraphic();
                 walletIcon.refresh();
             }
         }
@@ -3310,8 +3487,7 @@ public class AppController implements Initializable {
                     Tab masterTab = subTabs.getTabs().stream().filter(tab -> isWalletSubTab(tab) && ((WalletTabData)tab.getUserData()).getWallet().isMasterWallet()).findFirst().orElse(subTabs.getTabs().get(0));
                     Label masterLabel = (Label)masterTab.getGraphic();
                     masterLabel.setText(event.getWallet().getLabel() != null ? event.getWallet().getLabel() : event.getWallet().getAutomaticName());
-                    Label tabLabel = (Label)walletTab.getGraphic();
-                    WalletIcon walletIcon = (WalletIcon)tabLabel.getGraphic();
+                    WalletIcon walletIcon = (WalletIcon)walletTab.getGraphic();
                     walletIcon.setWallet(event.getWallet());
                 }
             }
@@ -3411,6 +3587,10 @@ public class AppController implements Initializable {
                 }
 
                 notificationBuilder.show();
+                //The notification's close button shows only an icon
+                Platform.runLater(() -> Window.getWindows().stream().filter(window -> window instanceof Popup && window.getScene() != null)
+                        .map(window -> window.getScene().getRoot().lookup(".notification-bar .close-button")).filter(Objects::nonNull)
+                        .forEach(closeButton -> closeButton.setAccessibleText("Close")));
             }
         }
     }
@@ -3677,6 +3857,14 @@ public class AppController implements Initializable {
     }
 
     @Subscribe
+    public void cormorantImportStatus(CormorantImportStatusEvent event) {
+        String walletNames = event.getWallets().stream().map(Wallet::getFullDisplayName).collect(Collectors.joining(", "));
+        AppServices.showErrorDialog("Error importing Litecoin Core descriptors",
+                "Litecoin Core did not import " + (walletNames.isEmpty() ? "one or more descriptors" : "the descriptors for " + walletNames) + ":\n\n" + event.getErrorMessage() + "\n\n" +
+                        "Transactions and balances may be incomplete until the import succeeds.");
+    }
+
+    @Subscribe
     public void bwtBootStatus(BwtBootStatusEvent event) {
         serverToggle.setDisable(true);
         if(AppServices.isConnecting()) {
@@ -3739,12 +3927,6 @@ public class AppController implements Initializable {
     }
 
     @Subscribe
-    public void torExternalStatus(TorExternalStatusEvent event) {
-        serverToggle.setDisable(false);
-        statusUpdated(new StatusEvent(event.getStatus()));
-    }
-
-    @Subscribe
     public void newBlock(NewBlockEvent event) {
         setServerToggleTooltip(event.getHeight());
     }
@@ -3787,7 +3969,7 @@ public class AppController implements Initializable {
         if(tabs.getScene().getWindow().equals(event.getWindow())) {
             if(event.getBlockTransaction() != null) {
                 addTransactionTab(event.getBlockTransaction(), event.getInitialView(), event.getInitialIndex());
-            } else {
+            } else if(verifyTransactionContext(event.getContextPsbt(), event.getTransaction(), null, "scanned")) {
                 addTransactionTab(event.getTransaction(), event.getInitialView(), event.getInitialIndex());
             }
         }
@@ -3796,7 +3978,9 @@ public class AppController implements Initializable {
     @Subscribe
     public void viewPSBT(ViewPSBTEvent event) {
         if(tabs.getScene().getWindow().equals(event.getWindow())) {
-            addTransactionTab(event.getLabel(), event.getFile(), event.getPsbt());
+            if(verifyTransactionContext(event.getContextPsbt(), null, event.getPsbt(), "scanned")) {
+                addTransactionTab(event.getLabel(), event.getFile(), event.getPsbt());
+            }
         }
     }
 
@@ -3862,17 +4046,10 @@ public class AppController implements Initializable {
     public void requestTransactionOpen(RequestTransactionOpenEvent event) {
         if(tabs.getScene().getWindow().equals(event.getWindow())) {
             if(event.getFile() != null) {
-                openTransactionFile(event.getFile());
+                openTransactionFile(event.getFile(), event.getContextPsbt());
             } else {
-                openTransactionFromFile(null);
+                openTransactionFromFile(null, event.getContextPsbt());
             }
-        }
-    }
-
-    @Subscribe
-    public void requestQRScan(RequestQRScanEvent event) {
-        if(tabs.getScene().getWindow().equals(event.getWindow())) {
-            openTransactionFromQR(null);
         }
     }
 
@@ -3911,6 +4088,7 @@ public class AppController implements Initializable {
         if(selectedWalletForm != null && selectedWalletForm.getMasterWallet().equals(event.getWallet())) {
             lockWallet.setDisable(true);
             exportWallet.setDisable(true);
+            showPayNym.setDisable(true);
         }
 
         lockAllWallets.setDisable(allWalletsLocked(event.getWallet()));
@@ -3922,6 +4100,7 @@ public class AppController implements Initializable {
         if(selectedWalletForm != null && selectedWalletForm.getMasterWallet().equals(event.getWallet())) {
             lockWallet.setDisable(false);
             exportWallet.setDisable(!event.getWallet().isValid());
+            showPayNym.setDisable(exportWallet.isDisable() || !selectedWalletForm.getWallet().hasPaymentCode());
             lockAllWallets.setDisable(false);
         }
     }
@@ -3931,8 +4110,7 @@ public class AppController implements Initializable {
         for(Tab tab : tabs.getTabs()) {
             if(tab.getUserData() instanceof WalletTabData walletTabData) {
                 if(walletTabData.getWallet() == event.getWallet()) {
-                    Label tabLabel = (Label)tab.getGraphic();
-                    WalletIcon walletIcon = (WalletIcon)tabLabel.getGraphic();
+                    WalletIcon walletIcon = (WalletIcon)tab.getGraphic();
                     walletIcon.refresh();
                 }
             }

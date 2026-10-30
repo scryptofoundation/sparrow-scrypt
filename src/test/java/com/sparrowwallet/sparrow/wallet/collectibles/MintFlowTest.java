@@ -26,16 +26,16 @@ public class MintFlowTest {
     private static Wallet wallet(String name, ScriptType scriptType, KeystoreSource source) throws Exception {
         DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(WORDS), "", 0, DeterministicSeed.Type.BIP39);
         Wallet wallet = new Wallet(name);
-        wallet.setPolicyType(PolicyType.SINGLE);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
         wallet.setScriptType(scriptType);
-        Keystore keystore = Keystore.fromSeed(seed, scriptType.getDefaultDerivation());
+        Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, scriptType.getDefaultDerivation());
         if(source != KeystoreSource.SW_SEED) {
             keystore.setSeed(null);
             keystore.setMasterPrivateExtendedKey(null);
             keystore.setSource(source);
         }
         wallet.getKeystores().add(keystore);
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
         wallet.setCoin(Coin.LITECOIN);
         wallet.getNode(KeyPurpose.RECEIVE).fillToIndex(10);
         wallet.getNode(KeyPurpose.CHANGE).fillToIndex(10);
@@ -77,7 +77,7 @@ public class MintFlowTest {
     @Test
     public void mwebStartsWithPegOutToTaproot() throws Exception {
         Wallet mweb = new Wallet("mweb");
-        mweb.setPolicyType(PolicyType.SINGLE);
+        mweb.setPolicyType(PolicyType.SINGLE_HD);
         mweb.setScriptType(ScriptType.MWEB);
         mweb.setCoin(Coin.LITECOIN);
         Assertions.assertTrue(MintFlow.needsPegOut(mweb));

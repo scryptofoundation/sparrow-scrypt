@@ -5,9 +5,13 @@ import com.google.common.base.Throwables;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.net.HostAndPort;
 import com.sparrowwallet.drongo.Coin;
+import com.google.common.net.InetAddresses;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.OsType;
+import com.sparrowwallet.drongo.policy.PolicyType;
+import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
+import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.Mode;
 import com.sparrowwallet.sparrow.control.ComboBoxTextField;
@@ -52,10 +56,9 @@ import java.io.FileInputStream;
 import java.security.cert.CertificateFactory;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.Random;
+import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 public class ServerSettingsController extends SettingsDetailController {
     private static final Logger log = LoggerFactory.getLogger(ServerSettingsController.class);
@@ -208,6 +211,10 @@ public class ServerSettingsController extends SettingsDetailController {
 
     private Boolean useProxyOriginal;
 
+    private boolean coreServerWarningShown;
+
+    private String coreHttpsHost;
+
     @Override
     public void initializeView(Config config) {
         EventManager.get().register(this);
@@ -216,6 +223,7 @@ public class ServerSettingsController extends SettingsDetailController {
             if(connectionService != null && connectionService.isRunning()) {
                 connectionService.cancel();
             }
+            Platform.runLater(() -> showRemoteCoreServerWarning(config));
         });
 
         Platform.runLater(this::setupValidation);
@@ -224,6 +232,8 @@ public class ServerSettingsController extends SettingsDetailController {
         publicElectrumForm.managedProperty().bind(publicElectrumForm.visibleProperty());
         coreForm.managedProperty().bind(coreForm.visibleProperty());
         electrumForm.managedProperty().bind(electrumForm.visibleProperty());
+        //The results area is blank until a connection is tested, and an empty, unnamed Tab stop tells a screen reader user nothing
+        testResults.focusTraversableProperty().bind(testResults.textProperty().isNotEmpty());
         serverTypeToggleGroup.selectedToggleProperty().addListener((observable, oldValue, newValue) -> {
             if(serverTypeToggleGroup.getSelectedToggle() != null) {
                 ServerType existingType = config.getServerType();
@@ -253,6 +263,9 @@ public class ServerSettingsController extends SettingsDetailController {
         ServerType selectedType = ServerType.offeredOrElectrum(serverType, offeredTypes);
         serverTypeToggleGroup.selectToggle(serverTypeToggleGroup.getToggles().stream().filter(toggle -> toggle.getUserData() == selectedType).findFirst().orElse(null));
 
+        List<PolicyType> policyTypes = AppServices.get().getOpenWallets().keySet().stream().map(Wallet::getPolicyType).filter(Objects::nonNull).collect(Collectors.toList());
+        publicElectrumServer.setButtonCell(new PublicElectrumServerButtonCell());
+        publicElectrumServer.setCellFactory(_ -> new PublicElectrumServerListCell(policyTypes));
         publicElectrumServer.setItems(FXCollections.observableList(PublicElectrumServer.getServers()));
         publicElectrumServer.getSelectionModel().selectedItemProperty().addListener(getPublicElectrumServerListener(config));
 
@@ -319,7 +332,7 @@ public class ServerSettingsController extends SettingsDetailController {
         recentCoreServers.setCellFactory(value -> new ServerCell());
         recentCoreServers.setItems(getObservableServerList(Config.get().getRecentCoreServers()));
         recentCoreServers.prefWidthProperty().bind(coreHost.widthProperty());
-        recentCoreServers.valueProperty().addListener((observable, oldValue, newValue) -> {
+        coreHost.<Server>setOnChoose(newValue -> {
             if(newValue != null) {
                 if(newValue == MANAGE_ALIASES_SERVER) {
                     ServerAliasDialog serverAliasDialog = new ServerAliasDialog(ServerType.BITCOIN_CORE);
@@ -350,6 +363,7 @@ public class ServerSettingsController extends SettingsDetailController {
                     }
                 } else if(newValue.getHostAndPort() != null) {
                     HostAndPort hostAndPort = newValue.getHostAndPort();
+                    setCoreProtocol(newValue.getProtocol(), hostAndPort.getHost());
                     corePort.setText(hostAndPort.hasPort() ? Integer.toString(hostAndPort.getPort()) : "");
                     if(newValue.getAlias() != null) {
                         coreHost.setText(newValue.getAlias());
@@ -364,7 +378,7 @@ public class ServerSettingsController extends SettingsDetailController {
         recentElectrumServers.setCellFactory(value -> new ServerCell());
         recentElectrumServers.setItems(getObservableServerList(Config.get().getRecentElectrumServers()));
         recentElectrumServers.prefWidthProperty().bind(electrumHost.widthProperty());
-        recentElectrumServers.valueProperty().addListener((observable, oldValue, newValue) -> {
+        electrumHost.<Server>setOnChoose(newValue -> {
             if(newValue != null) {
                 if(newValue == MANAGE_ALIASES_SERVER) {
                     ServerAliasDialog serverAliasDialog = new ServerAliasDialog(ServerType.ELECTRUM_SERVER);
@@ -408,6 +422,13 @@ public class ServerSettingsController extends SettingsDetailController {
         });
 
         electrumUseSsl.selectedProperty().addListener((observable, oldValue, newValue) -> {
+            //An alias names a server at one protocol as it does at one port, so changing either leaves the host it names to be connected to as entered.
+            //The config is set whether or not the host field changed, since an alias that is also its server's host is replaced by the same text
+            Server aliasServer = config.getRecentElectrumServers().stream().filter(server -> electrumHost.getText().equals(server.getAlias())).findFirst().orElse(null);
+            if(aliasServer != null && !isElectrumAliasEntered(aliasServer)) {
+                electrumHost.setText(aliasServer.getHost());
+            }
+            electrumHost.setLeft(aliasServer != null && isElectrumAliasEntered(aliasServer) ? getGlyph(FontAwesome5.Glyph.TAG, null) : null);
             setElectrumServerInConfig(config);
             electrumCertificate.setDisable(!newValue);
             electrumCertificateSelect.setDisable(!newValue);
@@ -437,7 +458,7 @@ public class ServerSettingsController extends SettingsDetailController {
         });
 
         useProxy.selectedProperty().addListener((observable, oldValue, newValue) -> {
-            config.setUseProxy(newValue);
+            config.setUseProxy(newValue && config.getProxyServer() != null && !config.getProxyServer().isBlank());
             proxyHost.setText(proxyHost.getText() + " ");
             proxyHost.setText(proxyHost.getText().trim());
             proxyHost.setDisable(!newValue);
@@ -456,6 +477,7 @@ public class ServerSettingsController extends SettingsDetailController {
         testConnection.setVisible(!isConnected);
         setTestResultsFont();
         testConnection.setOnAction(event -> {
+            showRemoteCoreServerWarning(config);
             testConnection.setGraphic(getGlyph(FontAwesome5.Glyph.ELLIPSIS_H, null));
             testResults.setText("Connecting " + (config.hasServer() ? "to " + config.getServer().getUrl() : "") + "...");
 
@@ -474,13 +496,15 @@ public class ServerSettingsController extends SettingsDetailController {
             setFieldsEditable(true);
             editConnection.setVisible(false);
             testConnection.setVisible(true);
+            //The button pressed is hidden, so focus moves to the one that takes its place rather than falling to the dialog's Close button
+            testConnection.requestFocus();
         });
 
         PublicElectrumServer configPublicElectrumServer = PublicElectrumServer.fromServer(config.getPublicElectrumServer());
         if(configPublicElectrumServer == null && PublicElectrumServer.supportedNetwork()) {
             List<PublicElectrumServer> servers = PublicElectrumServer.getServers();
             if(!servers.isEmpty()) {
-                publicElectrumServer.setValue(servers.get(new Random().nextInt(servers.size())));
+                publicElectrumServer.setValue(servers.get(ThreadLocalRandom.current().nextInt(servers.size())));
             }
         } else {
             publicElectrumServer.setValue(configPublicElectrumServer);
@@ -488,15 +512,17 @@ public class ServerSettingsController extends SettingsDetailController {
 
         Server coreServer = config.getCoreServer();
         if(coreServer != null) {
+            setCoreProtocol(coreServer.getProtocol(), coreServer.getHost());
             HostAndPort hostAndPort = coreServer.getHostAndPort();
             Server server = config.getRecentCoreServers().stream().filter(coreServer::equals).findFirst().orElse(null);
             if(server != null) {
                 coreHost.setLeft(getGlyph(FontAwesome5.Glyph.TAG, null));
             }
-            coreHost.setText(server == null || server.getAlias() == null ? hostAndPort.getHost() : server.getAlias());
+            //The port is set first, as an alias in the host field is only kept while the port field holds the port of the server it names
             if(hostAndPort.hasPort()) {
                 corePort.setText(Integer.toString(hostAndPort.getPort()));
             }
+            coreHost.setText(server == null || server.getAlias() == null ? hostAndPort.getHost() : server.getAlias());
         } else {
             coreHost.setText("127.0.0.1");
             corePort.setText(String.valueOf(Network.get().getDefaultPort()));
@@ -527,10 +553,10 @@ public class ServerSettingsController extends SettingsDetailController {
             if(server != null) {
                 electrumHost.setLeft(getGlyph(FontAwesome5.Glyph.TAG, null));
             }
-            electrumHost.setText(server == null || server.getAlias() == null ? hostAndPort.getHost() : server.getAlias());
             if(hostAndPort.hasPort()) {
                 electrumPort.setText(Integer.toString(hostAndPort.getPort()));
             }
+            electrumHost.setText(server == null || server.getAlias() == null ? hostAndPort.getHost() : server.getAlias());
         }
 
         File certificateFile = config.getElectrumServerCert();
@@ -583,6 +609,10 @@ public class ServerSettingsController extends SettingsDetailController {
     private void startElectrumConnection() {
         if(connectionService != null && connectionService.isRunning()) {
             connectionService.cancel();
+        }
+
+        if(AppServices.cancelConnection()) {
+            getMasterController().reconnectOnClosingProperty().set(true);
         }
 
         connectionService = new ElectrumServer.ConnectionService(false);
@@ -681,8 +711,8 @@ public class ServerSettingsController extends SettingsDetailController {
 
     private void showConnectionSuccess(List<String> serverVersion, String serverBanner) {
         testConnection.setGraphic(getGlyph(FontAwesome5.Glyph.CHECK_CIRCLE, "success"));
-        if(serverVersion != null) {
-            testResults.setText("Connected to " + serverVersion.get(0) + " on protocol version " + serverVersion.get(1));
+        if(serverVersion != null && !serverVersion.isEmpty()) {
+            testResults.setText("Connected to " + serverVersion.getFirst() + (serverVersion.size() > 1 ? " on protocol version " + serverVersion.get(1) : ""));
             ServerCapability serverCapability = ElectrumServer.getServerCapability(serverVersion);
             if(serverCapability.supportsBatching()) {
                 testResults.setText(testResults.getText() + "\nBatched RPC enabled.");
@@ -691,6 +721,8 @@ public class ServerSettingsController extends SettingsDetailController {
         if(serverBanner != null) {
             testResults.setText(testResults.getText() + "\nServer Banner: " + serverBanner);
         }
+        //Focus moves to the result so it is read out once the test finishes
+        testResults.requestFocus();
     }
 
     private void showConnectionFailure(Throwable exception) {
@@ -739,6 +771,7 @@ public class ServerSettingsController extends SettingsDetailController {
 
         testResults.setText("Could not connect:\n\n" + reason);
         testConnection.setGraphic(getGlyph(FontAwesome5.Glyph.EXCLAMATION_CIRCLE, "failure"));
+        testResults.requestFocus();
     }
 
     //Inscription and rune checks are Litecoin only. The public server indexes mainnet only, so other networks offer
@@ -889,7 +922,7 @@ public class ServerSettingsController extends SettingsDetailController {
         ));
 
         validationSupport.registerValidator(proxyHost, Validator.combine(
-                (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Proxy host required", useProxy.isSelected() && newValue.isEmpty()),
+                (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Proxy host required", useProxy.isSelected() && newValue.isBlank()),
                 (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Invalid host name", getHost(newValue) == null)
         ));
 
@@ -913,7 +946,7 @@ public class ServerSettingsController extends SettingsDetailController {
     private ChangeListener<String> getBitcoinCoreListener(Config config) {
         return (observable, oldValue, newValue) -> {
             Server existingServer = config.getRecentCoreServers().stream().filter(server -> coreHost.getText().equals(server.getAlias())).findFirst().orElse(null);
-            if(existingServer != null && !existingServer.portEquals(corePort.getText())) {
+            if(existingServer != null && !isCoreAliasEntered(existingServer)) {
                 coreHost.setText(existingServer.getHost());
                 existingServer = null;
             }
@@ -924,6 +957,7 @@ public class ServerSettingsController extends SettingsDetailController {
                 if(Protocol.getProtocol(oldValue) == null) {
                     HostAndPort hostAndPort = protocol.getServerHostAndPort(newValue);
                     if(!hostAndPort.getHost().isEmpty()) {
+                        setCoreProtocol(protocol, hostAndPort.getHost());
                         coreHost.setText(hostAndPort.getHost());
                         corePort.setText(hostAndPort.hasPort() ? String.valueOf(hostAndPort.getPort()) : "");
                     }
@@ -938,7 +972,7 @@ public class ServerSettingsController extends SettingsDetailController {
 
     private void setCoreServerInConfig(Config config) {
         Server existingServer = config.getRecentCoreServers().stream().filter(server -> coreHost.getText().equals(server.getAlias())).findFirst().orElse(null);
-        if(existingServer != null) {
+        if(existingServer != null && isCoreAliasEntered(existingServer)) {
             config.setCoreServer(existingServer);
             return;
         }
@@ -946,12 +980,76 @@ public class ServerSettingsController extends SettingsDetailController {
         String hostAsString = getHost(coreHost.getText());
         Integer portAsInteger = getPort(corePort.getText());
         if(hostAsString != null && !hostAsString.isEmpty() && portAsInteger != null && isValidPort(portAsInteger)) {
-            Protocol protocol = portAsInteger == Protocol.HTTPS.getDefaultPort() ? Protocol.HTTPS : Protocol.HTTP;
+            Protocol protocol = portAsInteger == Protocol.HTTPS.getDefaultPort() || hostAsString.equalsIgnoreCase(coreHttpsHost) ? Protocol.HTTPS : Protocol.HTTP;
             config.setCoreServer(new Server(protocol.toUrlString(hostAsString, portAsInteger)));
+        } else if(hostAsString != null && !hostAsString.isEmpty() && !corePort.getText().isBlank()) {
+            //An invalid port leaves the server as it was, rather than connecting to the default port as an empty one does
+            return;
         } else if(hostAsString != null && !hostAsString.isEmpty()) {
-            config.setCoreServer(new Server(Protocol.HTTP.toUrlString(hostAsString)));
+            Protocol protocol = hostAsString.equalsIgnoreCase(coreHttpsHost) ? Protocol.HTTPS : Protocol.HTTP;
+            config.setCoreServer(new Server(protocol.toUrlString(hostAsString)));
         } else {
             config.setCoreServer(null);
+        }
+    }
+
+    //An entered https is retained for the host it was entered on only, so that editing the host to another server returns to http as a typed or scanned host without a scheme does
+    private void setCoreProtocol(Protocol protocol, String host) {
+        coreHttpsHost = protocol == Protocol.HTTPS ? host : null;
+    }
+
+    //Whether an alias in the host field still names its server: an alias names a server at one port and one protocol, and an https entered for a
+    //host that is also the alias of an http server is not that server. Only such an alias can be the host an entered https leaves in the field
+    private boolean isCoreAliasEntered(Server aliasServer) {
+        return aliasServer.portEquals(corePort.getText()) && !(aliasServer.getProtocol() == Protocol.HTTP && aliasServer.getHost().equalsIgnoreCase(coreHttpsHost)
+                && aliasServer.getHost().equalsIgnoreCase(aliasServer.getAlias()));
+    }
+
+    private void showRemoteCoreServerWarning(Config config) {
+        Server coreServer = config.getCoreServer();
+        if(!coreServerWarningShown && config.getServerType() == ServerType.BITCOIN_CORE && isRemoteNode(coreServer)) {
+            coreServerWarningShown = true;
+
+            //A host that is not an IP literal is not resolved here, so it can only be reported as unconfirmed
+            String location = InetAddresses.isInetAddress(coreServer.getHost()) ? " is not on" : " could not be confirmed to be on";
+            String coreName = Coin.get().getCoreName();
+            StringBuilder warning = new StringBuilder(coreName + " at " + coreServer.getHostAndPort() + location + " this computer or your local network.\n");
+            if(AppServices.isUsingProxy()) {
+                String proxy = config.isUseProxy() ? "configured proxy" : "internal Tor proxy";
+                warning.append("\nConnections to " + coreName + " are made directly, and the " + proxy + " is only used for onion addresses. ");
+                warning.append("Your IP address will be visible to the node.\n");
+            }
+            if(coreServer.getProtocol() == Protocol.HTTP) {
+                warning.append("\nThe RPC credentials and wallet descriptors sent to it are unencrypted, and can be read by anyone on the network path.\n");
+            } else if(Storage.getCertificateFile(coreServer.getHost()) == null) {
+                warning.append("\nThe certificate presented by the node on the first connection will be trusted and required on all connections thereafter.\n");
+            }
+            warning.append("\nConnecting to the " + coreName + " RPC interface over an untrusted network is not recommended by either " + SparrowWallet.APP_NAME + " or " + coreName + ". ");
+            warning.append("Consider using a node on this computer or your local network, connecting over a Tor onion address, or tunnelling to it over a VPN or SSH.");
+
+            AppServices.showWarningDialog("Remote " + coreName + " node", warning.toString());
+        }
+    }
+
+    private boolean isRemoteNode(Server coreServer) {
+        if(coreServer == null || coreServer.isOnionAddress()) {
+            return false;
+        }
+
+        String host = coreServer.getHost();
+        if(IpAddressMatcher.isLocalNetworkName(host)) {
+            return false;
+        }
+
+        if(!InetAddresses.isInetAddress(host)) {
+            //Resolving a hostname here would block the user interface thread, and an unresolved host cannot be shown to be local
+            return true;
+        }
+
+        try {
+            return !IpAddressMatcher.isLocalNetworkAddress(host);
+        } catch(IllegalArgumentException e) {
+            return true;
         }
     }
 
@@ -966,7 +1064,7 @@ public class ServerSettingsController extends SettingsDetailController {
     private ChangeListener<String> getElectrumServerListener(Config config) {
         return (observable, oldValue, newValue) -> {
             Server existingServer = config.getRecentElectrumServers().stream().filter(server -> electrumHost.getText().equals(server.getAlias())).findFirst().orElse(null);
-            if(existingServer != null && !existingServer.portEquals(electrumPort.getText())) {
+            if(existingServer != null && !isElectrumAliasEntered(existingServer)) {
                 electrumHost.setText(existingServer.getHost());
                 existingServer = null;
             }
@@ -990,9 +1088,14 @@ public class ServerSettingsController extends SettingsDetailController {
         };
     }
 
+    //Whether an alias in the host field still names its server at the port and protocol entered
+    private boolean isElectrumAliasEntered(Server aliasServer) {
+        return aliasServer.portEquals(electrumPort.getText()) && aliasServer.getProtocol() == getProtocol();
+    }
+
     private void setElectrumServerInConfig(Config config) {
         Server existingServer = config.getRecentElectrumServers().stream().filter(server -> electrumHost.getText().equals(server.getAlias())).findFirst().orElse(null);
-        if(existingServer != null) {
+        if(existingServer != null && isElectrumAliasEntered(existingServer)) {
             config.setElectrumServer(existingServer);
             return;
         }
@@ -1001,6 +1104,9 @@ public class ServerSettingsController extends SettingsDetailController {
         Integer portAsInteger = getPort(electrumPort.getText());
         if(hostAsString != null && !hostAsString.isEmpty() && portAsInteger != null && isValidPort(portAsInteger)) {
             config.setElectrumServer(new Server(getProtocol().toUrlString(hostAsString, portAsInteger)));
+        } else if(hostAsString != null && !hostAsString.isEmpty() && !electrumPort.getText().isBlank()) {
+            //An invalid port leaves the server as it was, rather than connecting to the default port as an empty one does
+            return;
         } else if(hostAsString != null && !hostAsString.isEmpty()) {
             config.setElectrumServer(new Server(getProtocol().toUrlString(hostAsString)));
         } else {
@@ -1015,14 +1121,26 @@ public class ServerSettingsController extends SettingsDetailController {
                 return;
             }
 
-            String hostAsString = getHost(proxyHost.getText());
-            Integer portAsInteger = getPort(proxyPort.getText());
-            if(hostAsString != null && portAsInteger != null && isValidPort(portAsInteger)) {
-                config.setProxyServer(HostAndPort.fromParts(hostAsString, portAsInteger).toString());
-            } else if(hostAsString != null) {
-                config.setProxyServer(HostAndPort.fromHost(hostAsString).toString());
-            }
+            setProxyConfig(config);
         };
+    }
+
+    private void setProxyConfig(Config config) {
+        String hostAsString = getHost(proxyHost.getText());
+        Integer portAsInteger = getPort(proxyPort.getText());
+        String proxyServer = null;
+        if(hostAsString != null && !hostAsString.isBlank() && portAsInteger != null && isValidPort(portAsInteger)) {
+            proxyServer = HostAndPort.fromParts(hostAsString, portAsInteger).toString();
+        } else if(hostAsString != null && !hostAsString.isBlank() && !proxyPort.getText().isBlank()) {
+            //An invalid port leaves the proxy as it was, rather than connecting to the default port as an empty one does. With no proxy to leave, the
+            //default port is used all the same, since a proxy that fails to connect is better than connecting without one
+            proxyServer = config.getProxyServer() != null ? config.getProxyServer() : HostAndPort.fromHost(hostAsString).toString();
+        } else if(hostAsString != null && !hostAsString.isBlank()) {
+            proxyServer = HostAndPort.fromHost(hostAsString).toString();
+        }
+
+        config.setProxyServer(proxyServer);
+        config.setUseProxy(useProxy.isSelected() && proxyServer != null);
     }
 
     private Protocol getProtocol() {
@@ -1031,7 +1149,7 @@ public class ServerSettingsController extends SettingsDetailController {
 
     private String getHost(String text) {
         try {
-            return HostAndPort.fromHost(text).getHost();
+            return HostAndPort.fromHost(text.trim()).getHost();
         } catch(IllegalArgumentException e) {
             return null;
         }
@@ -1183,6 +1301,40 @@ public class ServerSettingsController extends SettingsDetailController {
                     setText(server.getHost());
                     setGraphic(null);
                 }
+            }
+        }
+    }
+
+    private static class PublicElectrumServerButtonCell extends ListCell<PublicElectrumServer> {
+        @Override
+        protected void updateItem(PublicElectrumServer server, boolean empty) {
+            super.updateItem(server, empty);
+            if(server == null || empty) {
+                setText(null);
+                setGraphic(null);
+            } else {
+                setText(server.toString());
+                setGraphic(null);
+            }
+        }
+    }
+
+    private static class PublicElectrumServerListCell extends ListCell<PublicElectrumServer> {
+        private final List<PolicyType> openPolicyTypes;
+
+        public PublicElectrumServerListCell(List<PolicyType> openPolicyTypes) {
+            this.openPolicyTypes = openPolicyTypes;
+        }
+
+        @Override
+        protected void updateItem(PublicElectrumServer server, boolean empty) {
+            super.updateItem(server, empty);
+            if(server == null || empty) {
+                setText(null);
+                setGraphic(null);
+            } else {
+                setText(server + (openPolicyTypes.contains(PolicyType.SINGLE_SP) && server.isSupportedPolicyType(PolicyType.SINGLE_SP) ? " (supports Silent Payments)" : ""));
+                setGraphic(null);
             }
         }
     }

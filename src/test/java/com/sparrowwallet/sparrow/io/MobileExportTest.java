@@ -47,7 +47,7 @@ public class MobileExportTest {
 
         Assertions.assertEquals("Mobile Export", wallet.getName());
         Assertions.assertEquals(Network.MAINNET, wallet.getNetwork());
-        Assertions.assertEquals(PolicyType.SINGLE, wallet.getPolicyType());
+        Assertions.assertEquals(PolicyType.SINGLE_HD, wallet.getPolicyType());
         Assertions.assertEquals(ScriptType.P2WPKH, wallet.getScriptType());
         Assertions.assertEquals(1, wallet.getDefaultPolicy().getNumSignaturesRequired());
         Assertions.assertEquals("m/84'/2'/0'", wallet.getKeystores().get(0).getKeyDerivation().getDerivationPath());
@@ -60,7 +60,7 @@ public class MobileExportTest {
 
         // desktop re-derives fingerprint/xpub from the decrypted seed (as the app does on
         // open); they must match what mobile wrote
-        Keystore derived = Keystore.fromSeed(copyKeystore.getSeed(), copyKeystore.getKeyDerivation().getDerivation());
+        Keystore derived = Keystore.fromSeed(copyKeystore.getSeed(), PolicyType.SINGLE_HD, copyKeystore.getKeyDerivation().getDerivation());
         Assertions.assertEquals("73c5da0a", derived.getKeyDerivation().getMasterFingerprint());
         Assertions.assertEquals(mobileXpub, derived.getExtendedPublicKey().toString());
 

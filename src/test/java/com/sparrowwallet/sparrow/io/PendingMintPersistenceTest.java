@@ -95,6 +95,8 @@ public class PendingMintPersistenceTest extends IoTest {
         open.savePendingMints(opened);
         Assertions.assertNotNull(opened.getPendingMints().getFirst().getId());
 
+        //The file is locked while its storage is open, so reopen it as the app would after closing the wallet
+        open.closeAndWait();
         List<PendingMint> loaded = new Storage(open.getWalletFile()).loadEncryptedWallet("pass").getWallet().getPendingMints();
         Assertions.assertEquals(1, loaded.size());
         Assertions.assertEquals(COMMIT, loaded.getFirst().getCommitTxid());

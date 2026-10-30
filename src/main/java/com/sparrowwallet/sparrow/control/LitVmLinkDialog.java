@@ -236,7 +236,6 @@ public class LitVmLinkDialog extends Dialog<LitVmLinkDialog.Choice> {
         keyDerivationService.setOnSucceeded(workerStateEvent -> {
             ECKey encryptionFullKey = keyDerivationService.getValue();
             Key key = new Key(encryptionFullKey.getPrivKeyBytes(), storage.getKeyDeriver().getSalt(), EncryptionType.Deriver.ARGON2);
-            encryptionFullKey.clear();
             try {
                 action.accept(key);
             } finally {

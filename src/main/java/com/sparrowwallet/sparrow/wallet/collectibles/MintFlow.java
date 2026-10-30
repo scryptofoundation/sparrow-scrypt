@@ -72,7 +72,7 @@ public final class MintFlow {
         if(wallet.getCoin() != Coin.LITECOIN) {
             return Optional.of("Inscriptions and runes are minted from Litecoin wallets only.");
         }
-        if(wallet.getPolicyType() != PolicyType.SINGLE) {
+        if(wallet.getPolicyType() != PolicyType.SINGLE_HD) {
             return Optional.of("Minting works from single-signature wallets only.");
         }
         for(Keystore keystore : wallet.getKeystores()) {
@@ -360,11 +360,7 @@ public final class MintFlow {
 
     private static Transaction signReveal(Wallet decryptedTaproot, String keyPath, InscriptionMint.Plan plan, TransactionOutput commitOutput) throws MnemonicException {
         ECKey key = decryptedTaproot.getKeystores().getFirst().getKey(new WalletNode(decryptedTaproot, keyPath));
-        try {
-            return InscriptionMint.reveal(plan, commitOutput, key);
-        } finally {
-            key.clear();
-        }
+        return InscriptionMint.reveal(plan, commitOutput, key);
     }
 
     /**

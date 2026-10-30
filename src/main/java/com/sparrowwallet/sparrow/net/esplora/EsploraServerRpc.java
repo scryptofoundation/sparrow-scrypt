@@ -4,19 +4,26 @@ import com.github.arteam.simplejsonrpc.client.Transport;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.protocol.Sha256Hash;
 import com.sparrowwallet.drongo.protocol.Transaction;
+import com.sparrowwallet.drongo.wallet.BlockTransactionHash;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletNode;
 import com.sparrowwallet.sparrow.net.BlockHeaderTip;
+import com.sparrowwallet.sparrow.net.BlockHeaders;
 import com.sparrowwallet.sparrow.net.BlockStats;
 import com.sparrowwallet.sparrow.net.ElectrumServerRpc;
 import com.sparrowwallet.sparrow.net.ElectrumServerRpcException;
 import com.sparrowwallet.sparrow.net.ScriptHashTx;
+import com.sparrowwallet.sparrow.net.ServerFeatures;
+import com.sparrowwallet.sparrow.net.SilentPaymentsSubscription;
+import com.sparrowwallet.sparrow.net.TransactionMerkleProof;
+import com.sparrowwallet.sparrow.net.UnsupportedMethodException;
 import com.sparrowwallet.sparrow.net.VerboseTransaction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -375,5 +382,36 @@ public class EsploraServerRpc implements ElectrumServerRpc {
         }
 
         return pathAddresses;
+    }
+
+    @Override
+    public SilentPaymentsSubscription subscribeSilentPayments(Transport transport, Wallet wallet, String scanPrivKeyHex, String spendPubKeyHex, Object start, int[] labels) {
+        throw new UnsupportedMethodException("blockchain.silentpayments.subscribe", null);
+    }
+
+    @Override
+    public String unsubscribeSilentPayments(Transport transport, String scanPrivKeyHex, String spendPubKeyHex) {
+        throw new UnsupportedMethodException("blockchain.silentpayments.unsubscribe", null);
+    }
+
+    //Header and merkle verification is off for every coin (Network.supportsHeaderVerification), so these are never asked of an Esplora server
+    @Override
+    public Map<String, TransactionMerkleProof> getTransactionMerkleProofs(Transport transport, Wallet wallet, Collection<BlockTransactionHash> references) {
+        throw new UnsupportedMethodException("blockchain.transaction.get_merkle", null);
+    }
+
+    @Override
+    public ServerFeatures getServerFeatures(Transport transport) {
+        throw new UnsupportedMethodException("server.features", null);
+    }
+
+    @Override
+    public BlockHeaders getBlockHeadersChunk(Transport transport, int startHeight, int count) {
+        throw new UnsupportedMethodException("blockchain.block.headers", null);
+    }
+
+    @Override
+    public Map<Integer, BlockHeaders> getBlockHeadersChunks(Transport transport, Map<Integer, Integer> startHeightCounts) {
+        throw new UnsupportedMethodException("blockchain.block.headers", null);
     }
 }

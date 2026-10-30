@@ -109,7 +109,7 @@ public class SeedBackup implements WalletImport {
         if(backupPassword == null || backupPassword.isEmpty()) {
             throw new ExportException("A backup password is required.");
         }
-        if(masterWallet.getPolicyType() != PolicyType.SINGLE || masterWallet.getKeystores().size() != 1) {
+        if(masterWallet.getPolicyType() != PolicyType.SINGLE_HD || masterWallet.getKeystores().size() != 1) {
             throw new ExportException("Seed backups are only available for single signature wallets.");
         }
         DeterministicSeed seed = decryptedKeystore.getSeed();
@@ -130,7 +130,7 @@ public class SeedBackup implements WalletImport {
         Keystore walletKeystore = masterWallet.getKeystores().getFirst();
         DeterministicKey walletAccountKey = walletKeystore.getExtendedPublicKey().getKey();
         try {
-            Keystore derived = Keystore.fromSeed(seed, walletKeystore.getKeyDerivation().getDerivation());
+            Keystore derived = Keystore.fromSeed(seed, masterWallet.getPolicyType(), walletKeystore.getKeyDerivation().getDerivation());
             if(!sameKey(derived.getExtendedPublicKey().getKey(), walletAccountKey)) {
                 throw new ExportException("The seed does not reproduce this wallet's keys (is the passphrase correct?). No backup was written.");
             }
@@ -283,7 +283,7 @@ public class SeedBackup implements WalletImport {
 
         Coin coin = Coin.valueOf(payload.get("coin").getAsString());
         ScriptType scriptType = ScriptType.valueOf(payload.get("scriptType").getAsString());
-        if(!ScriptType.getScriptTypesForPolicyType(PolicyType.SINGLE).contains(scriptType) && scriptType != ScriptType.MWEB) {
+        if(!ScriptType.getScriptTypesForPolicyType(PolicyType.SINGLE_HD).contains(scriptType) && scriptType != ScriptType.MWEB) {
             throw new ImportException("Unsupported script type in backup: " + scriptType);
         }
 
@@ -298,7 +298,7 @@ public class SeedBackup implements WalletImport {
         Coin previousCoin = Coin.beginScope(coin);
         try {
             DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(words), passphrase, 0, seedType);
-            Keystore keystore = Keystore.fromSeed(seed, derivation);
+            Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, derivation);
 
             if(payload.has("accountKey")) {
                 DeterministicKey restoredKey = keystore.getExtendedPublicKey().getKey();
@@ -312,10 +312,10 @@ public class SeedBackup implements WalletImport {
             Wallet wallet = new Wallet(payload.get("walletName").getAsString());
             wallet.setCoin(coin);
             wallet.setNetwork(network);
-            wallet.setPolicyType(PolicyType.SINGLE);
+            wallet.setPolicyType(PolicyType.SINGLE_HD);
             wallet.setScriptType(scriptType);
             wallet.getKeystores().add(keystore);
-            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
             if(payload.has("birthDate")) {
                 wallet.setBirthDate(new Date(payload.get("birthDate").getAsLong()));
             }

@@ -28,6 +28,7 @@ public class TransactionDiagramLabel extends HBox {
 
         left = new Button("");
         left.setGraphic(getLeftGlyph());
+        left.setAccessibleText("Previous Output");
         left.setOnAction(event -> {
             int index = displayedIndex.get();
             if(index > 0) {
@@ -38,6 +39,7 @@ public class TransactionDiagramLabel extends HBox {
 
         right = new Button("");
         right.setGraphic(getRightGlyph());
+        right.setAccessibleText("Next Output");
         right.setOnAction(event -> {
             int index = displayedIndex.get();
             if(index < outputs.size() - 1) {
@@ -96,22 +98,38 @@ public class TransactionDiagramLabel extends HBox {
                 outputLabels.add(remixOutputLabel);
             }
         } else {
-            List<Payment> payments = walletTx.getExternalPayments().stream().filter(payment -> payment.getType() == Payment.Type.DEFAULT).collect(Collectors.toList());
-            List<OutputLabel> paymentLabels = payments.stream().map(payment -> getOutputLabel(transactionDiagram, payment)).collect(Collectors.toList());
-            if(walletTx.getSelectedUtxos().values().stream().allMatch(Objects::isNull)) {
-                paymentLabels.sort(Comparator.comparingInt(paymentLabel -> (paymentLabel.text.startsWith("Receive") ? 0 : 1)));
+            List<OutputLabel> externalLabels = new ArrayList<>();
+            List<OutputLabel> consolidationLabels = new ArrayList<>();
+            List<OutputLabel> mixLabels = new ArrayList<>();
+            for(WalletTransaction.Output output : walletTx.getOutputs()) {
+                if(transactionDiagram.isPaymentAndNotChange(output)) {
+                    Payment payment = output instanceof WalletTransaction.PaymentOutput po ? po.getPayment() : ((WalletTransaction.ConsolidationOutput)output).getWalletNodePayment();
+                    if(payment.getType() == Payment.Type.MIX || payment.getType() == Payment.Type.FAKE_MIX) {
+                        mixLabels.add(getOutputLabel(transactionDiagram, output));
+                    } else if(payment.getType() == Payment.Type.DEFAULT || payment.getType() == Payment.Type.ANCHOR) {
+                        if(output instanceof WalletTransaction.ConsolidationOutput || output instanceof WalletTransaction.SilentPaymentConsolidationOutput) {
+                            consolidationLabels.add(getOutputLabel(transactionDiagram, output));
+                        } else {
+                            externalLabels.add(getOutputLabel(transactionDiagram, output));
+                        }
+                    }
+                }
             }
-            outputLabels.addAll(paymentLabels);
-
-            List<Payment> consolidations = walletTx.getWalletNodePayments().stream().filter(payment -> payment.getType() == Payment.Type.DEFAULT).collect(Collectors.toList());
-            outputLabels.addAll(consolidations.stream().map(consolidation -> getOutputLabel(transactionDiagram, consolidation)).collect(Collectors.toList()));
-
-            List<Payment> mixes = walletTx.getPayments().stream().filter(payment -> payment.getType() == Payment.Type.MIX || payment.getType() == Payment.Type.FAKE_MIX).collect(Collectors.toList());
-            outputLabels.addAll(mixes.stream().map(payment -> getOutputLabel(transactionDiagram, payment)).collect(Collectors.toList()));
+            if(walletTx.getSelectedUtxos().values().stream().allMatch(Objects::isNull)) {
+                externalLabels.sort(Comparator.comparingInt(paymentLabel -> (paymentLabel.text.startsWith("Receive") ? 0 : 1)));
+            }
+            outputLabels.addAll(externalLabels);
+            outputLabels.addAll(consolidationLabels);
+            outputLabels.addAll(mixLabels);
         }
 
-        Map<WalletNode, Long> changeMap = walletTx.getChangeMap();
-        outputLabels.addAll(changeMap.entrySet().stream().map(changeEntry -> getOutputLabel(transactionDiagram, changeEntry)).collect(Collectors.toList()));
+        for(WalletTransaction.Output output : walletTx.getOutputs()) {
+            if(output instanceof WalletTransaction.SilentPaymentChangeOutput spChange) {
+                outputLabels.add(getOutputLabel(transactionDiagram, spChange));
+            } else if(output instanceof WalletTransaction.ChangeOutput changeOutput) {
+                outputLabels.add(getOutputLabel(transactionDiagram, changeOutput));
+            }
+        }
 
         OutputLabel feeOutputLabel = getFeeOutputLabel(transactionDiagram);
         if(feeOutputLabel != null) {
@@ -200,22 +218,31 @@ public class TransactionDiagramLabel extends HBox {
         return getOutputLabel(glyph, text);
     }
 
-    private OutputLabel getOutputLabel(TransactionDiagram transactionDiagram, Payment payment) {
+    private OutputLabel getOutputLabel(TransactionDiagram transactionDiagram, WalletTransaction.Output output) {
         WalletTransaction walletTx = transactionDiagram.getWalletTransaction();
+        Payment payment = output instanceof WalletTransaction.PaymentOutput po ? po.getPayment() : ((WalletTransaction.ConsolidationOutput)output).getWalletNodePayment();
+        boolean spConsolidation = output instanceof WalletTransaction.SilentPaymentConsolidationOutput;
         Wallet toWallet = walletTx.getToWallet(AppServices.get().getOpenWallets().keySet(), payment);
         WalletNode toNode = payment instanceof WalletNodePayment walletNodePayment ? walletNodePayment.getWalletNode() : null;
 
-        Glyph glyph = GlyphUtils.getOutputGlyph(transactionDiagram.getWalletTransaction(), payment);
-        String text = (toWallet == null ? (toNode != null ? "Consolidate " : "Pay ") : "Receive ") + transactionDiagram.getCoinValue(payment.getAmount()) + " to " + payment;
+        Glyph glyph = GlyphUtils.getOutputGlyph(walletTx, payment);
+        String text = (toNode != null || spConsolidation ? "Consolidate " : (toWallet == null ? "Pay " : "Receive ")) + transactionDiagram.getCoinValue(payment.getAmount()) + " to " + payment;
 
         return getOutputLabel(glyph, text);
     }
 
-    private OutputLabel getOutputLabel(TransactionDiagram transactionDiagram, Map.Entry<WalletNode, Long> changeEntry) {
+    private OutputLabel getOutputLabel(TransactionDiagram transactionDiagram, WalletTransaction.ChangeOutput changeOutput) {
         WalletTransaction walletTx = transactionDiagram.getWalletTransaction();
 
         Glyph glyph = GlyphUtils.getChangeGlyph();
-        String text = "Change of " + transactionDiagram.getCoinValue(changeEntry.getValue()) + " to " + walletTx.getChangeAddress(changeEntry.getKey()).toString();
+        String text = "Change of " + transactionDiagram.getCoinValue(changeOutput.getValue()) + " to " + walletTx.getChangeAddress(changeOutput.getWalletNode()).toString();
+
+        return getOutputLabel(glyph, text);
+    }
+
+    private OutputLabel getOutputLabel(TransactionDiagram transactionDiagram, WalletTransaction.SilentPaymentChangeOutput spChangeOutput) {
+        Glyph glyph = GlyphUtils.getChangeGlyph();
+        String text = "Change of " + transactionDiagram.getCoinValue(spChangeOutput.getSilentPayment().getAmount()) + " to " + spChangeOutput.getSilentPayment();
 
         return getOutputLabel(glyph, text);
     }

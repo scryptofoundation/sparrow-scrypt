@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.drongo.Coin;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
 import com.sparrowwallet.sparrow.io.Config;
@@ -51,9 +52,13 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
     }
 
     public WalletNameDialog(String initialName, boolean hasExistingTransactions, Date startDate, boolean rename) {
+        this(initialName, hasExistingTransactions, null, startDate, rename);
+    }
+
+    public WalletNameDialog(String initialName, boolean hasExistingTransactions, PolicyType walletPolicyType, Date startDate, boolean rename) {
         final DialogPane dialogPane = getDialogPane();
         AppServices.setStageIcon(dialogPane.getScene().getWindow());
-        boolean requestBirthDate = !rename && (Config.get().getServerType() == null || Config.get().getServerType() == ServerType.BITCOIN_CORE);
+        boolean requestBirthDate = !rename && (walletPolicyType == PolicyType.SINGLE_SP || Config.get().getServerType() == null || Config.get().getServerType() == ServerType.BITCOIN_CORE);
 
         setTitle("Wallet Name");
         dialogPane.setHeaderText("Enter a name for this wallet:");
@@ -70,7 +75,7 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
 
         Glyph wallet = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.WALLET);
         wallet.setFontSize(50);
-        dialogPane.setGraphic(wallet);
+        dialogPane.setGraphic(new DecorativePane(wallet));
 
         final VBox content = new VBox(20);
         name = (CustomTextField)TextFields.createClearableTextField();
@@ -79,7 +84,12 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
             change.setText(change.getText().replaceAll("[\\\\/:*?\"<>|;`]", "_"));
             return change;
         }));
-        content.getChildren().add(name);
+        //The dialog header is the field's only label, so a hidden label names it for screen readers with no visible change
+        Label nameLabel = new Label("Wallet name");
+        nameLabel.setLabelFor(name);
+        nameLabel.setVisible(false);
+        nameLabel.setManaged(false);
+        content.getChildren().addAll(name, nameLabel);
 
         HBox coinBox = new HBox(10);
         Label coinLabel = new Label("Coin:");

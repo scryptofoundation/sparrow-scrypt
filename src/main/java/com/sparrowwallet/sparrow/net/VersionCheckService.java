@@ -4,6 +4,7 @@ import com.sparrowwallet.drongo.Version;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.address.InvalidAddressException;
 import com.sparrowwallet.drongo.crypto.ECKey;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.SparrowWallet;
@@ -32,9 +33,11 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
                 com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
                 try {
                     VersionCheck versionCheck = getVersionCheck();
-                    version = versionCheck.version;
-                    if(isNewer(versionCheck) && verifySignature(versionCheck)) {
-                        return new VersionUpdatedEvent(versionCheck.version);
+                    if(verifySignature(versionCheck)) {
+                        version = versionCheck.version;
+                        if(isNewer(versionCheck)) {
+                            return new VersionUpdatedEvent(versionCheck.version);
+                        }
                     }
                 } catch(IOException e) {
                     log.error("Error retrieving version check file", e);
@@ -61,6 +64,11 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
     }
 
     private boolean verifySignature(VersionCheck versionCheck) {
+        if(versionCheck == null || versionCheck.version == null || versionCheck.signatures == null) {
+            log.warn("Invalid version check file");
+            return false;
+        }
+
         try {
             for(String addressString : versionCheck.signatures.keySet()) {
                 if(!addressString.equals("1LiJx1HQ49L2LzhBwbgwXdHiGodvPg5YaV")) {
@@ -71,7 +79,7 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
                 String signature = versionCheck.signatures.get(addressString);
                 ECKey signedMessageKey = ECKey.signedMessageToKey(versionCheck.version, signature, false);
                 Address providedAddress = Address.fromString(addressString);
-                Address signedMessageAddress = ScriptType.P2PKH.getAddress(signedMessageKey);
+                Address signedMessageAddress = ScriptType.P2PKH.getAddress(PolicyType.SINGLE_HD, signedMessageKey);
 
                 if(providedAddress.equals(signedMessageAddress)) {
                     return true;

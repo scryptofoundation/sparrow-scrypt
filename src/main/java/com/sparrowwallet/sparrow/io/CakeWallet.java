@@ -69,15 +69,15 @@ public class CakeWallet {
             }
 
             DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(words), passphrase == null ? "" : passphrase, 0, seedType);
-            Keystore keystore = Keystore.fromSeed(seed, derivation);
+            Keystore keystore = Keystore.fromSeed(seed, PolicyType.SINGLE_HD, derivation);
             keystore.setLabel("Cake Wallet");
 
             Wallet wallet = new Wallet("Cake Wallet " + coin.toDisplayString());
             wallet.setCoin(coin);
-            wallet.setPolicyType(PolicyType.SINGLE);
+            wallet.setPolicyType(PolicyType.SINGLE_HD);
             wallet.setScriptType(scriptType);
             wallet.getKeystores().add(keystore);
-            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
 
             if(includeMweb && coin.isMwebSupported()) {
                 wallet.addMwebChildWallet();
