@@ -1,5 +1,8 @@
 package com.sparrowwallet.sparrow.io;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.crypto.Argon2KeyDeriver;
 import com.sparrowwallet.drongo.crypto.ECKey;
@@ -14,6 +17,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
@@ -72,6 +76,40 @@ public class SparrowLinkExportTest {
                 copy.getKeystores().get(0).getKeyDerivation().getDerivation());
         Assertions.assertEquals("73c5da0a", derived.getKeyDerivation().getMasterFingerprint());
         Assertions.assertEquals(keystore.getExtendedPublicKey().toString(), derived.getExtendedPublicKey().toString());
+    }
+
+    @Test
+    public void exportCarriesTheWalletsCoin() throws Exception {
+        //A wallet that follows the process coin (no coin field) still exports its effective coin
+        Assertions.assertEquals("LITECOIN", plainExportJson(singleSig("Ltc Link Test", ScriptType.P2WPKH, null)).get("coin").getAsString());
+
+        Coin previous = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            Wallet wallet = singleSig("Doge Link Test", ScriptType.P2PKH, Coin.DOGECOIN);
+            Assertions.assertEquals("m/44'/3'/0'", wallet.getKeystores().get(0).getKeyDerivation().getDerivationPath());
+            JsonObject json = plainExportJson(wallet);
+            Assertions.assertEquals("DOGECOIN", json.get("coin").getAsString());
+            Assertions.assertEquals("P2PKH", json.get("scriptType").getAsString());
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    private static Wallet singleSig(String name, ScriptType scriptType, Coin coin) throws Exception {
+        DeterministicSeed seed = new DeterministicSeed(MNEMONIC, "", 0, DeterministicSeed.Type.BIP39);
+        Wallet wallet = new Wallet(name);
+        wallet.setCoin(coin);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
+        wallet.setScriptType(scriptType);
+        wallet.getKeystores().add(Keystore.fromSeed(seed, PolicyType.SINGLE_HD, scriptType.getDefaultDerivation()));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), null));
+        return wallet;
+    }
+
+    private static JsonObject plainExportJson(Wallet wallet) throws Exception {
+        File file = new File(Files.createTempDirectory("sparrow-link-plain").toFile(), wallet.getName());
+        byte[] exported = SparrowLinkExport.exportJsonWallet(wallet, new Storage(file));
+        return JsonParser.parseString(new String(exported, StandardCharsets.UTF_8)).getAsJsonObject();
     }
 
     @Test

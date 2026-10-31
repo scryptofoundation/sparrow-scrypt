@@ -45,9 +45,12 @@ public class SparrowLinkExport {
         if(exportedWallet.getPolicyType() != PolicyType.SINGLE_HD || exportedWallet.getKeystores().size() != 1) {
             throw new ExportException("Only single-signature wallets can be pushed to mobile");
         }
-        if(exportedWallet.getScriptType() != ScriptType.P2WPKH && exportedWallet.getScriptType() != ScriptType.MWEB) {
-            throw new ExportException("Mobile currently supports Native Segwit (P2WPKH) and MWEB wallets — this wallet is "
-                    + exportedWallet.getScriptType().getName());
+        ScriptType scriptType = exportedWallet.getScriptType();
+        boolean mobileScriptType = scriptType == ScriptType.P2PKH || scriptType == ScriptType.P2SH_P2WPKH || scriptType == ScriptType.P2WPKH
+                || (scriptType == ScriptType.MWEB && exportedWallet.getCoin() == com.sparrowwallet.drongo.Coin.LITECOIN);
+        if(!mobileScriptType) {
+            throw new ExportException("Mobile supports Legacy, Nested Segwit, Native Segwit and Litecoin MWEB wallets. This wallet is "
+                    + scriptType.getName());
         }
         if(exportedWallet.getNetwork() != Network.MAINNET && exportedWallet.getNetwork() != Network.TESTNET) {
             throw new ExportException("Mobile supports mainnet and testnet wallets — this wallet is on "
@@ -89,6 +92,7 @@ public class SparrowLinkExport {
         JsonObject json = new JsonObject();
         json.addProperty("name", wallet.getName());
         json.addProperty("network", wallet.getNetwork().name());
+        json.addProperty("coin", wallet.getCoin().name());
         json.addProperty("policyType", wallet.getPolicyType().name());
         json.addProperty("scriptType", wallet.getScriptType().name());
 
