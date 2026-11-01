@@ -28,10 +28,12 @@ import java.util.List;
 
 /**
  * Stands in for the webcam when a PC has none: feeds the phone's animated export QR, as the text of each
- * frame in scan order, through the scan dialog's own UR decoding, keeps the P2WPKH keystore the way the
+ * frame in scan order, through the scan dialog's own UR decoding, keeps the keystore of the chosen script type the way the
  * airgapped import pane does with the Sparrow Mobile importer, and writes the watch-only wallet for the
  * app to open. Env SPARROW_MOBILE_SCAN_FRAMES is the frames file (one QR text per line);
- * SPARROW_MOBILE_SCAN_OUT is the new wallet file (refuses to overwrite). Regtest, Litecoin, no password.
+ * SPARROW_MOBILE_SCAN_OUT is the new wallet file (refuses to overwrite); SPARROW_MOBILE_SCAN_COIN (a Coin name,
+ * default LITECOIN) and SPARROW_MOBILE_SCAN_SCRIPT_TYPE (a ScriptType name, default P2WPKH) pick the wallet.
+ * Regtest, no password.
  */
 public class SparrowMobileScanImportLiveTest {
     @Test
@@ -39,12 +41,14 @@ public class SparrowMobileScanImportLiveTest {
         String framesPath = System.getenv("SPARROW_MOBILE_SCAN_FRAMES");
         String outPath = System.getenv("SPARROW_MOBILE_SCAN_OUT");
         Assumptions.assumeTrue(framesPath != null && outPath != null);
+        Coin coin = Coin.valueOf(System.getenv().getOrDefault("SPARROW_MOBILE_SCAN_COIN", "LITECOIN"));
+        ScriptType scriptType = ScriptType.valueOf(System.getenv().getOrDefault("SPARROW_MOBILE_SCAN_SCRIPT_TYPE", "P2WPKH"));
         File out = new File(outPath);
         Assertions.assertFalse(out.exists(), "refusing to overwrite " + out);
 
         Network previousNetwork = Network.get();
         Network.set(Network.REGTEST);
-        Coin previousCoin = Coin.beginScope(Coin.LITECOIN);
+        Coin previousCoin = Coin.beginScope(coin);
         try {
             URDecoder decoder = new URDecoder();
             List<String> frames = Files.readAllLines(Path.of(framesPath)).stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
@@ -73,7 +77,7 @@ public class SparrowMobileScanImportLiveTest {
 
             //as FileImportPane.getScannedKeystore does for the chosen importer
             SparrowMobile importer = new SparrowMobile();
-            Keystore keystore = result.wallets.stream().filter(w -> w.getScriptType() == ScriptType.P2WPKH && !w.getKeystores().isEmpty())
+            Keystore keystore = result.wallets.stream().filter(w -> w.getScriptType() == scriptType && !w.getKeystores().isEmpty())
                     .findFirst().orElseThrow().getKeystores().get(0);
             if(Keystore.DEFAULT_LABEL.equals(keystore.getLabel())) {
                 keystore.setLabel(importer.getName());
@@ -82,12 +86,12 @@ public class SparrowMobileScanImportLiveTest {
             keystore.setWalletModel(importer.getWalletModel());
 
             Wallet wallet = new Wallet(out.getName().replace(".mv.db", ""));
-            wallet.setCoin(Coin.LITECOIN);
+            wallet.setCoin(coin);
             wallet.setNetwork(Network.REGTEST);
             wallet.setPolicyType(PolicyType.SINGLE_HD);
-            wallet.setScriptType(ScriptType.P2WPKH);
+            wallet.setScriptType(scriptType);
             wallet.getKeystores().add(keystore);
-            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, ScriptType.P2WPKH, wallet.getKeystores(), 1));
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
             Assertions.assertTrue(wallet.isValid());
             Assertions.assertEquals(WalletModel.SPARROW_MOBILE, keystore.getWalletModel());
             Assertions.assertEquals("Sparrow Mobile", keystore.getLabel());
@@ -95,7 +99,7 @@ public class SparrowMobileScanImportLiveTest {
             Storage storage = new Storage(out);
             storage.setEncryptionPubKey(Storage.NO_PASSWORD_KEY);
             storage.saveWallet(wallet);
-            System.out.println("wrote " + out + " from " + frames.size() + " frames");
+            System.out.println("wrote " + coin + " " + scriptType + " " + out + " from " + frames.size() + " frames");
             System.out.println("keystore " + keystore.getKeyDerivation().getMasterFingerprint() + " " + keystore.getKeyDerivation().getDerivationPath()
                     + " " + keystore.getExtendedPublicKey().toString() + " model " + keystore.getWalletModel() + " label " + keystore.getLabel());
             System.out.println("first receive address " + wallet.getFreshNode(KeyPurpose.RECEIVE).getAddress().getAddress(Network.REGTEST));
