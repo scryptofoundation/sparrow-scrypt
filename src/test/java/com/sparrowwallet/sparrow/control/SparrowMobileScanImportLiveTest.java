@@ -10,6 +10,7 @@ import com.sparrowwallet.drongo.wallet.Keystore;
 import com.sparrowwallet.drongo.wallet.KeystoreSource;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletModel;
+import com.sparrowwallet.drongo.wallet.WalletNode;
 import com.sparrowwallet.hummingbird.ResultType;
 import com.sparrowwallet.hummingbird.UR;
 import com.sparrowwallet.hummingbird.URDecoder;
@@ -33,7 +34,7 @@ import java.util.List;
  * app to open. Env SPARROW_MOBILE_SCAN_FRAMES is the frames file (one QR text per line);
  * SPARROW_MOBILE_SCAN_OUT is the new wallet file (refuses to overwrite); SPARROW_MOBILE_SCAN_COIN (a Coin name,
  * default LITECOIN) and SPARROW_MOBILE_SCAN_SCRIPT_TYPE (a ScriptType name, default P2WPKH) pick the wallet.
- * Regtest, no password.
+ * SPARROW_MOBILE_SCAN_NETWORK (a Network name, default REGTEST) is the wallet's network. No password.
  */
 public class SparrowMobileScanImportLiveTest {
     @Test
@@ -43,11 +44,12 @@ public class SparrowMobileScanImportLiveTest {
         Assumptions.assumeTrue(framesPath != null && outPath != null);
         Coin coin = Coin.valueOf(System.getenv().getOrDefault("SPARROW_MOBILE_SCAN_COIN", "LITECOIN"));
         ScriptType scriptType = ScriptType.valueOf(System.getenv().getOrDefault("SPARROW_MOBILE_SCAN_SCRIPT_TYPE", "P2WPKH"));
+        Network network = Network.valueOf(System.getenv().getOrDefault("SPARROW_MOBILE_SCAN_NETWORK", "REGTEST"));
         File out = new File(outPath);
         Assertions.assertFalse(out.exists(), "refusing to overwrite " + out);
 
         Network previousNetwork = Network.get();
-        Network.set(Network.REGTEST);
+        Network.set(network);
         Coin previousCoin = Coin.beginScope(coin);
         try {
             URDecoder decoder = new URDecoder();
@@ -87,7 +89,7 @@ public class SparrowMobileScanImportLiveTest {
 
             Wallet wallet = new Wallet(out.getName().replace(".mv.db", ""));
             wallet.setCoin(coin);
-            wallet.setNetwork(Network.REGTEST);
+            wallet.setNetwork(network);
             wallet.setPolicyType(PolicyType.SINGLE_HD);
             wallet.setScriptType(scriptType);
             wallet.getKeystores().add(keystore);
@@ -102,7 +104,9 @@ public class SparrowMobileScanImportLiveTest {
             System.out.println("wrote " + coin + " " + scriptType + " " + out + " from " + frames.size() + " frames");
             System.out.println("keystore " + keystore.getKeyDerivation().getMasterFingerprint() + " " + keystore.getKeyDerivation().getDerivationPath()
                     + " " + keystore.getExtendedPublicKey().toString() + " model " + keystore.getWalletModel() + " label " + keystore.getLabel());
-            System.out.println("first receive address " + wallet.getFreshNode(KeyPurpose.RECEIVE).getAddress().getAddress(Network.REGTEST));
+            WalletNode first = wallet.getFreshNode(KeyPurpose.RECEIVE);
+            System.out.println("first receive address " + first.getAddress().getAddress(network));
+            System.out.println("second receive address " + wallet.getFreshNode(KeyPurpose.RECEIVE, first).getAddress().getAddress(network));
         } finally {
             Coin.endScope(previousCoin);
             Network.set(previousNetwork);
