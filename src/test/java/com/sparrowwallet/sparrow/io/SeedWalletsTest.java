@@ -57,14 +57,18 @@ public class SeedWalletsTest {
     @Test
     public void nintondoDefaultsToNativeSegwitOverItsLegacyKeys() throws Exception {
         List<SeedWallets.Account> accounts = seedWallet("Nintondo").accountsFor(Coin.BELLSCOIN);
-        Assertions.assertEquals(2, accounts.size());
+        Assertions.assertEquals(3, accounts.size());
         Assertions.assertEquals(ScriptType.P2WPKH, accounts.get(0).scriptType());
         Assertions.assertEquals(ScriptType.P2PKH, accounts.get(1).scriptType());
+        Assertions.assertEquals(ScriptType.P2TR, accounts.get(2).scriptType());
         //Nintondo derives every address type from the same m/44' keys
-        Assertions.assertEquals("m/44'/0'/0'", accounts.get(0).derivationPath());
-        Assertions.assertEquals("m/44'/0'/0'", accounts.get(1).derivationPath());
+        for(SeedWallets.Account account : accounts) {
+            Assertions.assertEquals("m/44'/0'/0'", account.derivationPath());
+        }
         Assertions.assertEquals("bel1qh07eu8daq4xvgefnq567dfrv8dssxm0ruw2q2a", firstAddress("Nintondo", Coin.BELLSCOIN, 0, ""));
         Assertions.assertEquals("BMb5oFUiW5cYqA4zfEtyQiZgW884vg1vKT", firstAddress("Nintondo", Coin.BELLSCOIN, 1, ""));
+        //bellhdw's p2tr({internalPubkey: toXOnly(key)}) is BIP86 key-only Taproot; computed outside drongo
+        Assertions.assertEquals("bel1paacjc7szg778dqsx3amwy7t02p8j5hsd9em3gxlq9jl9rl88jf3s53f3ea", firstAddress("Nintondo", Coin.BELLSCOIN, 2, ""));
     }
 
     @Test

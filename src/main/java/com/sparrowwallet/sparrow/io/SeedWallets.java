@@ -52,12 +52,13 @@ public class SeedWallets {
             new SeedWallet("MyDoge", "Restores MyDoge's Legacy (D) addresses at m/44'/3'/0'.",
                     List.of(new Account(Coin.DOGECOIN, ScriptType.P2PKH, "m/44'/3'/0'", "", "Legacy"))),
             //Nintondo/extension: bellhdw falls back to "bells", and every address type comes from the same m/44'/0'/0'/0/i
-            //keys (the m/84' and m/86' paths it shows are labels only). Native Segwit is its default. Its Taproot type
-            //needs Bellscoin Taproot, which is not enabled here, and its "Ordinals" restore option is not covered.
+            //keys (the m/84' and m/86' paths it shows are labels only). Native Segwit is its default. Its Taproot type is
+            //p2tr({internalPubkey: toXOnly(key)}), BIP86 key-only. Its "Ordinals" restore option is not covered.
             new SeedWallet("Nintondo", "Adds Nintondo's built-in passphrase \"bells\" and restores m/44'/0'/0' with the address type the Nintondo wallet uses:\n" +
-                    "Native Segwit (bel1) is Nintondo's default, Legacy (B) the other choice there. Its Taproot type is not supported yet.",
+                    "Native Segwit (bel1q) is Nintondo's default; Legacy (B) and Taproot (bel1p) are the other choices there.",
                     List.of(new Account(Coin.BELLSCOIN, ScriptType.P2WPKH, "m/44'/0'/0'", "bells", "Native Segwit (default)"),
-                            new Account(Coin.BELLSCOIN, ScriptType.P2PKH, "m/44'/0'/0'", "bells", "Legacy"))),
+                            new Account(Coin.BELLSCOIN, ScriptType.P2PKH, "m/44'/0'/0'", "bells", "Legacy"),
+                            new Account(Coin.BELLSCOIN, ScriptType.P2TR, "m/44'/0'/0'", "bells", "Taproot"))),
             //mvdnbrk/peppool-wallet src/utils/crypto.ts: each Peppool account is m/44'/3434'/N'/0/0
             new SeedWallet("Peppool", "Restores the first Peppool account's Legacy (P) address at m/44'/3434'/0'.\n" +
                     "Peppool puts each further account at the next account number: add them afterwards from the wallet's Settings > Add Account.",
