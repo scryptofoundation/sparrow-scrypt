@@ -49,6 +49,23 @@ public class CollectiblesManagerTest {
         Assertions.assertTrue(CollectiblesManager.unknownIn(snapshot, List.of(released)).isEmpty());
     }
 
+    /** Nintondo indexes inscriptions only: its "clean" for an output of a dunestone or runestone transaction proves nothing. */
+    @Test
+    public void inscriptionOnlyIndexerCannotClearTokenOutputs() {
+        com.sparrowwallet.drongo.protocol.Transaction dunes = new com.sparrowwallet.drongo.protocol.Transaction();
+        dunes.addInput(Sha256Hash.ZERO_HASH, 0, new com.sparrowwallet.drongo.protocol.Script(new byte[0]));
+        dunes.addOutput(100000, new com.sparrowwallet.drongo.protocol.Script(com.sparrowwallet.drongo.Utils.hexToBytes("76a914" + "00".repeat(20) + "88ac")));
+        dunes.addOutput(0, new com.sparrowwallet.drongo.protocol.Script(com.sparrowwallet.drongo.Utils.hexToBytes("6a014400")));
+        String outpoint = dunes.getTxId() + ":0";
+        OrdOutput clean = new OrdOutput(outpoint, true, List.of(), Map.of(), 0, false, false);
+
+        Assertions.assertFalse(CollectiblesManager.vouchedFor(clean, dunes, false).indexed());
+        Assertions.assertTrue(CollectiblesManager.vouchedFor(clean, dunes, true).indexed(), "ord with a rune index vouches for it");
+        Assertions.assertTrue(CollectiblesManager.vouchedFor(clean, null, false).indexed());
+        OrdOutput carrying = new OrdOutput(outpoint, true, List.of(ID), Map.of(), 0, false, false);
+        Assertions.assertSame(carrying, CollectiblesManager.vouchedFor(carrying, dunes, false));
+    }
+
     @Test
     public void noSnapshotMeansEverythingUnknown() {
         BlockTransactionHashIndex txo = utxo(null);

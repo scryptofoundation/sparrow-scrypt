@@ -97,7 +97,8 @@ public class OrdClient {
 
     /**
      * Nintondo's status names the chain, "Pepecoin" or "Pepecoin Testnet"; one for another coin is refused. It indexes
-     * inscriptions, which is all those chains put on outputs, so it counts as a full index.
+     * inscriptions only. Those chains have no runes, so its empty answers count as clean, except for outputs of a
+     * runestone or dunestone transaction (Dogecoin's Dunes), which CollectiblesManager.vouchedFor keeps unknown.
      */
     static OrdStatus nintondoStatus(String json, com.sparrowwallet.drongo.Coin coin) throws IOException {
         JsonNode node = readTree(json);

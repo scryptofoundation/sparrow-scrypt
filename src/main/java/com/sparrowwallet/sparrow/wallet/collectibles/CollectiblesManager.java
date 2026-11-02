@@ -3,6 +3,8 @@ package com.sparrowwallet.sparrow.wallet.collectibles;
 import com.google.common.eventbus.Subscribe;
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
+import com.sparrowwallet.drongo.ordinals.CarrierScan;
+import com.sparrowwallet.drongo.ordinals.OrdinalsScan;
 import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.wallet.BlockTransactionHashIndex;
@@ -15,6 +17,7 @@ import com.sparrowwallet.sparrow.event.*;
 import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdOutput;
+import com.sparrowwallet.sparrow.net.ord.OrdServer;
 import com.sparrowwallet.sparrow.net.ord.OrdStatus;
 import com.sparrowwallet.drongo.wallet.Status;
 import com.sparrowwallet.drongo.wallet.TxoFilter;
@@ -183,9 +186,10 @@ public class CollectiblesManager {
                         ask.add(utxo.toString());
                     }
                 }
+                boolean tokensIndexed = !OrdServer.isNintondo(url);
                 for(OrdOutput answer : client.outputs(ask)) {
                     //Without a rune index an empty answer proves nothing, so it stays unknown and is not cached
-                    OrdOutput output = answer.forServer(runeIndex);
+                    OrdOutput output = vouchedFor(answer.forServer(runeIndex), data.txs().get(answer.outpoint().split(":")[0]), tokensIndexed);
                     answers.put(output.outpoint(), output);
                     if(output.indexed() && heights.getOrDefault(output.outpoint(), 0) > 0) {
                         confirmed.put(url + "|" + output.outpoint(), output);
@@ -276,6 +280,20 @@ public class CollectiblesManager {
             }
         }
         return unknown;
+    }
+
+    /**
+     * An answer as far as the indexer can vouch for it. Nintondo indexes inscriptions only, so its "clean" for an output
+     * of a transaction writing a runestone or dunestone (Dogecoin's Dunes) proves nothing: that output stays unknown.
+     */
+    static OrdOutput vouchedFor(OrdOutput answer, Transaction creatingTx, boolean tokensIndexed) {
+        if(tokensIndexed || !answer.indexed() || answer.carries() || creatingTx == null) {
+            return answer;
+        }
+        if(OrdinalsScan.hasRunestone(creatingTx) || CarrierScan.hasDunestone(creatingTx)) {
+            return OrdOutput.unknown(answer.outpoint());
+        }
+        return answer;
     }
 
     /** Marks carrying outputs PROTECTED and labels them, returning those changed. */
