@@ -64,18 +64,35 @@ public class TestnetEndToEndLiveTest {
         run(Coin.LITECOIN, ScriptType.P2WPKH, Backend.ELECTRUM, PublicElectrumServer.TESTNET_BYSH_ME.getUrl(), 200_000L);
     }
 
-    private enum Backend { ESPLORA, ELECTRUM }
+    /**
+     * Bellscoin Taproot on a private Bells Core v3 regtest chain, where Taproot is always active (testnet-infra
+     * sandbox-regtest.sh, its ElectrumX relayed to tcp://127.0.0.1:50106). The first run prints the Taproot wallet's
+     * address; mine 31 blocks to it (sandbox-regtest.sh mine <address> 31: a coinbase matures after 30), then the next
+     * run spends 1 BELLS of a mature mined coin (regtest pays 2 BELLS a block) by key path through the external-signing path.
+     * Bells Core accepting it is the check.
+     */
+    @Test
+    public void bellscoinRegtestTaproot() throws Exception {
+        run(Coin.BELLSCOIN, ScriptType.P2TR, Backend.PRIVATE_ELECTRUM, "tcp://127.0.0.1:50106", 100_000_000L,
+                Network.REGTEST, "bellscoin-regtest-taproot");
+    }
+
+    private enum Backend { ESPLORA, ELECTRUM, PRIVATE_ELECTRUM }
 
     private void run(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount) throws Exception {
+        run(coin, scriptType, backend, server, sendAmount, Network.TESTNET, coin.getName());
+    }
+
+    private void run(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount, Network network, String folder) throws Exception {
         String base = System.getenv("TESTNET_E2E_DIR");
         Assumptions.assumeTrue(base != null && !base.isEmpty(), "set TESTNET_E2E_DIR to run the testnet end-to-end tests");
-        Path dir = Path.of(base, coin.getName());
+        Path dir = Path.of(base, folder);
         Files.createDirectories(dir.resolve("home"));
         System.setProperty(SparrowWallet.APP_HOME_PROPERTY, dir.resolve("home").toString());
 
         Network previousNetwork = Network.get();
         Coin previousCoin = Coin.beginScope(coin);
-        Network.set(Network.TESTNET);
+        Network.set(network);
         try {
             runScoped(coin, scriptType, backend, server, sendAmount, dir);
         } finally {
@@ -176,9 +193,15 @@ public class TestnetEndToEndLiveTest {
             return new EsploraClient(server).getTipHeight();
         }
 
-        //Electrum: the configured public server, the app's TLS transport and reader thread, the simple RPC
-        Config.get().setServerType(ServerType.PUBLIC_ELECTRUM_SERVER);
-        Config.get().setPublicElectrumServer(PublicElectrumServer.fromServer(new com.sparrowwallet.sparrow.io.Server(server)).getServer());
+        //Electrum: the configured public server, or your own (private) one, with the app's transport and reader
+        //thread and the simple RPC
+        if(backend == Backend.PRIVATE_ELECTRUM) {
+            Config.get().setServerType(ServerType.ELECTRUM_SERVER);
+            Config.get().setElectrumServer(new com.sparrowwallet.sparrow.io.Server(server));
+        } else {
+            Config.get().setServerType(ServerType.PUBLIC_ELECTRUM_SERVER);
+            Config.get().setPublicElectrumServer(PublicElectrumServer.fromServer(new com.sparrowwallet.sparrow.io.Server(server)).getServer());
+        }
         ElectrumServer electrumServer = new ElectrumServer();
         electrumServer.connect();
         Coin readerCoin = coin;
@@ -213,7 +236,7 @@ public class TestnetEndToEndLiveTest {
     private static Wallet wallet(Coin coin, ScriptType scriptType, String name, Keystore keystore) {
         Wallet wallet = new Wallet(name);
         wallet.setCoin(coin);
-        wallet.setNetwork(Network.TESTNET);
+        wallet.setNetwork(Network.get());
         wallet.setPolicyType(PolicyType.SINGLE_HD);
         wallet.setScriptType(scriptType);
         wallet.getKeystores().add(keystore);
