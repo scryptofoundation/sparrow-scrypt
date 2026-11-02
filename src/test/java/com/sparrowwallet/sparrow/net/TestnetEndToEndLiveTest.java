@@ -7,10 +7,9 @@ import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.policy.Policy;
 import com.sparrowwallet.drongo.policy.PolicyType;
-import com.sparrowwallet.drongo.protocol.ScriptType;
-import com.sparrowwallet.drongo.protocol.Sha256Hash;
-import com.sparrowwallet.drongo.protocol.Transaction;
+import com.sparrowwallet.drongo.protocol.*;
 import com.sparrowwallet.drongo.psbt.PSBT;
+import com.sparrowwallet.drongo.silentpayments.*;
 import com.sparrowwallet.drongo.wallet.*;
 import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.io.Config;
@@ -77,6 +76,19 @@ public class TestnetEndToEndLiveTest {
                 Network.REGTEST, "bellscoin-regtest-taproot");
     }
 
+    /**
+     * A silent payment on the Litecoin regtest (testnet-infra ltc-regtest.sh, its ElectrumX on tcp://127.0.0.1:50105).
+     * The first run prints the native segwit address to fund (ltc-regtest.sh fund <address> 1, then mine 1). The next
+     * run pays 0.1 LTC to the silent payment address of a second throwaway seed: the signer computes the output as the
+     * sign screen does, Litecoin Core accepting it is the first check, and the receiver's scan key finding that output
+     * in the transaction the server returns is the second.
+     */
+    @Test
+    public void litecoinRegtestSilentPayment() throws Exception {
+        run(Coin.LITECOIN, ScriptType.P2WPKH, Backend.PRIVATE_ELECTRUM, "tcp://127.0.0.1:50105", 10_000_000L,
+                Network.REGTEST, "litecoin-regtest-silent-payment", true);
+    }
+
     private enum Backend { ESPLORA, ELECTRUM, PRIVATE_ELECTRUM }
 
     private void run(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount) throws Exception {
@@ -84,6 +96,10 @@ public class TestnetEndToEndLiveTest {
     }
 
     private void run(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount, Network network, String folder) throws Exception {
+        run(coin, scriptType, backend, server, sendAmount, network, folder, false);
+    }
+
+    private void run(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount, Network network, String folder, boolean silentPayment) throws Exception {
         String base = System.getenv("TESTNET_E2E_DIR");
         Assumptions.assumeTrue(base != null && !base.isEmpty(), "set TESTNET_E2E_DIR to run the testnet end-to-end tests");
         Path dir = Path.of(base, folder);
@@ -94,7 +110,7 @@ public class TestnetEndToEndLiveTest {
         Coin previousCoin = Coin.beginScope(coin);
         Network.set(network);
         try {
-            runScoped(coin, scriptType, backend, server, sendAmount, dir);
+            runScoped(coin, scriptType, backend, server, sendAmount, dir, silentPayment);
         } finally {
             ElectrumServer.closeActiveConnection();
             Network.set(previousNetwork);
@@ -102,14 +118,9 @@ public class TestnetEndToEndLiveTest {
         }
     }
 
-    private void runScoped(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount, Path dir) throws Exception {
+    private void runScoped(Coin coin, ScriptType scriptType, Backend backend, String server, long sendAmount, Path dir, boolean silentPayment) throws Exception {
         //1. Signer (seed) and watch-only (xpub) wallets
-        Path seedFile = dir.resolve("testnet-seed.txt");
-        if(!Files.exists(seedFile)) {
-            DeterministicSeed fresh = new DeterministicSeed(new SecureRandom(), 128, "");
-            Files.writeString(seedFile, String.join(" ", fresh.getMnemonicCode()), StandardCharsets.UTF_8);
-        }
-        List<String> words = Arrays.asList(Files.readString(seedFile, StandardCharsets.UTF_8).trim().split(" "));
+        List<String> words = seedWords(dir.resolve("testnet-seed.txt"));
         Wallet signer = signerWallet(coin, scriptType, words);
         Wallet watch = watchOnlyWallet(coin, scriptType, signer);
         Assertions.assertFalse(watch.getKeystores().getFirst().hasPrivateKey(), "watch-only wallet must hold no private key");
@@ -128,9 +139,22 @@ public class TestnetEndToEndLiveTest {
         log(coin, "tip " + tip + ", watch-only balance " + balance + " sats, utxos " + watch.getWalletUtxos().size());
         Assumptions.assumeTrue(balance > sendAmount * 2, "not funded yet: send at least " + (sendAmount * 2) + " sats to " + fundingAddress);
 
-        //3. Build with the send screen's machinery: a self-send to a fresh receive address, change back to the wallet
-        Address destination = watch.getFreshNode(KeyPurpose.RECEIVE).getAddress();
-        List<Payment> payments = List.of(new Payment(destination, "e2e self-send", sendAmount, false));
+        //3. Build with the send screen's machinery: a self-send to a fresh receive address (or a silent payment to a
+        //second seed), change back to the wallet
+        SilentPaymentScanAddress receiver = null;
+        Address destination;
+        List<Payment> payments;
+        if(silentPayment) {
+            DeterministicSeed receiverSeed = new DeterministicSeed(new ArrayList<>(seedWords(dir.resolve("receiver-seed.txt"))), "", 0, DeterministicSeed.Type.BIP39);
+            receiver = SilentPaymentScanAddress.from(receiverSeed, 0);
+            log(coin, "silent payment address: " + receiver.getSilentPaymentAddress());
+            Assertions.assertTrue(watch.canSendSilentPayments(), "the wallet must be able to send silent payments");
+            destination = null;
+            payments = List.of(new SilentPayment(receiver.getSilentPaymentAddress(), "e2e silent payment", sendAmount, false));
+        } else {
+            destination = watch.getFreshNode(KeyPurpose.RECEIVE).getAddress();
+            payments = List.of(new Payment(destination, "e2e self-send", sendAmount, false));
+        }
         double feeRate = coin.getRecommendedFeeRate();
         double minRelayFeeRate = coin.getMinRelayFeeRate();
         long noInputsFee = watch.getNoInputsFee(payments, feeRate);
@@ -151,6 +175,16 @@ public class TestnetEndToEndLiveTest {
 
         //4. External signer: load the file, sign, finalise, write the signed PSBT
         PSBT received = new PSBT(Files.readAllBytes(unsignedFile));
+        PSBT expected = unsigned;
+        if(silentPayment) {
+            //The signer works out the silent payment output from its input keys before signing, as the sign screen does
+            List<SilentPayment> computed = signer.computeSilentPaymentOutputs(received, signer.getSigningNodes(received));
+            Assertions.assertEquals(1, computed.size(), "one silent payment output to compute");
+            destination = computed.getFirst().getAddress();
+            Assertions.assertEquals(ScriptType.P2TR, destination.getScriptType(), "a silent payment output is Taproot");
+            log(coin, "silent payment output address " + destination);
+            expected = received;
+        }
         signer.sign(received);
         signer.finalise(received);
         Assertions.assertTrue(received.isFinalized(), "signer must finalise every input");
@@ -160,9 +194,10 @@ public class TestnetEndToEndLiveTest {
         //5. Back in the watch-only wallet: load the signed PSBT, extract, check it is the transaction we built
         PSBT signed = new PSBT(Files.readAllBytes(signedFile), true);
         Transaction transaction = signed.extractTransaction();
-        Assertions.assertEquals(outputsOf(unsigned.getTransaction()), outputsOf(transaction), "signing must not change the outputs");
+        Assertions.assertEquals(outputsOf(expected.getTransaction()), outputsOf(transaction), "signing must not change the outputs");
+        Address paid = destination;
         Assertions.assertTrue(transaction.getOutputs().stream().anyMatch(output -> sendAmount == output.getValue()
-                && destination.equals(output.getScript().getToAddress())), "payment output missing");
+                && paid.equals(output.getScript().getToAddress())), "payment output missing");
 
         //6. Broadcast through ElectrumServer (the app's broadcast path), then a fresh resync must list it
         Sha256Hash txid = new ElectrumServer().broadcastTransaction(transaction);
@@ -181,6 +216,35 @@ public class TestnetEndToEndLiveTest {
         }
         Assertions.assertTrue(resynced.getTransactions().containsKey(txid), "resynced watch-only wallet must list the new transaction");
         log(coin, "resynced watch-only wallet lists " + txid + "; history " + resynced.getTransactions().size() + " tx(s)");
+
+        if(receiver != null) {
+            //7. The receiver, holding only its scan key and spend public key, scans the transaction as the server returned it
+            Map<Sha256Hash, BlockTransaction> history = resynced.getTransactions();
+            Transaction onChain = history.get(txid).getTransaction();
+            Map<HashIndex, Script> spentScripts = new HashMap<>();
+            for(TransactionInput input : onChain.getInputs()) {
+                TransactionOutPoint outpoint = input.getOutpoint();
+                spentScripts.put(new HashIndex(outpoint.getHash(), outpoint.getIndex()),
+                        history.get(outpoint.getHash()).getTransaction().getOutputs().get((int)outpoint.getIndex()).getScript());
+            }
+            byte[] tweak = SilentPaymentUtils.getTweak(onChain, spentScripts);
+            Assertions.assertNotNull(tweak, "the transaction must be eligible for silent payments");
+            List<SilentPaymentScanMatch> matches = SilentPaymentUtils.scanTransactionOutputs(receiver.getScanKey(), receiver.getSpendKey(),
+                    Set.of(), tweak, onChain.getOutputs());
+            Assertions.assertEquals(1, matches.size(), "the receiver must find exactly its one output");
+            TransactionOutput found = onChain.getOutputs().get(matches.getFirst().outputIndex());
+            Assertions.assertEquals(sendAmount, found.getValue());
+            Assertions.assertEquals(destination, found.getScript().getToAddress());
+            log(coin, "receiver's scan found output " + matches.getFirst().outputIndex() + " (" + found.getValue() + " sats)");
+        }
+    }
+
+    private static List<String> seedWords(Path seedFile) throws Exception {
+        if(!Files.exists(seedFile)) {
+            DeterministicSeed fresh = new DeterministicSeed(new SecureRandom(), 128, "");
+            Files.writeString(seedFile, String.join(" ", fresh.getMnemonicCode()), StandardCharsets.UTF_8);
+        }
+        return Arrays.asList(Files.readString(seedFile, StandardCharsets.UTF_8).trim().split(" "));
     }
 
     /** Opens the coin's backend the way ConnectionService does, and returns the chain tip. */
