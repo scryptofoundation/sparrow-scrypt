@@ -327,6 +327,15 @@ public class UtxosController extends WalletFormController implements Initializab
         }
     }
 
+    //Turning inscription checks on or off changes which outputs are held
+    @Subscribe
+    public void inscriptionSettingsChanged(InscriptionSettingsChangedEvent event) {
+        if(event.getCoin() == getWalletForm().getWallet().getCoin()) {
+            utxosTable.refresh();
+            updateButtons(Config.get().getUnitFormat(), Config.get().getBitcoinUnit());
+        }
+    }
+
     @Subscribe
     public void includeMempoolOutputsChangedEvent(IncludeMempoolOutputsChangedEvent event) {
         utxosTable.refresh();
