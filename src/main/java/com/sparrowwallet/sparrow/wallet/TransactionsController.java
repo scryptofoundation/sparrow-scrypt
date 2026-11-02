@@ -319,9 +319,15 @@ public class TransactionsController extends WalletFormController implements Init
         if(publicWallet != null) {
             List<BlockTransactionHashIndex> unknown = CollectiblesManager.get().unknownAmong(publicWallet, publicWallet.getSpendableUtxos().keySet());
             if(!unknown.isEmpty()) {
-                AppServices.showErrorDialog("Inputs not checked", "Moving to Private is paused until these outputs are checked for inscriptions and runes:\n"
-                        + unknown.stream().map(BlockTransactionHashIndex::toString).collect(java.util.stream.Collectors.joining("\n"))
-                        + "\nTry again when they have confirmed and the inscriptions server has indexed them.");
+                if(CollectiblesManager.checkedByServer(publicWallet)) {
+                    AppServices.showErrorDialog("Inputs not checked", "Moving to Private is paused until these outputs are checked for inscriptions and runes:\n"
+                            + CollectiblesManager.describe(publicWallet, unknown)
+                            + "\nTry again when they have confirmed and the inscriptions server has indexed them.");
+                } else {
+                    AppServices.showErrorDialog("Outputs held", "Moving to Private is paused because these outputs may carry an inscription or tokens:\n"
+                            + CollectiblesManager.describe(publicWallet, unknown)
+                            + "\nMark them as plain coins in the UTXOs tab, or set an inscriptions server in Settings > Server to have them checked.");
+                }
                 return;
             }
         }

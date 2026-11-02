@@ -70,7 +70,13 @@ public class CollectiblesManager {
     }
 
     public static boolean applies(Wallet wallet) {
-        return wallet != null && wallet.getCoin() == Coin.LITECOIN && wallet.getScriptType() != ScriptType.MWEB && wallet.isValid();
+        return wallet != null && wallet.getScriptType() != ScriptType.MWEB && wallet.isValid();
+    }
+
+    /** True when an inscriptions server checks the wallet's outputs; otherwise HeldOutputs guards them. */
+    public static boolean checkedByServer(Wallet wallet) {
+        Wallet master = wallet != null && wallet.isNested() ? wallet.getMasterWallet() : wallet;
+        return applies(master) && serverUrl(master) != null;
     }
 
     /** The configured server for the wallet's coin, or null when checks are off. */
@@ -223,22 +229,35 @@ public class CollectiblesManager {
     }
 
     /**
-     * The outputs among these that have not been shown clean (or carrying). Empty when checks are off for the
-     * wallet's coin, because then no protection is claimed. A RELEASED output is not listed: the user chose to spend it.
+     * The outputs among these that have not been shown clean (or carrying). With no server for the wallet's coin, the
+     * outputs HeldOutputs holds. A RELEASED output is not listed: the user chose to spend it.
      */
     public List<BlockTransactionHashIndex> unknownAmong(Wallet wallet, Collection<BlockTransactionHashIndex> utxos) {
         Wallet master = wallet != null && wallet.isNested() ? wallet.getMasterWallet() : wallet;
-        if(!applies(master) || serverUrl(master) == null) {
+        if(!applies(master)) {
             return List.of();
+        }
+        if(serverUrl(master) == null) {
+            return HeldOutputs.held(wallet, utxos);
         }
         return unknownIn(snapshots.get(master), utxos);
     }
 
-    /** A filter preferring checked outputs for the wallet, or null when checks are off (no preference). */
+    /** One line per output for a dialog: the outpoint and, when no server checks the wallet, why it is held. */
+    public static String describe(Wallet wallet, Collection<BlockTransactionHashIndex> utxos) {
+        boolean server = checkedByServer(wallet);
+        return utxos.stream().map(utxo -> server ? utxo.toString() : utxo + " (" + HeldOutputs.reason(wallet, utxo) + ")")
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    /** A filter preferring checked outputs for the wallet (outputs not held, with no server), or null when none applies. */
     public TxoFilter checkedFilter(Wallet wallet) {
         Wallet master = wallet != null && wallet.isNested() ? wallet.getMasterWallet() : wallet;
-        if(!applies(master) || serverUrl(master) == null) {
+        if(!applies(master)) {
             return null;
+        }
+        if(serverUrl(master) == null) {
+            return new HeldOutputs.Filter(wallet);
         }
         return new CheckedTxoFilter(snapshots.get(master));
     }

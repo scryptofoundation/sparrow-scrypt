@@ -1245,20 +1245,28 @@ public class SendController extends WalletFormController implements Initializabl
      * where ord cannot follow them, waits until they are checked.
      */
     private boolean confirmCheckedInputs(WalletTransaction walletTransaction) {
-        List<BlockTransactionHashIndex> unknown = CollectiblesManager.get().unknownAmong(getWalletForm().getWallet(), walletTransaction.getSelectedUtxos().keySet());
+        Wallet wallet = getWalletForm().getWallet();
+        List<BlockTransactionHashIndex> unknown = CollectiblesManager.get().unknownAmong(wallet, walletTransaction.getSelectedUtxos().keySet());
         if(unknown.isEmpty()) {
             return true;
         }
-        String outpoints = unknown.stream().map(BlockTransactionHashIndex::toString).collect(Collectors.joining("\n"));
+        boolean server = CollectiblesManager.checkedByServer(wallet);
+        String outpoints = CollectiblesManager.describe(wallet, unknown);
         boolean pegIn = walletTransaction.getPayments().stream().anyMatch(payment -> payment.getAddress() instanceof MwebAddress);
         if(pegIn) {
-            AppServices.showErrorDialog("Inputs not checked", "Moving to Private is paused until these outputs are checked for inscriptions and runes:\n" + outpoints +
-                    "\nTry again when they have confirmed and the inscriptions server has indexed them.");
+            AppServices.showErrorDialog(server ? "Inputs not checked" : "Inputs held", server ?
+                    "Moving to Private is paused until these outputs are checked for inscriptions and runes:\n" + outpoints +
+                    "\nTry again when they have confirmed and the inscriptions server has indexed them." :
+                    "Moving to Private is paused because these outputs may carry an inscription or tokens:\n" + outpoints +
+                    "\nMark them as plain coins in the UTXOs tab, or set an inscriptions server in Settings > Server to have them checked.");
             return false;
         }
         ButtonType continueButton = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
-        Optional<ButtonType> result = AppServices.showWarningDialog("Inputs not checked", "These inputs have not been checked for inscriptions or runes yet:\n" + outpoints +
-                "\nIf one carries something, spending it here would lose it.", ButtonType.CANCEL, continueButton);
+        Optional<ButtonType> result = server ?
+                AppServices.showWarningDialog("Inputs not checked", "These inputs have not been checked for inscriptions or runes yet:\n" + outpoints +
+                        "\nIf one carries something, spending it here would lose it.", ButtonType.CANCEL, continueButton) :
+                AppServices.showWarningDialog("Inputs held", "These inputs may carry an inscription or tokens:\n" + outpoints +
+                        "\nIf one does, spending it here would lose it. Cancel to choose other coins in the UTXOs tab.", ButtonType.CANCEL, continueButton);
         return result.isPresent() && result.get() == continueButton;
     }
 

@@ -211,13 +211,13 @@
                         <ToggleButton fx:id="inscriptionsCustom" text="Custom" toggleGroup="$inscriptionsToggleGroup" />
                     </buttons>
                 </SegmentedButton>
-                <HelpLabel helpText="Checks each output of a Litecoin wallet for inscriptions and runes, so they are shown in Collectibles and never spent by accident. The server sees the outputs it is asked about." />
+                <HelpLabel helpText="Checks each output of a wallet for inscriptions and tokens, so they are never spent by accident. The server sees the outputs it is asked about. With checks off, coins that look like they may carry one are held back from automatic coin selection." />
             </Field>
             <Field fx:id="inscriptionsPublicField" text="Server:">
-                <CopyableLabel text="ordinalslite.com" />
+                <CopyableLabel fx:id="inscriptionsPublicHost" text="ordinalslite.com" />
             </Field>
             <Field fx:id="inscriptionsUrlField" text="URL:">
-                <TextField fx:id="inscriptionsUrl" promptText="e.g. http://127.0.0.1:8080 (your ord-litecoin)" />
+                <TextField fx:id="inscriptionsUrl" promptText="e.g. http://127.0.0.1:8080 (your own ord indexer)" />
             </Field>
             <Field text="">
                 <Button fx:id="inscriptionsTest" graphicTextGap="5" text="Test">

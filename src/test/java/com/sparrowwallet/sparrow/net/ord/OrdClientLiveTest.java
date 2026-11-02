@@ -21,4 +21,36 @@ public class OrdClientLiveTest {
         Assertions.assertTrue(outputs.getFirst().inscriptions().contains(INSCRIPTION));
         Assertions.assertEquals(63, client.content(INSCRIPTION).length);
     }
+
+    /** Nintondo follows inscriptions as they move: each moved one is found where it sits now, far from its reveal. */
+    @Test
+    public void nintondoFindsMovedInscriptions() throws Exception {
+        record Case(com.sparrowwallet.drongo.Coin coin, com.sparrowwallet.drongo.Network network, String carrying, String genesis, String clean) {}
+        List<Case> cases = List.of(
+                new Case(com.sparrowwallet.drongo.Coin.BELLSCOIN, com.sparrowwallet.drongo.Network.MAINNET,
+                        "4480949bfa1583ab6c6b0155e9a4c8c939a2dd81b907cb8b7a46b602ddbce8fa:1", "de3d407620a94a79dde0946937a211d9a7624a911b308f4d455237696feb3f75i0",
+                        "d26807f28e2ae6a31f18832df1030c262ed45c0713cda33d15106d5fd869d780:1"),
+                new Case(com.sparrowwallet.drongo.Coin.DOGECOIN, com.sparrowwallet.drongo.Network.MAINNET,
+                        "63c84fba5b204542ce94045cf77409edbb3eac1200590ecec5b063041e6afbc7:0", "62ce343f4cd591055189b6a999d21759d16f918bc3f2d017c8566fce7a548267i0",
+                        "cf12d5e9104afdb53e1455d8a9813de34f1c6c5deaac72cbc505c88389660e03:0"),
+                new Case(com.sparrowwallet.drongo.Coin.PEPECOIN, com.sparrowwallet.drongo.Network.MAINNET,
+                        "3810d5e9628537473d82c32e2e3d1e5f4a232b449fadf37e1dea188a677c769a:0", "b47571537ac6d62be3ebe2d2e686d58460c5a47dd032cb98bb95ad3cbe3afdc5i0",
+                        "214533ae61d6fff22f23fe069410756d279698e170f49e0e3b5cacf568dbb906:1"),
+                new Case(com.sparrowwallet.drongo.Coin.PEPECOIN, com.sparrowwallet.drongo.Network.TESTNET,
+                        "9412bd71c12b967140cbbfb40713bb9995fb28285f7d63aa99c1f6d438bfb890:0", "f44009765d6a7f4997a7dea7978c9417449deb5fa5262e174190326fcd583c0fi0", null));
+        for(Case c : cases) {
+            com.sparrowwallet.drongo.Coin previous = com.sparrowwallet.drongo.Coin.beginScope(c.coin());
+            try {
+                OrdClient client = new OrdClient(OrdServer.publicUrl(c.coin(), c.network()));
+                OrdClient.requireChain(client.status(), c.network());
+                List<OrdOutput> outputs = client.outputs(c.clean() == null ? List.of(c.carrying()) : List.of(c.carrying(), c.clean()));
+                Assertions.assertEquals(List.of(c.genesis()), outputs.get(0).inscriptions(), c.coin() + " " + c.network());
+                if(c.clean() != null) {
+                    Assertions.assertTrue(outputs.get(1).indexed() && !outputs.get(1).carries(), c.coin() + " clean");
+                }
+            } finally {
+                com.sparrowwallet.drongo.Coin.endScope(previous);
+            }
+        }
+    }
 }

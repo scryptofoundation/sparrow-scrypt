@@ -15,6 +15,7 @@ import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.Mode;
 import com.sparrowwallet.sparrow.control.ComboBoxTextField;
+import com.sparrowwallet.sparrow.control.CopyableLabel;
 import com.sparrowwallet.sparrow.control.QRScanDialog;
 import com.sparrowwallet.sparrow.control.TextFieldValidator;
 import com.sparrowwallet.sparrow.control.UnlabeledToggleSwitch;
@@ -188,6 +189,9 @@ public class ServerSettingsController extends SettingsDetailController {
 
     @FXML
     private Field inscriptionsPublicField;
+
+    @FXML
+    private CopyableLabel inscriptionsPublicHost;
 
     @FXML
     private Field inscriptionsUrlField;
@@ -774,27 +778,27 @@ public class ServerSettingsController extends SettingsDetailController {
         testResults.requestFocus();
     }
 
-    //Inscription and rune checks are Litecoin only. The public server indexes mainnet only, so other networks offer
-    //Off and Custom (the user's own ord-litecoin).
+    //Inscription checks are per coin. Public is the coin's public indexer where one exists (ordinalslite.com for
+    //Litecoin mainnet, Nintondo for Bellscoin, Dogecoin and Pepecoin); otherwise Off and Custom (the user's own indexer).
     private void initializeInscriptions(Config config) {
         inscriptionsForm.managedProperty().bind(inscriptionsForm.visibleProperty());
-        inscriptionsForm.setVisible(Coin.get() == Coin.LITECOIN);
-        if(Coin.get() != Coin.LITECOIN) {
-            return;
-        }
+        inscriptionsForm.setVisible(true);
 
+        String publicUrl = OrdServer.publicUrl(Coin.get(), Network.get());
         inscriptionsPublicField.managedProperty().bind(inscriptionsPublicField.visibleProperty());
         inscriptionsUrlField.managedProperty().bind(inscriptionsUrlField.visibleProperty());
         inscriptionsOff.setUserData(InscriptionServerMode.OFF);
         inscriptionsPublic.setUserData(InscriptionServerMode.PUBLIC);
         inscriptionsCustom.setUserData(InscriptionServerMode.CUSTOM);
-        if(Network.get() != Network.MAINNET) {
+        if(publicUrl == null) {
             inscriptionsPublic.setDisable(true);
-            inscriptionsPublic.setTooltip(new Tooltip("No public inscriptions server for this network"));
+            inscriptionsPublic.setTooltip(new Tooltip("No public inscriptions server for " + Coin.get().getCapitalizedName() + " on this network"));
+        } else {
+            inscriptionsPublicHost.setText(java.net.URI.create(publicUrl).getHost());
         }
 
         InscriptionServerMode mode = config.getInscriptionServerMode();
-        if(mode == InscriptionServerMode.PUBLIC && Network.get() != Network.MAINNET) {
+        if(mode == InscriptionServerMode.PUBLIC && publicUrl == null) {
             mode = InscriptionServerMode.OFF;
         }
         inscriptionsUrl.setText(config.getInscriptionCustomUrl() == null ? "" : config.getInscriptionCustomUrl());
@@ -809,8 +813,8 @@ public class ServerSettingsController extends SettingsDetailController {
             }
             InscriptionServerMode selected = (InscriptionServerMode)newValue.getUserData();
             if(selected == InscriptionServerMode.PUBLIC && !config.isInscriptionPublicWarningShown()) {
-                AppServices.showWarningDialog("Public inscriptions server", "ordinalslite.com will see the outputs of every wallet you open, which can link them together. " +
-                        "Run your own ord-litecoin server and choose Custom to avoid this.");
+                AppServices.showWarningDialog("Public inscriptions server", inscriptionsPublicHost.getText() + " will see the outputs of every " +
+                        Coin.get().getCapitalizedName() + " wallet you open, which can link them together. Run your own indexer and choose Custom to avoid this.");
                 config.setInscriptionPublicWarningShown();
             }
             showInscriptionFields(selected);

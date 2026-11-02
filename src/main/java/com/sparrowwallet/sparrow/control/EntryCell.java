@@ -867,7 +867,7 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                     });
                     getItems().add(freezeUtxo);
                 } else if(status == Status.PROTECTED) {
-                    MenuItem releaseUtxo = new MenuItem("Spend as plain LTC...");
+                    MenuItem releaseUtxo = new MenuItem("Spend as plain " + hashIndexEntry.getWallet().getCoin().getTicker() + "...");
                     releaseUtxo.setGraphic(getUnfreezeGlyph());
                     releaseUtxo.setOnAction(AE -> {
                         hide();
@@ -886,6 +886,18 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                         unfreezeUtxo(treeTableView, hashIndexEntry);
                     });
                     getItems().add(unfreezeUtxo);
+                }
+                Wallet holdingWallet = hashIndexEntry.getWallet();
+                if(!com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.checkedByServer(holdingWallet)
+                        && com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.applies(holdingWallet.isNested() ? holdingWallet.getMasterWallet() : holdingWallet)
+                        && com.sparrowwallet.sparrow.wallet.collectibles.HeldOutputs.isHeld(holdingWallet, hashIndexEntry.getHashIndex())) {
+                    MenuItem markPlain = new MenuItem("Mark as Plain Coin...");
+                    markPlain.setGraphic(getUnfreezeGlyph());
+                    markPlain.setOnAction(AE -> {
+                        hide();
+                        com.sparrowwallet.sparrow.wallet.collectibles.ReleaseDialog.markPlain(holdingWallet, hashIndexEntry.getHashIndex());
+                    });
+                    getItems().add(markPlain);
                 }
                 if(hashIndexEntry.getWallet().getScriptType() == ScriptType.MWEB &&
                         hashIndexEntry.getHashIndex().getHeight() == 0) {

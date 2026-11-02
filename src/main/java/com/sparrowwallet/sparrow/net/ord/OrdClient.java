@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
 /**
  * A client for an ord-litecoin server's JSON API: which inscriptions and runes sit on an output, inscription
  * details and content. Every response is untrusted: bodies are size-capped, ids and rune names are checked before
- * they are kept or put into a URL, and nothing fetched is ever executed or shown in a web view.
+ * they are kept or put into a URL, and nothing fetched is ever executed or shown in a web view. For Nintondo's indexer
+ * (Bellscoin, Dogecoin, Pepecoin) status and outputs come from its own endpoints, in the same shapes.
  */
 public class OrdClient {
     public static final int MAX_JSON_CHARS = 4_000_000;
@@ -88,7 +89,23 @@ public class OrdClient {
     }
 
     public OrdStatus status() throws IOException {
+        if(OrdServer.isNintondo(baseUrl)) {
+            return nintondoStatus(json("/status", null), com.sparrowwallet.drongo.Coin.get());
+        }
         return parseStatus(json("/status", null));
+    }
+
+    /**
+     * Nintondo's status names the chain, "Pepecoin" or "Pepecoin Testnet"; one for another coin is refused. It indexes
+     * inscriptions, which is all those chains put on outputs, so it counts as a full index.
+     */
+    static OrdStatus nintondoStatus(String json, com.sparrowwallet.drongo.Coin coin) throws IOException {
+        JsonNode node = readTree(json);
+        String network = node.path("network").asText("");
+        if(!network.equals(coin.getCapitalizedName()) && !network.equals(coin.getCapitalizedName() + " Testnet")) {
+            throw new IOException(network.isEmpty() ? "Not a Nintondo indexer" : "Inscriptions server is for " + network + ", wallet is " + coin.getCapitalizedName());
+        }
+        return new OrdStatus(network.endsWith(" Testnet") ? "testnet" : "mainnet", true, node.path("ord_height").asLong(0), null);
     }
 
     public void requireChain(Network network) throws IOException {
@@ -117,6 +134,12 @@ public class OrdClient {
         }
 
         List<OrdOutput> results = new ArrayList<>();
+        if(OrdServer.isNintondo(baseUrl)) {
+            for(String outpoint : outpoints) {
+                results.add(output(outpoint));
+            }
+            return results;
+        }
         for(int i = 0; i < outpoints.size(); i += BATCH_SIZE) {
             List<String> batch = outpoints.subList(i, Math.min(outpoints.size(), i + BATCH_SIZE));
             try {
@@ -139,13 +162,37 @@ public class OrdClient {
             throw new IllegalArgumentException("Invalid outpoint " + outpoint);
         }
         try {
+            if(OrdServer.isNintondo(baseUrl)) {
+                //find_meta takes the outpoint as <txid>i<vout>
+                return parseNintondoMeta(outpoint, json("/find_meta/" + outpoint.replace(':', 'i'), null));
+            }
             return parseOutput(outpoint, json("/output/" + outpoint, null));
         } catch(HttpStatusException e) {
+            //An output the indexer does not know is unknown, never clean
             if(e.getStatus() == 404) {
                 return OrdOutput.unknown(outpoint);
             }
             throw e;
         }
+    }
+
+    /** find_meta's answer: an array of the inscriptions on the output, each with its genesis id; empty when clean. */
+    static OrdOutput parseNintondoMeta(String outpoint, String json) throws IOException {
+        JsonNode node = readTree(json);
+        if(!node.isArray()) {
+            throw new IOException("Unexpected answer from Nintondo indexer");
+        }
+        boolean unlisted = false;
+        List<String> inscriptions = new ArrayList<>();
+        for(JsonNode entry : node) {
+            JsonNode genesis = entry.path("genesis");
+            if(genesis.isTextual() && INSCRIPTION_ID.matcher(genesis.asText()).matches()) {
+                inscriptions.add(genesis.asText());
+            } else {
+                unlisted = true;
+            }
+        }
+        return new OrdOutput(outpoint, true, List.copyOf(inscriptions), Map.of(), 0, false, unlisted);
     }
 
     public OrdInscription inscription(String id) throws IOException {

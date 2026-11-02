@@ -473,11 +473,11 @@ public class CollectiblesController extends WalletFormController implements Init
                 detailPane.getChildren().add(send);
             }
             if(holding.utxo().getStatus() == Status.PROTECTED) {
-                Button release = new Button("Spend as plain LTC...");
+                Button release = new Button("Spend as plain " + holding.wallet().getCoin().getTicker() + "...");
                 release.setOnAction(event -> ReleaseDialog.release(holding.wallet(), holding.utxo(), holding.output()));
                 detailPane.getChildren().add(release);
             } else if(holding.utxo().getStatus() == Status.RELEASED) {
-                detailPane.getChildren().add(new Label("Released: this output can be spent as plain LTC."));
+                detailPane.getChildren().add(new Label("Released: this output can be spent as plain " + holding.wallet().getCoin().getTicker() + "."));
             }
         });
     }

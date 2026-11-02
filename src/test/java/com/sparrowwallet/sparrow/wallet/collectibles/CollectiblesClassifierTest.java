@@ -66,6 +66,22 @@ public class CollectiblesClassifierTest {
         return CollectiblesClassifier.classify(txos, txs, answers).get(outpoint);
     }
 
+    /** A doginals-style envelope sits in the scriptSig, not a witness: its outputs are not clean by provenance either. */
+    @Test
+    public void scriptSigEnvelopeIsNotCleanByProvenance() {
+        String a = received(100);
+        answer(a, true, false);
+        Transaction tx = new Transaction();
+        String[] parts = a.split(":");
+        //push "ord", OP_1, push "text/plain"
+        tx.addInput(Sha256Hash.wrap(parts[0]), Long.parseLong(parts[1]), new Script(Utils.hexToBytes("036f7264510a746578742f706c61696e")));
+        tx.addOutput(100000, new Script(Utils.hexToBytes("76a914" + "00".repeat(20) + "88ac")));
+        String txid = tx.getTxId().toString();
+        txs.put(txid, tx);
+        txos.add(new Txo(txid + ":0", null, 101, txid));
+        Assertions.assertEquals(CollectibleState.UNKNOWN, state(txid + ":0"));
+    }
+
     @Test
     public void serverCarriesWins() {
         String a = received(100);

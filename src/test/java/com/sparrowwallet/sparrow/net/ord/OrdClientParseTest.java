@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.net.ord;
 
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.Network;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,34 @@ public class OrdClientParseTest {
             Assertions.assertNotNull(in, name);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    /** Nintondo's find_meta lists the inscriptions on an output (following them as they move); empty means clean. */
+    @Test
+    public void parsesNintondoFindMeta() throws IOException {
+        OrdOutput carrying = OrdClient.parseNintondoMeta(OUTPOINT,
+                "[{\"number\":47176483,\"owner\":\"DLXoypYdoWu1qodJwEsANXTRAJzvbtm1pn\",\"height\":4999503,\"genesis\":\"" + INSCRIPTION + "\"}]");
+        Assertions.assertTrue(carrying.indexed());
+        Assertions.assertEquals(List.of(INSCRIPTION), carrying.inscriptions());
+        Assertions.assertTrue(carrying.carries());
+
+        OrdOutput clean = OrdClient.parseNintondoMeta(OUTPOINT, "[]");
+        Assertions.assertTrue(clean.indexed());
+        Assertions.assertFalse(clean.carries());
+
+        OrdOutput odd = OrdClient.parseNintondoMeta(OUTPOINT, "[{\"genesis\":\"not an id\"}]");
+        Assertions.assertTrue(odd.carries(), "an entry without a usable id still carries something");
+        Assertions.assertThrows(IOException.class, () -> OrdClient.parseNintondoMeta(OUTPOINT, "{\"error\":1}"));
+    }
+
+    /** Nintondo's status names the chain ("Pepecoin Testnet"); a server for another coin is refused. */
+    @Test
+    public void nintondoStatusNamesCoinAndNetwork() throws IOException {
+        Assertions.assertEquals(new OrdStatus("mainnet", true, 1300750, null),
+                OrdClient.nintondoStatus("{\"network\":\"Bellscoin\",\"ord_tip\":\"ab\",\"ord_height\":1300750,\"tip\":\"ab\",\"tip_height\":1300751}", Coin.BELLSCOIN));
+        Assertions.assertEquals("testnet", OrdClient.nintondoStatus("{\"network\":\"Pepecoin Testnet\",\"ord_height\":1200}", Coin.PEPECOIN).chain());
+        Assertions.assertThrows(IOException.class, () -> OrdClient.nintondoStatus("{\"network\":\"Dogecoin\",\"ord_height\":5}", Coin.PEPECOIN));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.nintondoStatus("<html>", Coin.DOGECOIN));
     }
 
     @Test

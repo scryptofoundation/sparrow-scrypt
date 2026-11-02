@@ -1,6 +1,6 @@
 package com.sparrowwallet.sparrow.wallet.collectibles;
 
-import com.sparrowwallet.drongo.ordinals.OrdinalsScan;
+import com.sparrowwallet.drongo.ordinals.CarrierScan;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.protocol.TransactionInput;
 import com.sparrowwallet.drongo.wallet.BlockTransaction;
@@ -17,7 +17,8 @@ import java.util.*;
  * <li>A PROTECTED or RELEASED output carries (the stored status outlives any server answer).</li>
  * <li>An indexed server answer decides.</li>
  * <li>An output of the wallet's own transaction is clean when every input is a clean output of this wallet and the
- * transaction has no inscription envelope and no runestone: ord's sat flow cannot put anything on such outputs.</li>
+ * transaction writes no inscription (in a witness or a scriptSig), runestone or dunestone: ord's sat flow cannot put
+ * anything on such outputs.</li>
  * <li>Anything else is unknown, including coins received from others before the server has indexed them.</li>
  * </ol>
  */
@@ -74,7 +75,7 @@ public final class CollectiblesClassifier {
     private static CollectibleState provenance(Txo txo, Map<String, Txo> byOutpoint, Map<String, Transaction> walletTxs, Map<String, OrdOutput> answers,
                                                Map<String, CollectibleState> states, Set<String> inProgress, int depth) {
         Transaction tx = walletTxs.get(txo.txid());
-        if(tx == null || OrdinalsScan.hasEnvelope(tx) || OrdinalsScan.hasRunestone(tx)) {
+        if(tx == null || CarrierScan.marksOutputs(tx)) {
             return CollectibleState.UNKNOWN;
         }
         for(TransactionInput input : tx.getInputs()) {
