@@ -2,6 +2,7 @@ package com.sparrowwallet.sparrow.wallet;
 
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyDerivation;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.wallet.Keystore;
 import com.sparrowwallet.drongo.wallet.Wallet;
@@ -28,6 +29,17 @@ public class CollectiblesControllerTest {
         Wallet other = wallet("other", Coin.LITECOIN, ScriptType.P2TR, "11223344");
         Wallet doge = wallet("doge", Coin.DOGECOIN, ScriptType.P2PKH, "aabbccdd");
         Assertions.assertEquals(List.of(segwit, taproot), CollectiblesController.holdingWallets(segwit, List.of(segwit, taproot, other, doge), null));
+    }
+
+    @Test
+    public void sameSeedWalletsOfAnotherCoinAreLeftOut() {
+        Wallet doge = wallet("doge", Coin.DOGECOIN, ScriptType.P2PKH, "aabbccdd");
+        doge.setPolicyType(PolicyType.SINGLE_HD);
+        Wallet dogeSecond = wallet("doge2", Coin.DOGECOIN, ScriptType.P2PKH, "aabbccdd");
+        dogeSecond.setPolicyType(PolicyType.SINGLE_HD);
+        Wallet segwit = wallet("segwit", Coin.LITECOIN, ScriptType.P2WPKH, "aabbccdd");
+        Assertions.assertEquals(List.of(doge, dogeSecond), CollectiblesController.holdingWallets(doge, List.of(doge, segwit, dogeSecond), null));
+        Assertions.assertEquals(List.of(segwit), CollectiblesController.holdingWallets(segwit, List.of(doge, segwit, dogeSecond), null));
     }
 
     @Test

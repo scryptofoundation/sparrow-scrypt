@@ -22,6 +22,7 @@ import com.sparrowwallet.sparrow.net.ord.OrdOutput;
 import com.sparrowwallet.sparrow.net.ord.RuneBalance;
 import com.sparrowwallet.sparrow.settings.SettingsDialog;
 import com.sparrowwallet.sparrow.settings.SettingsGroup;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleCoins;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
@@ -49,8 +50,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The inscriptions and runes held by a Litecoin wallet and the other open wallets of the same seed (an MWEB view
- * shows its public side). What is shown comes from CollectiblesManager's last check; inscription details and
+ * The inscriptions (and, on Litecoin, runes) held by a wallet and the other open wallets of the same coin and seed
+ * (an MWEB view shows its public side). What is shown comes from CollectiblesManager's last check; inscription details and
  * content are fetched when first shown and cached.
  */
 public class CollectiblesController extends WalletFormController implements Initializable {
@@ -85,6 +86,12 @@ public class CollectiblesController extends WalletFormController implements Init
 
     @FXML
     private MenuButton mintButton;
+
+    @FXML
+    private TabPane tabs;
+
+    @FXML
+    private Tab runesTab;
 
     @FXML
     private Tab pendingTab;
@@ -142,6 +149,19 @@ public class CollectiblesController extends WalletFormController implements Init
             settingsDialog.showAndWait();
         });
         refreshButton.setOnAction(event -> holdingWallets().forEach(CollectiblesManager.get()::refresh));
+        //Runes, minting and moving in from an ord-litecoin wallet are Litecoin's; the other coins show and send inscriptions only
+        Coin coin = getWalletForm().getWallet().getCoin();
+        moveInButton.managedProperty().bind(moveInButton.visibleProperty());
+        moveInButton.setVisible(CollectibleCoins.hasRunes(coin));
+        mintButton.managedProperty().bind(mintButton.visibleProperty());
+        mintButton.setVisible(CollectibleCoins.canMint(coin));
+        sendRunesButton.setVisible(CollectibleCoins.hasRunes(coin));
+        if(!CollectibleCoins.hasRunes(coin)) {
+            tabs.getTabs().remove(runesTab);
+        }
+        if(!CollectibleCoins.canMint(coin)) {
+            tabs.getTabs().remove(pendingTab);
+        }
         moveInButton.setOnAction(event -> MoveInDialog.start(moveInButton.getScene().getWindow(), getWalletForm()));
         MenuItem mintInscription = new MenuItem("Inscription...");
         mintInscription.setOnAction(event -> MintInscriptionDialog.start(mintButton.getScene().getWindow(), getWalletForm()));
@@ -192,7 +212,7 @@ public class CollectiblesController extends WalletFormController implements Init
 
     /**
      * The open wallet itself (or, for an MWEB view, its linked public wallet, or the public wallet it is a child of),
-     * plus every other open Litecoin wallet of the same seed, such as the taproot wallet minted inscriptions land in.
+     * plus every other open wallet of the same coin and seed, such as the taproot wallet minted inscriptions land in.
      */
     static List<Wallet> holdingWallets(Wallet open, Collection<Wallet> openWallets, Wallet linkedPublic) {
         Wallet base = open;
@@ -200,12 +220,13 @@ public class CollectiblesController extends WalletFormController implements Init
             base = linkedPublic != null ? linkedPublic : (open.isMasterWallet() ? null : open.getMasterWallet());
         }
         String fingerprint = fingerprint(base != null ? base : open);
+        Coin coin = open.getCoin();
         List<Wallet> wallets = new ArrayList<>();
         if(base != null && isHolder(base)) {
             wallets.add(base);
         }
         for(Wallet wallet : openWallets) {
-            if(isHolder(wallet) && !wallets.contains(wallet) && fingerprint != null && fingerprint.equals(fingerprint(wallet))) {
+            if(isHolder(wallet) && wallet.getCoin() == coin && !wallets.contains(wallet) && fingerprint != null && fingerprint.equals(fingerprint(wallet))) {
                 wallets.add(wallet);
             }
         }
@@ -213,7 +234,7 @@ public class CollectiblesController extends WalletFormController implements Init
     }
 
     private static boolean isHolder(Wallet wallet) {
-        return wallet.getCoin() == Coin.LITECOIN && wallet.getScriptType() != ScriptType.MWEB;
+        return CollectibleCoins.isHolder(wallet);
     }
 
     private static String fingerprint(Wallet wallet) {
@@ -371,17 +392,20 @@ public class CollectiblesController extends WalletFormController implements Init
             }
         }
 
+        Coin coin = getWalletForm().getWallet().getCoin();
+        boolean runes = CollectibleCoins.hasRunes(coin);
+        String collectibles = runes ? "inscriptions and runes" : "inscriptions";
         if(!off.isEmpty()) {
-            statusLabel.setText("Inscription checks are off. Turn them on in Preferences > Server > Inscriptions. Until then, inscriptions and runes in "
+            statusLabel.setText("Inscription checks are off. Turn them on in Preferences > Server > Inscriptions. Until then, " + collectibles + " in "
                     + (off.size() == 1 ? "this wallet are" : "these wallets are") + " not protected.");
         } else if(!errors.isEmpty()) {
             statusLabel.setText(errors.getFirst());
         } else if(!checked.isEmpty()) {
             statusLabel.setText(checked.entrySet().stream().map(e -> "Checked with " + e.getKey() + " at " + TIME_FORMAT.format(e.getValue()) + ".")
                     .collect(java.util.stream.Collectors.joining(" "))
-                    + (noRuneIndex ? " This server does not index runes, so outputs without inscriptions count as unchecked (start ord with --index-runes)." : ""));
+                    + (noRuneIndex && runes ? " This server does not index runes, so outputs without inscriptions count as unchecked (start ord with --index-runes)." : ""));
         } else {
-            statusLabel.setText("Checking outputs for inscriptions and runes...");
+            statusLabel.setText("Checking outputs for " + collectibles + "...");
         }
         preferencesButton.setVisible(!off.isEmpty());
 
@@ -397,7 +421,7 @@ public class CollectiblesController extends WalletFormController implements Init
 
         boolean nothing = inscriptions.isEmpty() && rows.isEmpty() && off.isEmpty();
         emptyLabel.setVisible(nothing);
-        emptyLabel.setText("Nothing found. If your inscriptions are in a Litescribe wallet, restore its seed here as two wallets: Taproot (P2TR) at m/86'/2'/0' " +
+        emptyLabel.setText(coin != Coin.LITECOIN ? "Nothing found." : "Nothing found. If your inscriptions are in a Litescribe wallet, restore its seed here as two wallets: Taproot (P2TR) at m/86'/2'/0' " +
                 "and Native Segwit (P2WPKH) at m/84'/2'/0'. Advanced: some Litescribe wallets use m/44'/2'/0' paths; set a custom derivation in the wallet Settings.");
 
         Holding selected = selectedId == null ? null : inscriptions.get(selectedId);
@@ -469,7 +493,7 @@ public class CollectiblesController extends WalletFormController implements Init
             detailPane.getChildren().add(explorer);
             if(inscription != null && inscription.satpoint() != null) {
                 Button send = new Button("Send...");
-                send.setOnAction(event -> CollectibleSendDialog.sendInscription(send.getScene().getWindow(), holding.wallet(), id, inscription.satpoint(), holding.output()));
+                send.setOnAction(event -> sendFresh(send, id, holding));
                 detailPane.getChildren().add(send);
             }
             if(holding.utxo().getStatus() == Status.PROTECTED) {
@@ -480,6 +504,53 @@ public class CollectiblesController extends WalletFormController implements Init
                 detailPane.getChildren().add(new Label("Released: this output can be spent as plain " + holding.wallet().getCoin().getTicker() + "."));
             }
         });
+    }
+
+    private record Located(String satpoint, OrdOutput output) {
+    }
+
+    /**
+     * Asks the server where the inscription is now and what else is on that output, then opens the send dialog, so a
+     * cached detail or an older check never decides what the transaction sends or whether the output is split.
+     */
+    private static void sendFresh(Button send, String id, Holding holding) {
+        javafx.stage.Window owner = send.getScene().getWindow();
+        Wallet wallet = holding.wallet();
+        javafx.concurrent.Task<Located> lookup = new javafx.concurrent.Task<>() {
+            @Override
+            protected Located call() throws Exception {
+                Coin previous = Coin.beginScope(wallet.getCoin());
+                try {
+                    OrdClient client = OrdClient.forApp(holding.serverUrl());
+                    String satpoint = client.inscription(id).satpoint();
+                    int offsetAt = satpoint == null ? -1 : satpoint.lastIndexOf(':');
+                    if(offsetAt <= 0) {
+                        throw new java.io.IOException("The server did not say where the inscription is");
+                    }
+                    OrdOutput output = client.output(satpoint.substring(0, offsetAt));
+                    if(output.spent()) {
+                        throw new IllegalArgumentException("The inscription is not in an unspent output of this wallet");
+                    }
+                    return new Located(satpoint, output);
+                } finally {
+                    Coin.endScope(previous);
+                }
+            }
+        };
+        send.setDisable(true);
+        lookup.setOnSucceeded(event -> {
+            send.setDisable(false);
+            CollectibleSendDialog.sendInscription(owner, wallet, id, lookup.getValue().satpoint(), lookup.getValue().output());
+        });
+        lookup.setOnFailed(event -> {
+            send.setDisable(false);
+            Throwable e = lookup.getException();
+            String message = e.getMessage() == null ? e.toString() : e.getMessage();
+            AppServices.showErrorDialog("Cannot send inscription", e instanceof IllegalArgumentException ? message : "Could not check where the inscription is now: " + message);
+        });
+        Thread thread = new Thread(lookup, "Inscription location");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void addDetail(String name, String value) {

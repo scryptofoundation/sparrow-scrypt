@@ -50,7 +50,7 @@
                     </right>
                 </BorderPane>
             </Tab>
-            <Tab text="Runes">
+            <Tab fx:id="runesTab" text="Runes">
                 <VBox spacing="10">
                     <TableView fx:id="runesTable" VBox.vgrow="ALWAYS" />
                     <HBox spacing="10" alignment="CENTER_RIGHT">

@@ -161,7 +161,7 @@ public class WalletController extends WalletFormController implements Initializa
 
                 ((ToggleButton)toggle).setDisable(!validWallet);
                 ((ToggleButton)toggle).setVisible(!(whirlpoolChildWallet && toggle.getUserData().equals(Function.RECEIVE))
-                        && !(toggle.getUserData().equals(Function.COLLECTIBLES) && wallet.getCoin() != com.sparrowwallet.drongo.Coin.LITECOIN));
+                        && !(toggle.getUserData().equals(Function.COLLECTIBLES) && !com.sparrowwallet.sparrow.wallet.collectibles.CollectibleCoins.hasCollectibles(wallet.getCoin())));
             }
         }
     }

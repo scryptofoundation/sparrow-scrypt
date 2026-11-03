@@ -33,16 +33,22 @@ public class CollectibleSendTest {
     @BeforeEach
     public void setUp() throws Exception {
         previousCoin = Coin.beginScope(Coin.LITECOIN);
+        useWallet(Coin.LITECOIN, ScriptType.P2TR);
+    }
+
+    /** Replaces the test wallet with a fresh single-sig one; the caller holds the coin's scope. */
+    private void useWallet(Coin coin, ScriptType scriptType) throws Exception {
         DeterministicSeed seed = new DeterministicSeed(new ArrayList<>(WORDS), "", 0, DeterministicSeed.Type.BIP39);
-        wallet = new Wallet("taproot");
+        wallet = new Wallet(coin.getName());
         wallet.setPolicyType(PolicyType.SINGLE_HD);
-        wallet.setScriptType(ScriptType.P2TR);
-        wallet.getKeystores().add(Keystore.fromSeed(seed, PolicyType.SINGLE_HD, ScriptType.P2TR.getDefaultDerivation()));
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, ScriptType.P2TR, wallet.getKeystores(), 1));
-        wallet.setCoin(Coin.LITECOIN);
+        wallet.setScriptType(scriptType);
+        wallet.getKeystores().add(Keystore.fromSeed(seed, PolicyType.SINGLE_HD, scriptType.getDefaultDerivation()));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_HD, scriptType, wallet.getKeystores(), 1));
+        wallet.setCoin(coin);
         wallet.getNode(KeyPurpose.RECEIVE).fillToIndex(20);
         nodes = new ArrayList<>(wallet.getNode(KeyPurpose.RECEIVE).getChildren());
         wallet.setStoredBlockHeight(200);
+        nextNode = 0;
     }
 
     @AfterEach
@@ -121,11 +127,117 @@ public class CollectibleSendTest {
     public void inscribedInputRefusesLargeOffsetOutput() {
         BlockTransactionHashIndex small = utxo(10_000, CollectibleState.CARRIES, false);
         BlockTransactionHashIndex large = utxo(500_000, CollectibleState.CARRIES, false);
-        Assertions.assertEquals(small, CollectibleSend.inscribedInput(wallet, small.getHash() + ":0:0").utxo());
-        Assertions.assertEquals(large, CollectibleSend.inscribedInput(wallet, large.getHash() + ":0:0").utxo(), "offset 0 in a large output is sent whole");
+        Assertions.assertEquals(small, CollectibleSend.inscribedInput(wallet, small.getHash() + ":0:0").pinned().utxo());
+        Assertions.assertEquals(large, CollectibleSend.inscribedInput(wallet, large.getHash() + ":0:0").pinned().utxo(), "offset 0 in a large output is sent whole");
         Assertions.assertThrows(IllegalArgumentException.class, () -> CollectibleSend.inscribedInput(wallet, large.getHash() + ":0:1000"));
-        Assertions.assertEquals(small, CollectibleSend.inscribedInput(wallet, small.getHash() + ":0:5000").utxo(), "a small output may hold it at any offset");
+        Assertions.assertEquals(small, CollectibleSend.inscribedInput(wallet, small.getHash() + ":0:5000").pinned().utxo(), "a small output may hold it at any offset");
         Assertions.assertThrows(IllegalArgumentException.class, () -> CollectibleSend.inscribedInput(wallet, Utils.bytesToHex(new byte[32]) + ":0:0"), "not in this wallet");
+    }
+
+    @Test
+    public void dogeOffsetAllowed() throws Exception {
+        String litecoinMessage;
+        BlockTransactionHashIndex ltcOutput = utxo(5_000_000, CollectibleState.CARRIES, false);
+        IllegalArgumentException refused = Assertions.assertThrows(IllegalArgumentException.class,
+                () -> CollectibleSend.inscribedInput(wallet, ltcOutput.getHash() + ":0:300000"));
+        litecoinMessage = refused.getMessage();
+        Assertions.assertEquals("The inscription sits 300000 litoshis into an output of 5000000 litoshis. Sending it would send the whole output; "
+                + "splitting it off first is not supported yet.", litecoinMessage);
+
+        Coin previous = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            useWallet(Coin.DOGECOIN, ScriptType.P2PKH);
+            BlockTransactionHashIndex output = utxo(5_000_000, CollectibleState.CARRIES, false);
+            CollectibleSend.Inscribed inscribed = CollectibleSend.inscribedInput(wallet, output.getHash() + ":0:300000");
+            Assertions.assertEquals(output, inscribed.pinned().utxo());
+            Assertions.assertEquals(300_000, inscribed.offset());
+            Assertions.assertEquals(300_000, CollectibleSend.splitOffset(Coin.DOGECOIN, inscribed));
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    @Test
+    public void litecoinNeverSplits() {
+        BlockTransactionHashIndex small = utxo(20_000, CollectibleState.CARRIES, false);
+        CollectibleSend.Inscribed inscribed = CollectibleSend.inscribedInput(wallet, small.getHash() + ":0:5000");
+        Assertions.assertEquals(5_000, inscribed.offset());
+        Assertions.assertEquals(0, CollectibleSend.splitOffset(Coin.LITECOIN, inscribed), "Litecoin sends the whole output as before");
+    }
+
+    @Test
+    public void inscriptionCountOnOutput() {
+        String id = "ab".repeat(32) + "i0";
+        Assertions.assertEquals(1, CollectibleSend.inscriptionsOnOutput(new OrdOutput("x:0", true, List.of(id), Map.of(), 1, false, false)));
+        Assertions.assertEquals(2, CollectibleSend.inscriptionsOnOutput(new OrdOutput("x:0", true, List.of(id, "cd".repeat(32) + "i0"), Map.of(), 1, false, false)));
+        Assertions.assertTrue(CollectibleSend.inscriptionsOnOutput(new OrdOutput("x:0", true, List.of(id), Map.of(), 1, false, true)) > 1, "unlisted: more than is known");
+        Assertions.assertTrue(CollectibleSend.inscriptionsOnOutput(new OrdOutput("x:0", false, List.of(id), Map.of(), 1, false, false)) > 1, "not indexed: unknown");
+    }
+
+    @Test
+    public void dogeSplitSendsOffsetPlusPostage() throws Exception {
+        Coin previous = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            useWallet(Coin.DOGECOIN, ScriptType.P2PKH);
+            BlockTransactionHashIndex output = utxo(5_000_000, CollectibleState.CARRIES, false);
+            utxo(500_000_000, CollectibleState.CLEAN, false);
+            CollectibleSend.Inscribed inscribed = CollectibleSend.inscribedInput(wallet, output.getHash() + ":0:300000");
+            Address recipient = ScriptType.P2PKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
+            WalletTransaction walletTransaction = CollectibleTransactions.sendInscription(wallet, inscribed.pinned(), CollectibleSend.splitOffset(Coin.DOGECOIN, inscribed),
+                    1, recipient, CollectibleSend.feeCandidates(wallet, snapshot()), 1000, 100);
+            Assertions.assertEquals(300_000 + CollectibleTransactions.postage(Coin.DOGECOIN, ScriptType.P2PKH),
+                    walletTransaction.getTransaction().getOutputs().getFirst().getValue());
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    @Test
+    public void recipientTextPerCoin() {
+        Address ltcSegwit = ScriptType.P2WPKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
+        Assertions.assertEquals(Optional.of("Not a Dogecoin address"), CollectibleSend.recipientProblem(ltcSegwit.toString(), Coin.DOGECOIN));
+        Assertions.assertEquals(Optional.of("Not a Litecoin address"), CollectibleSend.recipientProblem("not an address", Coin.LITECOIN));
+        Assertions.assertEquals(Optional.of("This is not a taproot address. Make sure the receiving wallet keeps track of inscriptions and runes, or it may spend them as plain LTC."),
+                CollectibleSend.recipientWarning(ltcSegwit, Coin.LITECOIN));
+
+        Coin previous = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            Address doge = ScriptType.P2PKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
+            Assertions.assertTrue(CollectibleSend.recipientProblem(doge.toString(), Coin.DOGECOIN).isEmpty());
+            Assertions.assertTrue(CollectibleSend.recipientWarning(doge, Coin.DOGECOIN).isEmpty(), "Dogecoin has no taproot");
+        } finally {
+            Coin.endScope(previous);
+        }
+
+        previous = Coin.beginScope(Coin.BELLSCOIN);
+        try {
+            Address bells = ScriptType.P2WPKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
+            Assertions.assertTrue(bells.toString().startsWith("bel1q"), bells.toString());
+            Assertions.assertTrue(CollectibleSend.recipientProblem(bells.toString(), Coin.BELLSCOIN).isEmpty());
+            Optional<String> warning = CollectibleSend.recipientWarning(bells, Coin.BELLSCOIN);
+            Assertions.assertTrue(warning.isPresent());
+            Assertions.assertTrue(warning.get().contains("taproot") && warning.get().endsWith("plain BELLS."), warning.get());
+            Assertions.assertFalse(warning.get().contains("runes"), warning.get());
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    @Test
+    public void staleSatpointRefused() throws Exception {
+        Coin previous = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            useWallet(Coin.DOGECOIN, ScriptType.P2PKH);
+            BlockTransactionHashIndex output = utxo(5_000_000, CollectibleState.CARRIES, false);
+            IllegalArgumentException gone = Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> CollectibleSend.inscribedInput(wallet, "cd".repeat(32) + ":0:0"));
+            Assertions.assertEquals("The inscription is not in an unspent output of this wallet", gone.getMessage());
+            IllegalArgumentException otherVout = Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> CollectibleSend.inscribedInput(wallet, output.getHash() + ":1:0"));
+            Assertions.assertEquals("The inscription is not in an unspent output of this wallet", otherVout.getMessage());
+        } finally {
+            Coin.endScope(previous);
+        }
     }
 
     @Test
@@ -152,8 +264,8 @@ public class CollectibleSendTest {
 
     @Test
     public void mwebAndOtherCoinRecipientsRefused() {
-        Assertions.assertTrue(CollectibleSend.recipientProblem("not an address").isPresent());
-        Assertions.assertTrue(CollectibleSend.recipientProblem(new com.sparrowwallet.drongo.address.MwebAddress(new byte[66]).toString()).isPresent());
+        Assertions.assertTrue(CollectibleSend.recipientProblem("not an address", Coin.LITECOIN).isPresent());
+        Assertions.assertTrue(CollectibleSend.recipientProblem(new com.sparrowwallet.drongo.address.MwebAddress(new byte[66]).toString(), Coin.LITECOIN).isPresent());
         Coin previous = Coin.beginScope(Coin.DOGECOIN);
         String dogeAddress;
         try {
@@ -161,17 +273,17 @@ public class CollectibleSendTest {
         } finally {
             Coin.endScope(previous);
         }
-        Assertions.assertTrue(CollectibleSend.recipientProblem(dogeAddress).isPresent());
+        Assertions.assertTrue(CollectibleSend.recipientProblem(dogeAddress, Coin.LITECOIN).isPresent());
         Address taproot = ScriptType.P2TR.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
-        Assertions.assertTrue(CollectibleSend.recipientProblem(taproot.toString()).isEmpty());
+        Assertions.assertTrue(CollectibleSend.recipientProblem(taproot.toString(), Coin.LITECOIN).isEmpty());
     }
 
     @Test
     public void nonTaprootRecipientWarns() {
         Address segwit = ScriptType.P2WPKH.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
         Address taproot = ScriptType.P2TR.getAddress(PolicyType.SINGLE_HD, ECKey.fromPrivate(BigInteger.valueOf(7)));
-        Assertions.assertTrue(CollectibleSend.recipientWarning(segwit).isPresent());
-        Assertions.assertTrue(CollectibleSend.recipientWarning(taproot).isEmpty());
+        Assertions.assertTrue(CollectibleSend.recipientWarning(segwit, Coin.LITECOIN).isPresent());
+        Assertions.assertTrue(CollectibleSend.recipientWarning(taproot, Coin.LITECOIN).isEmpty());
     }
 
     @Test

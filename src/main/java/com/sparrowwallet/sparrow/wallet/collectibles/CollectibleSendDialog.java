@@ -1,9 +1,11 @@
 package com.sparrowwallet.sparrow.wallet.collectibles;
 
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.address.InvalidAddressException;
 import com.sparrowwallet.drongo.ordinals.CollectibleTransactions;
 import com.sparrowwallet.drongo.psbt.PSBT;
+import com.sparrowwallet.drongo.wallet.InsufficientFundsException;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletTransaction;
 import com.sparrowwallet.sparrow.AppServices;
@@ -37,25 +39,56 @@ public final class CollectibleSendDialog {
 
     private record Choice(Address recipient, BigInteger amount, double feeRate) {}
 
+    /**
+     * Sends the inscription at the satpoint; carried is the server's answer for that same output, fetched just before.
+     * On the coins other than Litecoin an inscription alone on its output at a positive offset is split off (offset plus
+     * postage goes, the rest returns as change); otherwise the whole output goes, with everything on it.
+     */
     public static void sendInscription(Window owner, Wallet wallet, String inscriptionId, String satpoint, OrdOutput carried) {
-        Optional<Choice> choice = ask(owner, "Send Inscription", "Send inscription " + shortId(inscriptionId), null, 0);
+        Coin coin = wallet.getCoin();
+        Optional<Choice> choice = ask(owner, coin, "Send Inscription", "Send inscription " + shortId(inscriptionId), null, 0);
         if(choice.isEmpty()) {
             return;
         }
         try {
             CollectiblesManager.Snapshot snapshot = snapshot(wallet);
-            CollectibleTransactions.Pinned inscribed = CollectibleSend.inscribedInput(wallet, satpoint);
-            WalletTransaction walletTransaction = CollectibleTransactions.sendInscription(wallet, inscribed, choice.get().recipient(),
-                    CollectibleSend.feeCandidates(wallet, snapshot), choice.get().feeRate(), AppServices.getMinimumRelayFeeRate());
+            CollectibleSend.Inscribed inscribed = CollectibleSend.inscribedInput(wallet, satpoint);
+            WalletTransaction walletTransaction;
+            try {
+                walletTransaction = CollectibleTransactions.sendInscription(wallet, inscribed.pinned(), CollectibleSend.splitOffset(coin, inscribed),
+                        CollectibleSend.inscriptionsOnOutput(carried), choice.get().recipient(), CollectibleSend.feeCandidates(wallet, snapshot),
+                        choice.get().feeRate(), AppServices.getMinimumRelayFeeRate());
+            } catch(InsufficientFundsException e) {
+                if(coin == Coin.LITECOIN) {
+                    throw e;
+                }
+                throw new InsufficientFundsException("Not enough checked " + coin.getTicker() + " to pay the fee for this transaction");
+            }
+            long whole = inscribed.pinned().utxo().getValue();
+            long sent = walletTransaction.getTransaction().getOutputs().getFirst().getValue();
             List<String> moving = new ArrayList<>();
-            for(String id : carried.inscriptions()) {
-                moving.add("Inscription " + id);
+            if(sent < whole) {
+                moving.add("Inscription " + inscriptionId);
+            } else {
+                for(String id : carried.inscriptions()) {
+                    moving.add("Inscription " + id);
+                }
+                for(Map.Entry<String, RuneBalance> rune : carried.runes().entrySet()) {
+                    moving.add(rune.getValue().format() + " " + rune.getKey());
+                }
             }
-            for(Map.Entry<String, RuneBalance> rune : carried.runes().entrySet()) {
-                moving.add(rune.getValue().format() + " " + rune.getKey());
+            if(coin == Coin.LITECOIN) {
+                moving.add(whole + " litoshis of LTC (the output's full value)");
+            } else if(sent < whole) {
+                moving.add(sent + " " + coin.getSubunit() + " of " + coin.getTicker() + ", split from an output of " + whole + " " + coin.getSubunit()
+                        + " (the rest comes back to this wallet as change)");
+            } else {
+                moving.add(whole + " " + coin.getSubunit() + " of " + coin.getTicker() + " (the output's full value)");
             }
-            moving.add(inscribed.utxo().getValue() + " litoshis of LTC (the output's full value)");
-            if(confirm(owner, "Send inscription?", choice.get().recipient(), moving, walletTransaction)) {
+            String note = sent < coin.getDustLimit() && coin.getSoftDustSurcharge() > 0
+                    ? "The fee includes " + coin.getCapitalizedName() + "'s " + coin.getSoftDustSurcharge() + " " + coin.getSubunit()
+                      + " charge for an output under " + coin.getDustLimit() + " " + coin.getSubunit() + "." : null;
+            if(confirm(owner, coin, "Send inscription?", choice.get().recipient(), moving, walletTransaction, note)) {
                 open(owner, walletTransaction, "Send inscription " + shortId(inscriptionId));
             }
         } catch(Exception e) {
@@ -93,7 +126,7 @@ public final class CollectibleSendDialog {
     }
 
     private static void sendRunes(Window owner, List<Wallet> holdingWallets, OrdRune rune) {
-        Optional<Choice> choice = ask(owner, "Send Runes", "Send " + rune.spacedName(), rune.spacedName(), rune.divisibility());
+        Optional<Choice> choice = ask(owner, holdingWallets.getFirst().getCoin(), "Send Runes", "Send " + rune.spacedName(), rune.spacedName(), rune.divisibility());
         if(choice.isEmpty()) {
             return;
         }
@@ -137,7 +170,7 @@ public final class CollectibleSendDialog {
                 }
             }
             //One confirmation only, whatever the answer
-            if(confirm(owner, "Send runes?", choice.get().recipient(), moving, walletTransaction)) {
+            if(confirm(owner, wallet.getCoin(), "Send runes?", choice.get().recipient(), moving, walletTransaction, null)) {
                 try {
                     open(owner, walletTransaction, "Send " + sent.format() + " " + rune.spacedName());
                 } catch(Exception e) {
@@ -158,20 +191,21 @@ public final class CollectibleSendDialog {
         return snapshot;
     }
 
-    private static Optional<Choice> ask(Window owner, String title, String header, String runeName, int divisibility) {
+    private static Optional<Choice> ask(Window owner, Coin coin, String title, String header, String runeName, int divisibility) {
         Dialog<Choice> dialog = new Dialog<>();
         dialog.initOwner(owner);
         dialog.setTitle(title);
         dialog.setHeaderText(header);
         TextField recipient = new TextField();
-        recipient.setPromptText("ltc1p...");
+        recipient.setPromptText(coin == Coin.LITECOIN ? "ltc1p..." : coin.getCapitalizedName() + " address");
         recipient.setPrefColumnCount(42);
         TextField amount = new TextField();
         FeeRangeSlider feeRange = new FeeRangeSlider();
         feeRange.setFeeRate(AppServices.getDefaultFeeRate());
         Label feeLabel = new Label();
-        feeRange.valueProperty().addListener((o, a, b) -> feeLabel.setText(String.format("%.2f lit/vB", feeRange.getFeeRate())));
-        feeLabel.setText(String.format("%.2f lit/vB", feeRange.getFeeRate()));
+        String rateUnit = coin == Coin.LITECOIN ? "lit/vB" : "sat/vB";
+        feeRange.valueProperty().addListener((o, a, b) -> feeLabel.setText(String.format("%.2f " + rateUnit, feeRange.getFeeRate())));
+        feeLabel.setText(String.format("%.2f " + rateUnit, feeRange.getFeeRate()));
         Label problem = new Label();
         problem.setWrapText(true);
         problem.setMaxWidth(520);
@@ -193,7 +227,7 @@ public final class CollectibleSendDialog {
         ok.setText("Continue");
 
         Runnable check = () -> {
-            Optional<String> recipientProblem = CollectibleSend.recipientProblem(recipient.getText());
+            Optional<String> recipientProblem = CollectibleSend.recipientProblem(recipient.getText(), coin);
             String text = recipientProblem.orElse(null);
             if(text == null && runeName != null) {
                 try {
@@ -206,7 +240,7 @@ public final class CollectibleSendDialog {
             }
             if(text == null) {
                 try {
-                    text = CollectibleSend.recipientWarning(Address.fromString(recipient.getText().trim())).orElse(null);
+                    text = CollectibleSend.recipientWarning(CollectibleSend.parseRecipient(recipient.getText(), coin), coin).orElse(null);
                     problem.setStyle("");
                     ok.setDisable(false);
                 } catch(InvalidAddressException e) {
@@ -228,7 +262,7 @@ public final class CollectibleSendDialog {
             }
             try {
                 BigInteger units = runeName == null ? null : CollectibleSend.toBaseUnits(amount.getText(), divisibility);
-                return new Choice(Address.fromString(recipient.getText().trim()), units, feeRange.getFeeRate());
+                return new Choice(CollectibleSend.parseRecipient(recipient.getText(), coin), units, feeRange.getFeeRate());
             } catch(InvalidAddressException e) {
                 return null;
             }
@@ -236,13 +270,17 @@ public final class CollectibleSendDialog {
         return dialog.showAndWait();
     }
 
-    private static boolean confirm(Window owner, String header, Address recipient, List<String> moving, WalletTransaction walletTransaction) {
+    private static boolean confirm(Window owner, Coin coin, String header, Address recipient, List<String> moving, WalletTransaction walletTransaction, String note) {
         StringBuilder text = new StringBuilder("To: ").append(recipient).append("\n\nThis moves:\n");
         for(String item : moving) {
             text.append("  ").append(item).append("\n");
         }
-        text.append("\nFee: ").append(walletTransaction.getFee()).append(" litoshis, paid from outputs checked to carry nothing.");
-        CollectibleSend.recipientWarning(recipient).ifPresent(warning -> text.append("\n\n").append(warning));
+        text.append("\nFee: ").append(walletTransaction.getFee()).append(coin == Coin.LITECOIN ? " litoshis" : " " + coin.getSubunit())
+                .append(", paid from outputs checked to carry nothing.");
+        if(note != null) {
+            text.append(" ").append(note);
+        }
+        CollectibleSend.recipientWarning(recipient, coin).ifPresent(warning -> text.append("\n\n").append(warning));
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "", ButtonType.CANCEL, ButtonType.OK);
         alert.initOwner(owner);
         alert.setTitle("Confirm");
