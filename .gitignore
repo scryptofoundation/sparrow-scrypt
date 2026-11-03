@@ -1,3 +1,4 @@
+# Build output and editors
 .idea
 .gradle
 *iml
@@ -7,3 +8,32 @@ out
 *.log
 build-*.sh
 .DS_Store
+.vscode/
+
+# Keys, certificates and credentials
+*.key
+*.pem
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.gpg
+*.ppk
+id_rsa*
+id_ed25519*
+.env
+.env.*
+*.secret
+secrets/
+.netrc
+gradle.properties
+local.properties
+
+# Wallets, seeds and transactions
+*.mv.db
+*.trace.db
+*.seedbackup
+*.psbt
+*.wallet
+wallets/
