@@ -26,6 +26,7 @@ import com.sparrowwallet.sparrow.net.ServerType;
 import com.sparrowwallet.sparrow.settings.SettingsGroup;
 import com.sparrowwallet.sparrow.settings.SettingsDialog;
 import com.sparrowwallet.sparrow.paynym.PayNymDialog;
+import com.sparrowwallet.sparrow.transaction.TransactionCoin;
 import com.sparrowwallet.sparrow.transaction.TransactionController;
 import com.sparrowwallet.sparrow.transaction.TransactionData;
 import com.sparrowwallet.sparrow.transaction.TransactionView;
@@ -2674,6 +2675,13 @@ public class AppController implements Initializable {
             }
         }
 
+        //The tab belongs to the transaction's coin: built under it so addresses render in that chain's format, and
+        //selecting it makes that the active coin (a PSBT opened from text used whichever wallet was focused last)
+        com.sparrowwallet.drongo.Coin transactionCoin = TransactionCoin.of(psbt == null ? null : psbt.getCoin(),
+                new ArrayList<>(AppServices.get().getOpenWallets().keySet()),
+                wallet -> transaction.getInputs().stream().anyMatch(wallet::isWalletTxo), Wallet::getCoin,
+                com.sparrowwallet.drongo.Coin.getGlobal());
+        com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(transactionCoin);
         try {
             String tabName = name;
 
@@ -2734,7 +2742,7 @@ public class AppController implements Initializable {
             }
             controller.initializeView();
 
-            TabData tabData = new TransactionTabData(TabData.TabType.TRANSACTION, file, transactionData);
+            TabData tabData = new TransactionTabData(TabData.TabType.TRANSACTION, file, transactionData, transactionCoin);
             tab.setUserData(tabData);
 
             tabs.getTabs().add(tab);
@@ -2743,6 +2751,8 @@ public class AppController implements Initializable {
             Platform.runLater(tabs::requestFocus);
         } catch(IOException e) {
             throw new RuntimeException(e);
+        } finally {
+            com.sparrowwallet.drongo.Coin.endScope(previousCoin);
         }
     }
 
@@ -3413,6 +3423,12 @@ public class AppController implements Initializable {
             if(event instanceof TransactionTabSelectedEvent) {
                 TransactionTabSelectedEvent txTabEvent = (TransactionTabSelectedEvent)event;
                 TransactionTabData transactionTabData = txTabEvent.getTransactionTabData();
+                //Like a wallet tab, a transaction tab makes its own coin the active one
+                com.sparrowwallet.drongo.Coin transactionCoin = transactionTabData.getCoin();
+                if(transactionCoin != null && transactionCoin != com.sparrowwallet.drongo.Coin.getGlobal()) {
+                    com.sparrowwallet.drongo.Coin.set(transactionCoin);
+                    EventManager.get().post(new ActiveCoinChangedEvent(transactionCoin));
+                }
                 if(transactionTabData.getPsbt() == null || !transactionTabData.getPsbt().getTransaction().getTxId().equals(transactionTabData.getTransaction().getTxId())) {
                     saveTransaction.setVisible(true);
                     saveTransaction.setDisable(false);

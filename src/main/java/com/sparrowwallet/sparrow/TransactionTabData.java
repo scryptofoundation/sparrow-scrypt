@@ -9,11 +9,18 @@ import java.io.File;
 public class TransactionTabData extends TabData {
     private final File file;
     private final TransactionData transactionData;
+    //The transaction's chain, made the active coin when the tab is selected (see TransactionCoin)
+    private final com.sparrowwallet.drongo.Coin coin;
 
-    public TransactionTabData(TabType type, File file, TransactionData transactionData) {
+    public TransactionTabData(TabType type, File file, TransactionData transactionData, com.sparrowwallet.drongo.Coin coin) {
         super(type);
         this.file = file;
         this.transactionData = transactionData;
+        this.coin = coin;
+    }
+
+    public com.sparrowwallet.drongo.Coin getCoin() {
+        return coin;
     }
 
     public File getFile() {
