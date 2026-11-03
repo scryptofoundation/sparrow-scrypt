@@ -697,7 +697,8 @@ public class AppServices {
 
     private static Image getWindowIcon() {
         if(windowIcon == null) {
-            windowIcon = new Image(SparrowWallet.class.getResourceAsStream("/image/sparrow-icon.png"));
+            String iconPath = SparrowWallet.isUnified() ? "/image/sparrow-scrypt-icon.png" : "/image/sparrow-icon.png";
+            windowIcon = new Image(SparrowWallet.class.getResourceAsStream(iconPath));
         }
 
         return windowIcon;

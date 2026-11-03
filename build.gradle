@@ -27,7 +27,7 @@ def skipInstallers = "true".equals(findProperty("skipInstallers"))
 // Sparrow-LTC packaging exactly.
 def coin = (project.findProperty('coin') ?: 'scrypt').toString().toLowerCase()
 def coinConfig = [
-    scrypt: [ticker: 'Scrypt', name: null, icon: 'ltc'],
+    scrypt: [ticker: 'Scrypt', name: null, icon: 'scrypt'],
     ltc  : [ticker: 'LTC',   name: 'litecoin'],
     doge : [ticker: 'DOGE',  name: 'dogecoin'],
     pep  : [ticker: 'PEP',   name: 'pepecoin'],
