@@ -221,9 +221,26 @@ public class ElectrumServer {
     private static final Set<Sha256Hash> unsignedWarnedTxids = ConcurrentHashMap.newKeySet();
 
     private static synchronized CloseableTransport getTransport() throws ServerException {
+        //The coin of the task asking: its scope, or the focused coin on the FX thread; null leaves the coin unchecked
+        com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.getScoped();
+        if(taskCoin == null && javafx.application.Platform.isFxApplicationThread()) {
+            taskCoin = com.sparrowwallet.drongo.Coin.getGlobal();
+        }
+
         if(electrumServerRpc instanceof EsploraServerRpc) {
+            Optional<String> problem = transportProblem(connectedCoin, taskCoin, esploraConnected, null);
+            if(problem.isPresent()) {
+                throw new ServerException(problem.get());
+            }
             //Esplora is stateless HTTP - there is no persistent transport, and EsploraServerRpc ignores it
             return null;
+        }
+
+        if(transport != null) {
+            Optional<String> problem = transportProblem(connectedCoin, taskCoin, true, null);
+            if(problem.isPresent()) {
+                throw new ServerException(problem.get());
+            }
         }
 
         if(transport == null) {
@@ -257,6 +274,12 @@ public class ElectrumServer {
                     throw new ServerConfigException("Electrum server certificate file not found");
                 }
 
+                //Not a ServerConfigException: the settings are fine, this task just ran without its coin's connection
+                Optional<String> problem = transportProblem(connectedCoin, taskCoin, false, electrumServer);
+                if(problem.isPresent()) {
+                    throw new ServerException(problem.get());
+                }
+
                 Protocol protocol = electrumServer.getProtocol();
 
                 //If changing server, don't rely on previous transaction history
@@ -283,12 +306,29 @@ public class ElectrumServer {
                         transport = protocol.getTransport(hostAndPort);
                     }
                 }
+            } catch(ServerException e) {
+                throw e;
             } catch (Exception e) {
                 throw new ServerConfigException(e);
             }
         }
 
         return transport;
+    }
+
+    /**
+     * Why a task for taskCoin cannot have a transport, or empty. A live connection belongs to the coin it was opened for,
+     * and a task made while another coin was focused must not query it. An Esplora (http or https) server has no socket
+     * transport, so one is never opened for it here: its connection is made when its coin's connection service runs.
+     */
+    static Optional<String> transportProblem(com.sparrowwallet.drongo.Coin connectedCoin, com.sparrowwallet.drongo.Coin taskCoin, boolean live, Server configured) {
+        if(live && connectedCoin != null && taskCoin != null && connectedCoin != taskCoin) {
+            return Optional.of("Connected to " + connectedCoin.getCapitalizedName() + ", not " + taskCoin.getCapitalizedName());
+        }
+        if(!live && isEsploraServer(configured)) {
+            return Optional.of("Not connected to the " + (taskCoin == null ? "" : taskCoin.getCapitalizedName() + " ") + "Esplora server");
+        }
+        return Optional.empty();
     }
 
     /**
@@ -380,6 +420,8 @@ public class ElectrumServer {
 
     public static synchronized void closeActiveConnection() throws ServerException {
         esploraConnected = false;
+        //No connection belongs to any coin until the next one is made (getTransport checks tasks against it)
+        connectedCoin = null;
         //Drop an Esplora adapter with its connection. getTransport() returns no transport while the RPC is Esplora,
         //and ConnectionService only swaps in the Electrum RPC after connecting - so switching from an Esplora coin's
         //tab (Pepecoin, Junkcoin) to an Electrum coin's (Litecoin) failed with an NPE in connect().
