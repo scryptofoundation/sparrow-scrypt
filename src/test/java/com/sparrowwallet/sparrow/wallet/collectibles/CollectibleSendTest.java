@@ -241,6 +241,45 @@ public class CollectibleSendTest {
     }
 
     @Test
+    public void carriedMustListTheInscription() {
+        String id = "ab".repeat(32) + "i0";
+        String other = "cd".repeat(32) + "i0";
+        String outpoint = "ef".repeat(32) + ":1";
+        CollectibleSend.checkCarried(outpoint + ":300000", new OrdOutput(outpoint, true, List.of(id), Map.of(), 5_000_000, false, false), id);
+        IllegalArgumentException notListed = Assertions.assertThrows(IllegalArgumentException.class, () -> CollectibleSend.checkCarried(outpoint + ":300000",
+                new OrdOutput(outpoint, true, List.of(other), Map.of(), 5_000_000, false, false), id));
+        Assertions.assertEquals("The inscriptions server places the inscription in " + outpoint + ", but does not list it on that output. Refresh and try again.",
+                notListed.getMessage());
+        Assertions.assertThrows(IllegalArgumentException.class, () -> CollectibleSend.checkCarried(outpoint + ":0",
+                new OrdOutput(outpoint, true, List.of(), Map.of(), 5_000_000, false, true), id), "unlisted output without the id");
+        Assertions.assertThrows(IllegalArgumentException.class, () -> CollectibleSend.checkCarried("ef".repeat(32) + ":0:0",
+                new OrdOutput(outpoint, true, List.of(id), Map.of(), 5_000_000, false, false), id), "answer for another output");
+    }
+
+    @Test
+    public void focusMustBeTheWalletsCoin() {
+        Assertions.assertTrue(CollectibleSend.focusProblem(Coin.LITECOIN, wallet).isEmpty());
+        Optional<String> problem = CollectibleSend.focusProblem(Coin.DOGECOIN, wallet);
+        Assertions.assertTrue(problem.isPresent());
+        Assertions.assertTrue(problem.get().contains(wallet.getFullDisplayName()), problem.get());
+    }
+
+    @Test
+    public void minRelayFeeRateIsTheWalletsCoin() {
+        Assertions.assertEquals(100d, CollectibleSend.minRelayFeeRate(Coin.DOGECOIN, Coin.LITECOIN, 1d), "a Litecoin server's rate is not Dogecoin's");
+        Assertions.assertEquals(100d, CollectibleSend.minRelayFeeRate(Coin.DOGECOIN, null, null));
+        Assertions.assertEquals(150d, CollectibleSend.minRelayFeeRate(Coin.DOGECOIN, Coin.DOGECOIN, 150d));
+    }
+
+    @Test
+    public void serverProblemSaysHowToTurnItOn() {
+        String message = CollectibleSend.serverProblem("Connection refused.");
+        Assertions.assertEquals("Could not check where the inscription is now: Connection refused. Make sure the inscriptions server is on and reachable "
+                + "in Preferences > Server > Inscriptions.", message);
+        Assertions.assertTrue(CollectibleSend.serverProblem(null).contains("Preferences > Server > Inscriptions"));
+    }
+
+    @Test
     public void runeInputsSkipInscribedOutputsAndCoverAmount() {
         BlockTransactionHashIndex a = utxo(10_000, CollectibleState.CARRIES, false);
         BlockTransactionHashIndex b = utxo(10_000, CollectibleState.CARRIES, false);

@@ -75,6 +75,43 @@ public final class CollectibleSend {
         throw new IllegalArgumentException("The inscription is not in an unspent output of this wallet");
     }
 
+    /**
+     * Refuses a fresh server answer that does not hold together: the output answered must be the one at the satpoint, and
+     * it must list the inscription being sent. Otherwise the location and the output disagree and nothing is sent.
+     */
+    public static void checkCarried(String satpoint, OrdOutput carried, String inscriptionId) {
+        int offsetAt = satpoint == null ? -1 : satpoint.lastIndexOf(':');
+        if(carried == null || offsetAt <= 0 || !satpoint.substring(0, offsetAt).equals(carried.outpoint())) {
+            throw new IllegalArgumentException("The inscriptions server answered for a different output than the one it places the inscription in. Refresh and try again.");
+        }
+        if(!carried.inscriptions().contains(inscriptionId)) {
+            throw new IllegalArgumentException("The inscriptions server places the inscription in " + carried.outpoint()
+                    + ", but does not list it on that output. Refresh and try again.");
+        }
+    }
+
+    /**
+     * Why a send cannot go ahead from the focused tab, or empty. The app's coin follows the selected wallet tab, and the
+     * send reads its fee rates and dust rules from it, so the wallet's own coin must be the focused one.
+     */
+    public static Optional<String> focusProblem(Coin focused, Wallet wallet) {
+        if(focused != wallet.getCoin()) {
+            return Optional.of("Another coin's wallet tab is selected. Go back to " + wallet.getFullDisplayName() + " and send again.");
+        }
+        return Optional.empty();
+    }
+
+    /** The minimum relay fee rate for the wallet's coin: the server's when it is that coin's server, else the coin's own. */
+    public static double minRelayFeeRate(Coin coin, Coin serverCoin, Double serverRate) {
+        return coin == serverCoin && serverRate != null ? serverRate : coin.getMinRelayFeeRate();
+    }
+
+    /** The message for an inscriptions server that could not be asked, with how to turn it on. */
+    public static String serverProblem(String detail) {
+        return "Could not check where the inscription is now" + (detail == null || detail.isBlank() ? "" : ": " + detail.strip().replaceAll("\\.+$", ""))
+                + ". Make sure the inscriptions server is on and reachable in Preferences > Server > Inscriptions.";
+    }
+
     /** The offset to send with: Litecoin always sends the whole output (0), as it did before splitting existed. */
     public static long splitOffset(Coin coin, Inscribed inscribed) {
         return coin == Coin.LITECOIN ? 0 : inscribed.offset();

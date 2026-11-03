@@ -23,6 +23,7 @@ import com.sparrowwallet.sparrow.net.ord.RuneBalance;
 import com.sparrowwallet.sparrow.settings.SettingsDialog;
 import com.sparrowwallet.sparrow.settings.SettingsGroup;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleCoins;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSend;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
@@ -516,6 +517,11 @@ public class CollectiblesController extends WalletFormController implements Init
     private static void sendFresh(Button send, String id, Holding holding) {
         javafx.stage.Window owner = send.getScene().getWindow();
         Wallet wallet = holding.wallet();
+        if(CollectiblesManager.serverUrl(wallet) == null) {
+            AppServices.showErrorDialog("Cannot send inscription", "Inscription checks are off, so where the inscription is now cannot be checked. "
+                    + "Turn the inscriptions server on in Preferences > Server > Inscriptions, then send again.");
+            return;
+        }
         javafx.concurrent.Task<Located> lookup = new javafx.concurrent.Task<>() {
             @Override
             protected Located call() throws Exception {
@@ -546,7 +552,7 @@ public class CollectiblesController extends WalletFormController implements Init
             send.setDisable(false);
             Throwable e = lookup.getException();
             String message = e.getMessage() == null ? e.toString() : e.getMessage();
-            AppServices.showErrorDialog("Cannot send inscription", e instanceof IllegalArgumentException ? message : "Could not check where the inscription is now: " + message);
+            AppServices.showErrorDialog("Cannot send inscription", e instanceof IllegalArgumentException ? message : CollectibleSend.serverProblem(message));
         });
         Thread thread = new Thread(lookup, "Inscription location");
         thread.setDaemon(true);

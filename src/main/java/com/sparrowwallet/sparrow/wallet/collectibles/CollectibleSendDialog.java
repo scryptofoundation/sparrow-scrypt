@@ -12,6 +12,7 @@ import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.control.FeeRangeSlider;
 import com.sparrowwallet.sparrow.event.ViewPSBTEvent;
+import com.sparrowwallet.sparrow.net.ElectrumServer;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdOutput;
 import com.sparrowwallet.sparrow.net.ord.OrdRune;
@@ -46,23 +47,46 @@ public final class CollectibleSendDialog {
      */
     public static void sendInscription(Window owner, Wallet wallet, String inscriptionId, String satpoint, OrdOutput carried) {
         Coin coin = wallet.getCoin();
+        Optional<String> unfocused = CollectibleSend.focusProblem(Coin.get(), wallet);
+        if(unfocused.isPresent()) {
+            AppServices.showErrorDialog("Cannot send inscription", unfocused.get());
+            return;
+        }
+        try {
+            CollectibleSend.checkCarried(satpoint, carried, inscriptionId);
+        } catch(IllegalArgumentException e) {
+            AppServices.showErrorDialog("Cannot send inscription", e.getMessage());
+            return;
+        }
         Optional<Choice> choice = ask(owner, coin, "Send Inscription", "Send inscription " + shortId(inscriptionId), null, 0);
         if(choice.isEmpty()) {
             return;
         }
         try {
+            unfocused = CollectibleSend.focusProblem(Coin.get(), wallet);
+            if(unfocused.isPresent()) {
+                throw new IllegalStateException(unfocused.get());
+            }
             CollectiblesManager.Snapshot snapshot = snapshot(wallet);
             CollectibleSend.Inscribed inscribed = CollectibleSend.inscribedInput(wallet, satpoint);
+            //Litecoin keeps the app's rate as before; another coin never takes a rate reported by a different coin's server
+            double minRelayFeeRate = coin == Coin.LITECOIN ? AppServices.getMinimumRelayFeeRate()
+                    : CollectibleSend.minRelayFeeRate(coin, ElectrumServer.getConnectedCoin(), AppServices.getMinimumRelayFeeRate());
+            double feeRate = coin == Coin.LITECOIN ? choice.get().feeRate() : Math.max(choice.get().feeRate(), minRelayFeeRate);
             WalletTransaction walletTransaction;
+            //Dust rules and addresses resolve per coin, so the build reads the wallet's coin whatever tab is selected
+            Coin previous = Coin.beginScope(coin);
             try {
                 walletTransaction = CollectibleTransactions.sendInscription(wallet, inscribed.pinned(), CollectibleSend.splitOffset(coin, inscribed),
                         CollectibleSend.inscriptionsOnOutput(carried), choice.get().recipient(), CollectibleSend.feeCandidates(wallet, snapshot),
-                        choice.get().feeRate(), AppServices.getMinimumRelayFeeRate());
+                        feeRate, minRelayFeeRate);
             } catch(InsufficientFundsException e) {
                 if(coin == Coin.LITECOIN) {
                     throw e;
                 }
                 throw new InsufficientFundsException("Not enough checked " + coin.getTicker() + " to pay the fee for this transaction");
+            } finally {
+                Coin.endScope(previous);
             }
             long whole = inscribed.pinned().utxo().getValue();
             long sent = walletTransaction.getTransaction().getOutputs().getFirst().getValue();
