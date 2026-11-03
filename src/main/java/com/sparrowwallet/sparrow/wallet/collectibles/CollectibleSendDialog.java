@@ -81,7 +81,8 @@ public final class CollectibleSendDialog {
                 moving.add(whole + " litoshis of LTC (the output's full value)");
             } else if(sent < whole) {
                 moving.add(sent + " " + coin.getSubunit() + " of " + coin.getTicker() + ", split from an output of " + whole + " " + coin.getSubunit()
-                        + " (the rest comes back to this wallet as change)");
+                        + (walletTransaction.getChangeMap().isEmpty() ? " (the rest is too small to keep and goes to the fee)"
+                        : " (the rest comes back to this wallet as change)"));
             } else {
                 moving.add(whole + " " + coin.getSubunit() + " of " + coin.getTicker() + " (the output's full value)");
             }
