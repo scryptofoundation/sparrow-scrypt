@@ -45,6 +45,9 @@ public enum PublicElectrumServer {
     BELLS_NINTONDO("api.nintondo.io", "https://api.nintondo.io", Coin.BELLSCOIN, Network.MAINNET),
     PEPE_PEPPOOL("peppool.space", "https://peppool.space/api", Coin.PEPECOIN, Network.MAINNET),
     LUCKY_LUCKYSCAN("luckyscan.org", "https://luckyscan.org/api", Coin.LUCKYCOIN, Network.MAINNET),
+    //Junkcoin mainnet Esplora (electrs), verified 2026-11-03: tip 1203623, genesis a2effa73... matches, and POST /tx
+    //reaches the node (junk input is refused by its decoder). Listed first: explorer.junk-coin.com below cannot broadcast.
+    JUNK_S3NA("junk-api.s3na.xyz", "https://junk-api.s3na.xyz", Coin.JUNKCOIN, Network.MAINNET),
     JUNK_EXPLORER("explorer.junk-coin.com", "https://explorer.junk-coin.com/api", Coin.JUNKCOIN, Network.MAINNET),
 
     //Pepecoin testnet Esplora (Nintondo), verified 2026-10-23: tip ~1.55M, genesis f9f4ea4a... matches

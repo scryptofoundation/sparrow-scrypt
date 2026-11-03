@@ -41,6 +41,18 @@ public class EsploraClientLiveTest {
         exercise("Junkcoin", "https://explorer.junk-coin.com/api");
     }
 
+    @Test
+    public void junkcoinS3naEsplora() throws EsploraException {
+        exercise("Junkcoin", "https://junk-api.s3na.xyz");
+    }
+
+    @Test
+    public void junkcoinS3naTakesBroadcasts() {
+        //An undecodable transaction must reach the node and be refused there, not by a missing POST /tx
+        EsploraException e = Assertions.assertThrows(EsploraException.class, () -> new EsploraClient("https://junk-api.s3na.xyz").broadcast("00"));
+        Assertions.assertFalse(e.getMessage().contains("does not accept transaction broadcasts"), e.getMessage());
+    }
+
     /**
      * EsploraServerRpc.getBlockHeaders against every Esplora server the app lists. Sync dates each confirmed
      * transaction from these headers, and some instances (luckyscan, junk-coin mainnet) append AuxPoW data after the
@@ -53,6 +65,7 @@ public class EsploraClientLiveTest {
         servers.put("Pepecoin", "https://peppool.space/api");
         servers.put("Luckycoin", "https://luckyscan.org/api");
         servers.put("Junkcoin", "https://explorer.junk-coin.com/api");
+        servers.put("Junkcoin s3na", "https://junk-api.s3na.xyz");
         servers.put("Pepecoin testnet", "https://pepe-testnet-api.nintondo.io");
         servers.put("Junkcoin testnet", "https://jkc-testnet-api.s3na.xyz");
 
