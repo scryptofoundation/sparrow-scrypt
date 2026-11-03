@@ -11,7 +11,9 @@ import java.util.regex.Pattern;
  * The ord 0.5 API of ord-junkcoin (the wonky-ord line, version 0.5.1): /status, /block-count, /outputs/a,b,c,
  * /inscription/id?json=true and /content/id. It names no chain, so its status reports the chain as "unknown" and the
  * caller compares heights instead (OrdClient.requireChain). It indexes inscriptions and junes (its runes); a june
- * balance keeps an output held, the same as an unusable id does.
+ * balance keeps an output held, the same as an unusable id does. Its /outputs loads unknown transactions from the node,
+ * so indexed=true here means "the server answered", not "the server has indexed that block"; CollectiblesManager
+ * applies the height rule (indexedBy) to these answers.
  */
 final class LegacyOrdDialect implements OrdDialect {
     static final String NAME = "ord 0.5";

@@ -176,7 +176,7 @@ public class CollectiblesManager {
             try {
                 OrdClient client = OrdClient.forApp(url);
                 OrdStatus status = client.status();
-                OrdClient.requireChain(status, network);
+                OrdClient.requireChain(status, network, wallet.getStoredBlockHeight());
                 runeIndex = status.runeIndex();
                 Map<String, Integer> heights = new HashMap<>();
                 List<String> ask = new ArrayList<>();
@@ -186,12 +186,16 @@ public class CollectiblesManager {
                         ask.add(utxo.toString());
                     }
                 }
-                boolean tokensIndexed = !OrdServer.isNintondo(url);
+                boolean nintondo = OrdServer.isNintondo(url);
+                boolean tokensIndexed = !nintondo;
+                //Asked after status(), which is what tells the dialect
+                boolean lagged = laggingDialect(client.dialect(), nintondo);
                 for(OrdOutput answer : client.outputs(ask)) {
                     //Without a rune index an empty answer proves nothing, so it stays unknown and is not cached
-                    OrdOutput output = vouchedFor(answer.forServer(runeIndex), data.txs().get(answer.outpoint().split(":")[0]), tokensIndexed);
+                    int outputHeight = heights.getOrDefault(answer.outpoint(), 0);
+                    OrdOutput output = answered(answer, runeIndex, data.txs().get(answer.outpoint().split(":")[0]), tokensIndexed, lagged, outputHeight, status.height());
                     answers.put(output.outpoint(), output);
-                    if(output.indexed() && heights.getOrDefault(output.outpoint(), 0) > 0) {
+                    if(cacheable(output, outputHeight)) {
                         confirmed.put(url + "|" + output.outpoint(), output);
                     }
                 }
@@ -280,6 +284,36 @@ public class CollectiblesManager {
             }
         }
         return unknown;
+    }
+
+    /** Nintondo and ord-junkcoin answer for outputs they have not indexed yet (indexed true, nothing found), so the height rule applies to them. */
+    static boolean laggingDialect(String dialect, boolean nintondo) {
+        return nintondo || OrdClient.LEGACY_DIALECT.equals(dialect);
+    }
+
+    /** A server answer as far as it can be trusted, before classification: rune index, then the height rule when the dialect needs it, then token coverage. */
+    static OrdOutput answered(OrdOutput answer, boolean runeIndex, Transaction creatingTx, boolean tokensIndexed, boolean lagged, int outputHeight, long indexedHeight) {
+        OrdOutput output = answer.forServer(runeIndex);
+        if(lagged) {
+            output = indexedBy(output, outputHeight, indexedHeight);
+        }
+        return vouchedFor(output, creatingTx, tokensIndexed);
+    }
+
+    /** Only confirmed, indexed answers never change, so only those are kept. */
+    static boolean cacheable(OrdOutput output, int outputHeight) {
+        return output.indexed() && outputHeight > 0;
+    }
+
+    /**
+     * A clean answer from an indexer that may lag. An output that is unconfirmed, or in a block past what the server has
+     * indexed, is unknown, not clean. An answer that carries something is never downgraded.
+     */
+    static OrdOutput indexedBy(OrdOutput answer, int outputHeight, long indexedHeight) {
+        if(answer.carries() || (outputHeight > 0 && outputHeight <= indexedHeight)) {
+            return answer;
+        }
+        return OrdOutput.unknown(answer.outpoint());
     }
 
     /**
