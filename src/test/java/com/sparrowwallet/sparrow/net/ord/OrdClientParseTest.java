@@ -436,6 +436,17 @@ public class OrdClientParseTest {
     }
 
     /** Outputs of one transaction cannot be told apart in an answer, so they never share a request; a 404 means one is unknown. */
+    /** wonky-ord servers for other coins report token balances under dunes or runes, not junes: any of them keeps the output held. */
+    @Test
+    public void legacyOutputWithDunesOrRunesCarries() throws IOException {
+        for(String field : List.of("dunes", "runes")) {
+            String json = "[{\"inscriptions\":[],\"" + field + "\":[[\"AB\",{\"amount\":5,\"divisibility\":0,\"symbol\":null}]],\"transaction\":\"" + LEGACY_A + "\",\"value\":1}]";
+            Assertions.assertTrue(LegacyOrdDialect.parseOutputs(List.of(LEGACY_A + ":0"), json).getFirst().carries(), field);
+            String empty = "[{\"inscriptions\":[],\"" + field + "\":[],\"transaction\":\"" + LEGACY_A + "\",\"value\":1}]";
+            Assertions.assertFalse(LegacyOrdDialect.parseOutputs(List.of(LEGACY_A + ":0"), empty).getFirst().carries(), field);
+        }
+    }
+
     @Test
     public void legacyOutputsSplitSameTransactionAndFallBackOnNotFound() throws IOException {
         String entryA = "{\"inscriptions\":[],\"junes\":[],\"transaction\":\"" + LEGACY_A + "\",\"value\":%d}";

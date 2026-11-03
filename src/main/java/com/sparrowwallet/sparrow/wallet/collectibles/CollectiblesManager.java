@@ -187,8 +187,8 @@ public class CollectiblesManager {
                     }
                 }
                 boolean nintondo = OrdServer.isNintondo(url);
-                boolean tokensIndexed = !nintondo;
                 //Asked after status(), which is what tells the dialect
+                boolean tokensIndexed = tokensIndexed(client.dialect(), nintondo);
                 boolean lagged = laggingDialect(client.dialect(), nintondo);
                 for(OrdOutput answer : client.outputs(ask)) {
                     //Without a rune index an empty answer proves nothing, so it stays unknown and is not cached
@@ -289,6 +289,14 @@ public class CollectiblesManager {
     /** Nintondo and ord-junkcoin answer for outputs they have not indexed yet (indexed true, nothing found), so the height rule applies to them. */
     static boolean laggingDialect(String dialect, boolean nintondo) {
         return nintondo || OrdClient.LEGACY_DIALECT.equals(dialect);
+    }
+
+    /**
+     * Whether a clean answer also rules out tokens. Nintondo indexes inscriptions only, and an ord 0.5 server may run
+     * without its token index or report balances under a field it does not share, so neither vouches for tokens.
+     */
+    static boolean tokensIndexed(String dialect, boolean nintondo) {
+        return !(nintondo || OrdClient.LEGACY_DIALECT.equals(dialect));
     }
 
     /** A server answer as far as it can be trusted, before classification: rune index, then the height rule when the dialect needs it, then token coverage. */

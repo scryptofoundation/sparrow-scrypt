@@ -10,8 +10,9 @@ import java.util.regex.Pattern;
 /**
  * The ord 0.5 API of ord-junkcoin (the wonky-ord line, version 0.5.1): /status, /block-count, /outputs/a,b,c,
  * /inscription/id?json=true and /content/id. It names no chain, so its status reports the chain as "unknown" and the
- * caller compares heights instead (OrdClient.requireChain). It indexes inscriptions and junes (its runes); a june
- * balance keeps an output held, the same as an unusable id does. Its /outputs loads unknown transactions from the node,
+ * caller compares heights instead (OrdClient.checkChain). It indexes inscriptions and junes (its runes); a june
+ * balance (or a dunes or runes balance, from wonky-ord servers for other coins) keeps an output held, the same as an
+ * unusable id does. Its clean answers are not trusted for tokens (CollectiblesManager.tokensIndexed). Its /outputs loads unknown transactions from the node,
  * so indexed=true here means "the server answered", not "the server has indexed that block"; CollectiblesManager
  * applies the height rule (indexedBy) to these answers.
  */
@@ -23,6 +24,7 @@ final class LegacyOrdDialect implements OrdDialect {
     private static final Pattern SATPOINT = Pattern.compile("[0-9a-f]{64}:\\d{1,10}:\\d{1,19}");
     private static final Pattern COUNT = Pattern.compile("\\d{1,10}");
     private static final int MAX_CONTENT_TYPE = 255;
+    private static final List<String> TOKEN_FIELDS = List.of("junes", "dunes", "runes");
 
     private final String baseUrl;
 
@@ -141,7 +143,12 @@ final class LegacyOrdDialect implements OrdDialect {
     }
 
     private static OrdOutput parseOutput(String outpoint, JsonNode node) {
-        boolean unlisted = node.path("junes").isArray() ? !node.path("junes").isEmpty() : !node.path("junes").isMissingNode();
+        //ord-junkcoin calls its token balances junes; wonky-ord servers for other coins use dunes or runes
+        boolean unlisted = false;
+        for(String tokens : TOKEN_FIELDS) {
+            JsonNode balances = node.path(tokens);
+            unlisted |= balances.isArray() ? !balances.isEmpty() : !balances.isMissingNode();
+        }
         List<String> inscriptions = new ArrayList<>();
         for(JsonNode id : node.path("inscriptions")) {
             if(id.isTextual() && OrdClient.INSCRIPTION_ID.matcher(id.asText()).matches()) {

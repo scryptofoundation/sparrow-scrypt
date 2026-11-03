@@ -67,6 +67,22 @@ public class CollectiblesManagerTest {
         Assertions.assertSame(carrying, CollectiblesManager.vouchedFor(carrying, dunes, false));
     }
 
+    /** ord 0.5 servers are not trusted for tokens either: their clean answer for an output of a dunestone transaction stays unknown. */
+    @Test
+    public void legacyServerCannotClearTokenOutputs() {
+        Assertions.assertFalse(CollectiblesManager.tokensIndexed(OrdClient.LEGACY_DIALECT, false));
+        Assertions.assertFalse(CollectiblesManager.tokensIndexed("Nintondo", true));
+        Assertions.assertTrue(CollectiblesManager.tokensIndexed("ord 0.20", false));
+
+        com.sparrowwallet.drongo.protocol.Transaction dunes = new com.sparrowwallet.drongo.protocol.Transaction();
+        dunes.addInput(Sha256Hash.ZERO_HASH, 0, new com.sparrowwallet.drongo.protocol.Script(new byte[0]));
+        dunes.addOutput(100000, new com.sparrowwallet.drongo.protocol.Script(com.sparrowwallet.drongo.Utils.hexToBytes("76a914" + "00".repeat(20) + "88ac")));
+        dunes.addOutput(0, new com.sparrowwallet.drongo.protocol.Script(com.sparrowwallet.drongo.Utils.hexToBytes("6a014400")));
+        OrdOutput clean = cleanAnswer(dunes.getTxId() + ":0");
+        OrdOutput answer = CollectiblesManager.answered(clean, true, dunes, CollectiblesManager.tokensIndexed(OrdClient.LEGACY_DIALECT, false), true, 100, 200);
+        Assertions.assertFalse(answer.indexed());
+    }
+
     @Test
     public void noSnapshotMeansEverythingUnknown() {
         BlockTransactionHashIndex txo = utxo(null);
