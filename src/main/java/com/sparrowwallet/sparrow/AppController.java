@@ -559,7 +559,7 @@ public class AppController implements Initializable {
     public void submitBugReport(ActionEvent event) {
         ButtonType supportType = new ButtonType("Get Support", ButtonBar.ButtonData.LEFT);
         ButtonType bugType = new ButtonType("Submit Bug Report", ButtonBar.ButtonData.YES);
-        Optional<ButtonType> optResponse = showWarningDialog("Submit Bug Report", "Please note that this facility is for bug reports and feature requests only. There is a community of Sparrow-LTC users who can assist with support requests.", supportType, bugType);
+        Optional<ButtonType> optResponse = showWarningDialog("Submit Bug Report", "Please note that this facility is for bug reports and feature requests only. There is a community of " + SparrowWallet.APP_NAME + " users who can assist with support requests.", supportType, bugType);
 
         if(optResponse.isPresent()) {
             if(optResponse.get() == bugType) {
@@ -1350,7 +1350,7 @@ public class AppController implements Initializable {
             }
             if(!sameDir) {
                 ConfirmationAlert alert = new ConfirmationAlert("Change wallets directory?",
-                    "Do you want to configure Sparrow-LTC to use " + selectedDir + " as the default wallets directory?", ButtonType.NO, ButtonType.YES);
+                    "Do you want to configure " + SparrowWallet.APP_NAME + " to use " + selectedDir + " as the default wallets directory?", ButtonType.NO, ButtonType.YES);
                 Optional<ButtonType> optType = alert.showAndWait();
                 if(optType.isPresent() && optType.get() == ButtonType.YES) {
                     Config.get().setWalletsDir(selectedDir);
@@ -3406,12 +3406,8 @@ public class AppController implements Initializable {
             String tabName = event.getTabName();
             if(tabs.getScene() != null) {
                 Stage tabStage = (Stage)tabs.getScene().getWindow();
-                //Brand the window for the focused wallet's coin, not the process default (one app, per-wallet coin)
-                String appName = SparrowWallet.APP_NAME;
-                if(event instanceof WalletTabSelectedEvent walletEvent && walletEvent.getWalletTabData().getWallet() != null) {
-                    appName = "Sparrow-" + walletEvent.getWalletTabData().getWallet().getCoin().getTicker();
-                }
-                tabStage.setTitle(appName + " - " + tabName);
+                //The app's own name: Sparrow-Scrypt for the multi-coin app, Sparrow-<ticker> for a single-coin flavor
+                tabStage.setTitle(SparrowWallet.APP_NAME + " - " + tabName);
             }
 
             if(event instanceof TransactionTabSelectedEvent) {
@@ -3573,12 +3569,12 @@ public class AppController implements Initializable {
                 }
 
                 Notifications notificationBuilder = Notifications.create()
-                        .title("Sparrow-LTC - " + walletName)
+                        .title(SparrowWallet.APP_NAME + " - " + walletName)
                         .text(text)
                         .graphic(new DialogImage(DialogImage.Type.SPARROW))
                         .hideAfter(Duration.seconds(15))
                         .position(Pos.TOP_RIGHT)
-                        .threshold(5, Notifications.create().title("Sparrow-LTC").text("Multiple new wallet transactions").graphic(new DialogImage(DialogImage.Type.SPARROW)))
+                        .threshold(5, Notifications.create().title(SparrowWallet.APP_NAME).text("Multiple new wallet transactions").graphic(new DialogImage(DialogImage.Type.SPARROW)))
                         .onAction(e -> selectTab(event.getWallet()));
 
                 //If controlsfx can't find our window, we must set the window ourselves (unfortunately notification is then shown within this window)
@@ -3615,7 +3611,7 @@ public class AppController implements Initializable {
 
     @Subscribe
     public void versionUpdated(VersionUpdatedEvent event) {
-        Hyperlink versionUpdateLabel = new Hyperlink("Sparrow-LTC " + event.getVersion() + " available");
+        Hyperlink versionUpdateLabel = new Hyperlink(SparrowWallet.APP_NAME + " " + event.getVersion() + " available");
         versionUpdateLabel.getStyleClass().add("version-hyperlink");
         versionUpdateLabel.setOnAction(event1 -> {
             AppServices.get().getApplication().getHostServices().showDocument("https://www.sparrowwallet.com/download");
