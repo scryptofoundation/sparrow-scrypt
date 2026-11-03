@@ -15,6 +15,7 @@ import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.WalletTabData;
 import com.sparrowwallet.sparrow.event.*;
 import com.sparrowwallet.sparrow.io.Config;
+import com.sparrowwallet.sparrow.net.ElectrumServer;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdOutput;
 import com.sparrowwallet.sparrow.net.ord.OrdServer;
@@ -51,10 +52,34 @@ public class CollectiblesManager {
     //Answers for confirmed, indexed outputs never change; keyed by server URL and outpoint
     private final Map<String, OrdOutput> confirmed = new ConcurrentHashMap<>();
 
+    /**
+     * One check of a wallet. chainProblem is why the server was not accepted for the wallet's chain (its answers are
+     * not used). indexedHeight is the height a lagging indexer (Nintondo, ord 0.5) has reached, or -1; tip is the coin's
+     * current tip when the app is connected to that coin, else null.
+     */
     public record Snapshot(Map<String, CollectibleState> states, Map<String, OrdOutput> answers, Instant checkedAt, String serverUrl, String error,
-                           boolean enabled, boolean runesIndexed) {
+                           boolean enabled, boolean runesIndexed, String chainProblem, long indexedHeight, Integer tip) {
+        public Snapshot(Map<String, CollectibleState> states, Map<String, OrdOutput> answers, Instant checkedAt, String serverUrl, String error,
+                        boolean enabled, boolean runesIndexed) {
+            this(states, answers, checkedAt, serverUrl, error, enabled, runesIndexed, null, -1, null);
+        }
+
         static Snapshot disabled() {
             return new Snapshot(Map.of(), Map.of(), Instant.now(), null, null, false, true);
+        }
+
+        /** How many blocks the indexer is behind the coin's current tip; 0 when it is not, or when that is not known. */
+        public long blocksBehind() {
+            return indexedHeight < 0 || tip == null ? 0 : Math.max(0, tip - indexedHeight);
+        }
+
+        /** Spec section 4: the tab says by how much the indexer is behind, and why newer coins are held. Null when it is not behind. */
+        public String lagNotice() {
+            long behind = blocksBehind();
+            if(behind == 0) {
+                return null;
+            }
+            return "The inscriptions server is " + behind + (behind == 1 ? " block" : " blocks") + " behind; newer coins stay held until it catches up.";
         }
 
         public String serverHost() {
@@ -109,6 +134,22 @@ public class CollectiblesManager {
     @Subscribe
     public void walletNodesChanged(WalletNodesChangedEvent event) {
         refresh(event.getWallet());
+    }
+
+    /** Wallets whose server could not be checked without their coin's tip are checked again once the app connects to that coin. */
+    @Subscribe
+    public void connected(ConnectionEvent event) {
+        for(Wallet wallet : AppServices.get().getOpenWallets().keySet()) {
+            Snapshot snapshot = snapshots.get(wallet);
+            if(snapshot != null && snapshot.chainProblem() != null && ElectrumServer.isConnectedTo(wallet.getCoin())) {
+                refresh(wallet);
+            }
+        }
+    }
+
+    /** The coin's current tip, from the app's Electrum connection when it is to that coin's server; null otherwise. */
+    public static Integer freshTip(Coin coin) {
+        return ElectrumServer.isConnectedTo(coin) ? AppServices.getCurrentBlockHeight() : null;
     }
 
     @Subscribe
@@ -171,12 +212,16 @@ public class CollectiblesManager {
             }
 
             String error = null;
+            String chainProblem = null;
+            long indexedHeight = -1;
             boolean runeIndex = true;
+            //The coin's own tip, never the wallet's stored height, which stops advancing while another coin is connected
+            Integer tip = freshTip(wallet.getCoin());
             Coin previous = Coin.beginScope(wallet.getCoin());
             try {
                 OrdClient client = OrdClient.forApp(url);
                 OrdStatus status = client.status();
-                OrdClient.requireChain(status, network, wallet.getStoredBlockHeight());
+                client.checkChain(status, network, wallet.getCoin(), tip);
                 runeIndex = status.runeIndex();
                 Map<String, Integer> heights = new HashMap<>();
                 List<String> ask = new ArrayList<>();
@@ -190,6 +235,9 @@ public class CollectiblesManager {
                 //Asked after status(), which is what tells the dialect
                 boolean tokensIndexed = tokensIndexed(client.dialect(), nintondo);
                 boolean lagged = laggingDialect(client.dialect(), nintondo);
+                if(lagged) {
+                    indexedHeight = status.height();
+                }
                 for(OrdOutput answer : client.outputs(ask)) {
                     //Without a rune index an empty answer proves nothing, so it stays unknown and is not cached
                     int outputHeight = heights.getOrDefault(answer.outpoint(), 0);
@@ -199,6 +247,10 @@ public class CollectiblesManager {
                         confirmed.put(url + "|" + output.outpoint(), output);
                     }
                 }
+            } catch(OrdClient.ChainException e) {
+                //Not accepted for this chain: nothing it says is used, so every output it was asked about stays unknown (held)
+                log.info("Inscriptions server " + url + " not accepted: " + e.getMessage());
+                chainProblem = e.getMessage();
             } catch(Exception e) {
                 log.warn("Could not check outputs with " + url, e);
                 error = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -207,7 +259,7 @@ public class CollectiblesManager {
             }
 
             Map<String, CollectibleState> states = CollectiblesClassifier.classify(data.txos(), data.txs(), answers);
-            publish(wallet, new Snapshot(states, Map.copyOf(answers), Instant.now(), url, error, true, runeIndex), answers);
+            publish(wallet, new Snapshot(states, Map.copyOf(answers), Instant.now(), url, error, true, runeIndex, chainProblem, indexedHeight, tip), answers);
         } catch(Exception e) {
             log.error("Error checking outputs for inscriptions", e);
         }

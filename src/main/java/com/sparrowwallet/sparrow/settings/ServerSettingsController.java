@@ -28,7 +28,8 @@ import com.sparrowwallet.sparrow.net.*;
 import com.sparrowwallet.sparrow.net.ord.InscriptionServerMode;
 import com.sparrowwallet.sparrow.net.ord.OrdClient;
 import com.sparrowwallet.sparrow.net.ord.OrdServer;
-import com.sparrowwallet.sparrow.net.ord.OrdStatus;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleCoins;
+import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
@@ -865,14 +866,15 @@ public class ServerSettingsController extends SettingsDetailController {
         }
         Network network = Network.get();
         Coin coin = Coin.get();
+        //The same chain check as the background one: an ord 0.5 server is checked against this coin's current tip when the app is connected to it
+        Integer tip = CollectiblesManager.freshTip(coin);
+        boolean runes = CollectibleCoins.hasRunes(coin);
         inscriptionsTestResult.setText("Testing...");
         Thread thread = new Thread(() -> {
             String result;
             Coin previous = Coin.beginScope(coin);
             try {
-                OrdStatus status = OrdClient.forApp(url).status();
-                OrdClient.requireChain(status, network);
-                result = "Connected: " + status.chain() + ", height " + status.height() + ", runes indexed: " + (status.runeIndex() ? "yes" : "no");
+                result = OrdClient.forApp(url).testServer(network, coin, tip, runes);
             } catch(Exception e) {
                 result = e.getMessage() == null ? e.toString() : e.getMessage();
             } finally {

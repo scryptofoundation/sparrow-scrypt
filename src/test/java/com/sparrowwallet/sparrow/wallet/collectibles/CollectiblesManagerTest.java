@@ -130,6 +130,21 @@ public class CollectiblesManagerTest {
         Assertions.assertTrue(ord.indexed());
     }
 
+    /** Spec section 4: when the indexer is behind the coin's tip, the tab says by how much and why newer coins are held. */
+    @Test
+    public void lagNoticeSaysHowFarBehind() {
+        Assertions.assertEquals("The inscriptions server is 12 blocks behind; newer coins stay held until it catches up.", snapshot(1_301_188, 1_301_200).lagNotice());
+        Assertions.assertEquals("The inscriptions server is 1 block behind; newer coins stay held until it catches up.", snapshot(1_301_199, 1_301_200).lagNotice());
+        Assertions.assertNull(snapshot(1_301_200, 1_301_200).lagNotice());
+        Assertions.assertNull(snapshot(1_301_201, 1_301_200).lagNotice(), "an indexer ahead of the app's tip is not behind");
+        Assertions.assertNull(snapshot(1_301_188, null).lagNotice(), "no tip for the coin, nothing to compare");
+        Assertions.assertNull(snapshot(-1, 1_301_200).lagNotice(), "ord 0.20 reports its own indexed flag");
+    }
+
+    private static CollectiblesManager.Snapshot snapshot(long indexedHeight, Integer tip) {
+        return new CollectiblesManager.Snapshot(Map.of(), Map.of(), Instant.now(), "https://doge-mainnet-api.nintondo.io", null, true, true, null, indexedHeight, tip);
+    }
+
     private static boolean lagged(String dialect) {
         return CollectiblesManager.laggingDialect(dialect, dialect.equals("Nintondo"));
     }}

@@ -356,6 +356,7 @@ public class CollectiblesController extends WalletFormController implements Init
         //One line per server, with its latest check
         Map<String, java.time.Instant> checked = new LinkedHashMap<>();
         boolean noRuneIndex = false;
+        Set<String> lagNotices = new LinkedHashSet<>();
         Map<String, Holding> inscriptions = new LinkedHashMap<>();
         Map<String, RuneBalance> runeTotals = new TreeMap<>();
         Map<String, List<String>> runeOutputs = new HashMap<>();
@@ -373,10 +374,15 @@ public class CollectiblesController extends WalletFormController implements Init
             if(!snapshot.runesIndexed()) {
                 noRuneIndex = true;
             }
-            if(snapshot.error() != null) {
+            if(snapshot.chainProblem() != null) {
+                errors.add(snapshot.serverHost() + " not used: " + snapshot.chainProblem() + ". Outputs not yet checked count as unknown.");
+            } else if(snapshot.error() != null) {
                 errors.add("Could not reach " + snapshot.serverHost() + ": " + snapshot.error() + ". Outputs not yet checked count as unknown.");
             } else {
                 checked.merge(snapshot.serverHost(), snapshot.checkedAt(), (a, b) -> a.isAfter(b) ? a : b);
+                if(snapshot.lagNotice() != null) {
+                    lagNotices.add(snapshot.lagNotice());
+                }
             }
             for(BlockTransactionHashIndex utxo : wallet.getWalletUtxos().keySet()) {
                 OrdOutput output = snapshot.answers().get(utxo.toString());
@@ -404,7 +410,8 @@ public class CollectiblesController extends WalletFormController implements Init
         } else if(!checked.isEmpty()) {
             statusLabel.setText(checked.entrySet().stream().map(e -> "Checked with " + e.getKey() + " at " + TIME_FORMAT.format(e.getValue()) + ".")
                     .collect(java.util.stream.Collectors.joining(" "))
-                    + (noRuneIndex && runes ? " This server does not index runes, so outputs without inscriptions count as unchecked (start ord with --index-runes)." : ""));
+                    + (noRuneIndex && runes ? " This server does not index runes, so outputs without inscriptions count as unchecked (start ord with --index-runes)." : "")
+                    + lagNotices.stream().map(notice -> " " + notice).collect(java.util.stream.Collectors.joining()));
         } else {
             statusLabel.setText("Checking outputs for " + collectibles + "...");
         }

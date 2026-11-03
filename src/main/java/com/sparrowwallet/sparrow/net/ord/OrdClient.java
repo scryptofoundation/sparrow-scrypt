@@ -159,17 +159,84 @@ public class OrdClient {
     }
 
     /**
-     * For a server that does not name its chain (ord 0.5, as ord-junkcoin), the chain is judged by height: the wallet's
-     * last known block height must be within a few blocks of the index. Other servers are checked by chain as before.
+     * Checks that the server indexes the wallet's coin and network, throwing a ChainException that says why when it does
+     * not or when that cannot be told.
+     * <ul>
+     * <li>ord 0.5 (ord-junkcoin) names no chain, so its indexed height must be within a few blocks of the coin's current
+     * tip. With no current tip (the app is connected to another coin's server, or to none) it is not accepted: a wallet's
+     * stored height is not used, as it stops advancing while another coin is connected.</li>
+     * <li>Nintondo's status names the coin and network (checked when it is parsed).</li>
+     * <li>ord 0.20 names only the network. For a coin other than Litecoin its block 0 must also be the coin's genesis
+     * block, so an ord-litecoin server set as Custom for Dogecoin is refused. Litecoin keeps the network check alone.</li>
+     * </ul>
+     * @param tip the coin's current tip from its own connected Electrum server, or null when the app is not connected to it
      */
-    public static void requireChain(OrdStatus status, Network network, Integer walletHeight) throws IOException {
+    public void checkChain(OrdStatus status, Network network, com.sparrowwallet.drongo.Coin coin, Integer tip) throws IOException {
+        checkChain(resolve(), transport, status, network, coin, tip);
+    }
+
+    static void checkChain(OrdDialect dialect, Transport t, OrdStatus status, Network network, com.sparrowwallet.drongo.Coin coin, Integer tip) throws IOException {
         if(LegacyOrdDialect.UNKNOWN_CHAIN.equals(status.chain())) {
-            if(walletHeight != null && Math.abs(status.height() - walletHeight) > MAX_HEIGHT_DIFFERENCE) {
-                throw new IOException("Inscriptions server is at height " + status.height() + ", wallet is at " + walletHeight);
+            if(tip == null) {
+                throw new ChainException("Connect to " + coin.getCapitalizedName() + " to check the inscriptions server: an ord 0.5 server does not name its chain, so it is checked against "
+                        + coin.getCapitalizedName() + "'s current block height");
+            }
+            if(Math.abs(status.height() - tip) > MAX_HEIGHT_DIFFERENCE) {
+                throw new ChainException("Inscriptions server is at height " + status.height() + ", " + coin.getCapitalizedName() + " is at " + tip
+                        + ", so it is not a " + coin.getCapitalizedName() + " server or is far behind");
             }
             return;
         }
         requireChain(status, network);
+        if(coin != com.sparrowwallet.drongo.Coin.LITECOIN && dialect instanceof Ord020Dialect ord) {
+            String expected = ChainGenesis.hash(coin, network);
+            if(expected == null) {
+                throw new ChainException("Cannot check that this inscriptions server is for " + coin.getCapitalizedName() + " " + network.toDisplayString());
+            }
+            String genesis;
+            try {
+                genesis = ord.genesis(t);
+            } catch(HttpStatusException e) {
+                genesis = null;
+            }
+            if(genesis == null) {
+                throw new ChainException("Inscriptions server did not give its first block hash, so it cannot be checked to be a " + coin.getCapitalizedName() + " server");
+            }
+            if(!expected.equals(genesis)) {
+                throw new ChainException("Inscriptions server is for another chain (its block 0 is " + genesis.substring(0, 16) + "...), not a "
+                        + coin.getCapitalizedName() + " " + network.toDisplayString() + " server");
+            }
+        }
+    }
+
+    /** The Settings test: the server's status, its chain checked as the background check does, as one line of text. */
+    public String testServer(Network network, com.sparrowwallet.drongo.Coin coin, Integer tip, boolean runes) throws IOException {
+        OrdStatus status = status();
+        return testServer(resolve(), transport, status, network, coin, tip, runes);
+    }
+
+    /**
+     * An ord 0.5 server without the coin's current tip is reported, not refused (the background check holds its answers
+     * until the app is connected to the coin); everything else must pass checkChain. Runes are named only on coins with runes.
+     */
+    static String testServer(OrdDialect dialect, Transport t, OrdStatus status, Network network, com.sparrowwallet.drongo.Coin coin, Integer tip, boolean runes) throws IOException {
+        if(LegacyOrdDialect.UNKNOWN_CHAIN.equals(status.chain())) {
+            String connected = "Connected: " + LegacyOrdDialect.NAME + " server, indexed to height " + status.height();
+            if(tip == null) {
+                return connected + ". Connect to " + coin.getCapitalizedName() + " to check its chain (an ord 0.5 server is checked by block height).";
+            }
+            checkChain(dialect, t, status, network, coin, tip);
+            return connected + " (chain checked by height)";
+        }
+        checkChain(dialect, t, status, network, coin, tip);
+        return "Connected: " + status.chain() + ", height " + status.height() + (runes ? ", runes indexed: " + (status.runeIndex() ? "yes" : "no") : "");
+    }
+
+    /** The server is not for the wallet's chain, or which chain it is for cannot be told. */
+    public static class ChainException extends IOException {
+        public ChainException(String message) {
+            super(message);
+        }
     }
 
     public static void requireChain(OrdStatus status, Network network) throws IOException {

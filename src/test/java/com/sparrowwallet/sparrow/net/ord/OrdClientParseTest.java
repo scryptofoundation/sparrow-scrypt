@@ -529,18 +529,70 @@ public class OrdClientParseTest {
         Assertions.assertThrows(IOException.class, () -> new LegacyOrdDialect(LEGACY_BASE).status(transport));
     }
 
-    /** A server that cannot name its chain is checked by height; Nintondo's and ord's own chain rules stay. */
+    private static final String LTC_GENESIS = "12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2";
+    private static final String DOGE_GENESIS = "1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c9902eb318182c355691";
+    private static final String ORD_BASE = "https://ord.example";
+
+    private static void checkLegacy(OrdStatus status, Integer tip) throws IOException {
+        OrdClient.checkChain(new LegacyOrdDialect(LEGACY_BASE), new FixtureTransport(), status, Network.MAINNET, Coin.JUNKCOIN, tip);
+    }
+
+    /** A server that cannot name its chain is checked by height against the coin's current tip; Nintondo's and ord's own chain rules stay. */
     @Test
     public void wrongCoinServerRefused() throws IOException {
         OrdStatus far = new OrdStatus("unknown", false, 1_000, null);
-        IOException e = Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(far, Network.MAINNET, 1_120_000));
+        IOException e = Assertions.assertThrows(IOException.class, () -> checkLegacy(far, 1_120_000));
         Assertions.assertTrue(e.getMessage().contains("1000") && e.getMessage().contains("1120000"), e.getMessage());
-        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(new OrdStatus("unknown", false, 1_119_997, null), Network.MAINNET, 1_120_000));
-        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(new OrdStatus("unknown", false, 1_120_003, null), Network.MAINNET, 1_120_000));
-        Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(new OrdStatus("unknown", false, 1_120_004, null), Network.MAINNET, 1_120_000));
-        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(far, Network.MAINNET, null));
-        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(new OrdStatus("mainnet", true, 5, null), Network.MAINNET, 1_120_000));
-        Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(new OrdStatus("regtest", true, 5, null), Network.MAINNET, 1_120_000));
+        Assertions.assertDoesNotThrow(() -> checkLegacy(new OrdStatus("unknown", false, 1_119_997, null), 1_120_000));
+        Assertions.assertDoesNotThrow(() -> checkLegacy(new OrdStatus("unknown", false, 1_120_003, null), 1_120_000));
+        Assertions.assertThrows(IOException.class, () -> checkLegacy(new OrdStatus("unknown", false, 1_120_004, null), 1_120_000));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), new FixtureTransport(), new OrdStatus("regtest", true, 5, null), Network.MAINNET, Coin.LITECOIN, null));
         Assertions.assertThrows(IOException.class, () -> OrdClient.nintondoStatus("{\"network\":\"Dogecoin\",\"ord_height\":5}", Coin.JUNKCOIN));
+    }
+
+    /** Without the coin's current tip (the app is connected to another coin, or not at all) an ord 0.5 server is not accepted, and the message says why. */
+    @Test
+    public void legacyServerWithoutTipIsNotTrusted() {
+        IOException e = Assertions.assertThrows(IOException.class, () -> checkLegacy(new OrdStatus("unknown", false, 1_119_950, null), null));
+        Assertions.assertTrue(e.getMessage().contains("Connect to Junkcoin"), e.getMessage());
+    }
+
+    /** ord 0.20 names only the network, so for a coin other than Litecoin its genesis block (GET /blockhash/0) must be the coin's. */
+    @Test
+    public void ord020ServerForAnotherCoinRefused() throws IOException {
+        OrdStatus mainnet = new OrdStatus("mainnet", true, 5, null);
+        FixtureTransport litecoin = new FixtureTransport();
+        litecoin.answers.put(ORD_BASE + "/blockhash/0", LTC_GENESIS.getBytes(StandardCharsets.UTF_8));
+        IOException e = Assertions.assertThrows(IOException.class, () -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), litecoin, mainnet, Network.MAINNET, Coin.DOGECOIN, 5));
+        Assertions.assertTrue(e.getMessage().contains("not a Dogecoin"), e.getMessage());
+
+        FixtureTransport dogecoin = new FixtureTransport();
+        dogecoin.answers.put(ORD_BASE + "/blockhash/0", (DOGE_GENESIS + "\n").getBytes(StandardCharsets.UTF_8));
+        Assertions.assertDoesNotThrow(() -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), dogecoin, mainnet, Network.MAINNET, Coin.DOGECOIN, null));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), new FixtureTransport(), mainnet, Network.MAINNET, Coin.PEPECOIN, null));
+
+        //Litecoin keeps its check by network name and asks nothing more (ordinalslite.com)
+        FixtureTransport none = new FixtureTransport();
+        Assertions.assertDoesNotThrow(() -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), none, mainnet, Network.MAINNET, Coin.LITECOIN, null));
+        Assertions.assertTrue(none.asked.isEmpty());
+    }
+
+    /** The Settings test accepts an ord 0.5 server, checking it by height when the tip is known, and names runes only on coins that have them. */
+    @Test
+    public void settingsTestAcceptsLegacyServer() throws IOException {
+        OrdStatus legacy = new OrdStatus("unknown", true, 1_119_950, null);
+        LegacyOrdDialect dialect = new LegacyOrdDialect(LEGACY_BASE);
+        Assertions.assertEquals("Connected: ord 0.5 server, indexed to height 1119950 (chain checked by height)",
+                OrdClient.testServer(dialect, new FixtureTransport(), legacy, Network.MAINNET, Coin.JUNKCOIN, 1_119_951, false));
+        String unchecked = OrdClient.testServer(dialect, new FixtureTransport(), legacy, Network.MAINNET, Coin.JUNKCOIN, null, false);
+        Assertions.assertTrue(unchecked.startsWith("Connected: ord 0.5 server, indexed to height 1119950") && unchecked.contains("Connect to Junkcoin"), unchecked);
+        Assertions.assertThrows(IOException.class, () -> OrdClient.testServer(dialect, new FixtureTransport(), legacy, Network.MAINNET, Coin.JUNKCOIN, 1_000, false));
+
+        Assertions.assertEquals("Connected: mainnet, height 5, runes indexed: yes",
+                OrdClient.testServer(new Ord020Dialect(ORD_BASE), new FixtureTransport(), new OrdStatus("mainnet", true, 5, null), Network.MAINNET, Coin.LITECOIN, null, true));
+        FixtureTransport dogecoin = new FixtureTransport();
+        dogecoin.answers.put(ORD_BASE + "/blockhash/0", DOGE_GENESIS.getBytes(StandardCharsets.UTF_8));
+        String doge = OrdClient.testServer(new Ord020Dialect(ORD_BASE), dogecoin, new OrdStatus("mainnet", true, 5, null), Network.MAINNET, Coin.DOGECOIN, null, false);
+        Assertions.assertFalse(doge.contains("runes"), doge);
     }
 }

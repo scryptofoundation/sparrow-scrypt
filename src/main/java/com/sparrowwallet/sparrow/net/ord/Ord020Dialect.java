@@ -28,6 +28,20 @@ final class Ord020Dialect implements OrdDialect {
         return parseStatus(t.json(baseUrl + "/status", null));
     }
 
+    /**
+     * The hash of block 0 as the server indexed it: GET /blockhash/0 answers the bare hash as text (ord-litecoin 0.20.1
+     * server.rs line 170, block_hash_from_height; its test block_hash_from_height_endpoint). Null when the answer is not a hash.
+     */
+    String genesis(Transport t) throws IOException {
+        String hash = t.json(baseUrl + "/blockhash/0", null).trim();
+        if(hash.length() == 66 && hash.startsWith("\"") && hash.endsWith("\"")) {
+            hash = hash.substring(1, 65);
+        }
+        return GENESIS.matcher(hash).matches() ? hash : null;
+    }
+
+    private static final java.util.regex.Pattern GENESIS = java.util.regex.Pattern.compile("[0-9a-f]{64}");
+
     @Override
     public List<OrdOutput> outputs(Transport t, List<String> outpoints) throws IOException {
         List<OrdOutput> results = new ArrayList<>();
