@@ -99,6 +99,36 @@ public class WalletLink {
         }
     }
 
+    /**
+     * Links a same-seed MWEB account to its own public wallet when it is opened and neither side has a link yet.
+     * Enable MWEB links them as it creates the account, but older wallets and Cake or backup imports that bring an
+     * MWEB account were never linked, so Move to Private and Move to Public stayed hidden until Link Private Wallet.
+     * The wallets' ids come from their shared storage, as the account may not be in the open wallets yet.
+     * Returns the public wallet it linked, or null.
+     */
+    public static Wallet linkToOwnPublicWallet(Storage storage, Wallet wallet) {
+        if(wallet.getScriptType() != ScriptType.MWEB || wallet.isMasterWallet()) {
+            return null;
+        }
+        Wallet publicWallet = wallet.getMasterWallet();
+        String publicId = storage.getWalletId(publicWallet);
+        String accountId = storage.getWalletId(wallet);
+        if(publicId == null || accountId == null || !shouldLinkToOwnPublicWallet(wallet, Config.get().getLinkedMwebWalletId(publicId),
+                Config.get().getPublicWalletIdForMwebWalletId(accountId))) {
+            return null;
+        }
+        Config.get().setLinkedMwebWallet(publicId, accountId);
+        return publicWallet;
+    }
+
+    /** Whether an MWEB account of a public wallet should be linked to it, given the links each side already has (or null). */
+    static boolean shouldLinkToOwnPublicWallet(Wallet wallet, String publicWalletsLinkedMwebId, String accountsLinkedPublicId) {
+        return wallet.getScriptType() == ScriptType.MWEB && !wallet.isMasterWallet()
+                && wallet.getMasterWallet().getScriptType() != ScriptType.MWEB
+                && wallet.getMasterWallet().getCoin().isMwebSupported()
+                && publicWalletsLinkedMwebId == null && accountsLinkedPublicId == null;
+    }
+
     public static void unlink(Wallet wallet) {
         String walletId = getWalletId(wallet);
         if(walletId == null) {

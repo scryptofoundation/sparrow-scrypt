@@ -3741,6 +3741,11 @@ public class AppController implements Initializable {
             subTabsVisible = true;
             setSubTabsVisible(true);
         }
+
+        Wallet linkedPublicWallet = WalletLink.linkToOwnPublicWallet(walletOpenedEvent.getStorage(), walletOpenedEvent.getWallet());
+        if(linkedPublicWallet != null) {
+            EventManager.get().post(new WalletLinkChangedEvent(linkedPublicWallet));
+        }
     }
 
     @Subscribe
