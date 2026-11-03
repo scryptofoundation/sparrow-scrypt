@@ -386,4 +386,150 @@ public class OrdClientParseTest {
         }
         Assertions.assertEquals(com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview.Kind.PLACEHOLDER,
                 com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview.kind("text/html; charset=utf-8", html));
-    }}
+    }
+
+    private static final String LEGACY_A = "1a".repeat(32);
+    private static final String LEGACY_B = "2b".repeat(32);
+    private static final String LEGACY_C = "3c".repeat(32);
+    private static final String LEGACY_BASE = "https://jkc.example";
+
+    /** The first answer decides the dialect: Nintondo by host, JSON naming a chain is ord 0.20, a bare OK is ord 0.5. */
+    @Test
+    public void detectsDialects() throws IOException {
+        Assertions.assertEquals(NintondoDialect.NAME, OrdClient.detect("https://doge-mainnet-api.nintondo.io", "{}").name());
+        Assertions.assertEquals(Ord020Dialect.NAME, OrdClient.detect("https://x", "{\"chain\":\"mainnet\"}").name());
+        Assertions.assertEquals(LegacyOrdDialect.NAME, OrdClient.detect("https://x", "OK\n").name());
+        Assertions.assertEquals(LegacyOrdDialect.NAME, OrdClient.LEGACY_DIALECT);
+        Assertions.assertThrows(IOException.class, () -> OrdClient.detect("https://x", "<html>"));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.detect("https://x", "{\"chain\":5}"));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.detect("https://x", ""));
+    }
+
+    /** ord-junkcoin's /outputs answers in request order but names only the transaction, so entries are matched by txid. */
+    @Test
+    public void legacyOutputsMatchByOutpoint() throws IOException {
+        String json = fixture("legacy-outputs.json");
+        List<OrdOutput> outputs = LegacyOrdDialect.parseOutputs(List.of(LEGACY_A + ":0", LEGACY_B + ":1", LEGACY_C + ":0"), json);
+        Assertions.assertEquals(3, outputs.size());
+        Assertions.assertEquals(LEGACY_A + ":0", outputs.get(0).outpoint());
+        Assertions.assertEquals(List.of(LEGACY_A + "i0"), outputs.get(0).inscriptions());
+        Assertions.assertEquals(100000, outputs.get(0).value());
+        Assertions.assertTrue(outputs.get(0).indexed());
+        Assertions.assertEquals(LEGACY_B + ":1", outputs.get(1).outpoint());
+        Assertions.assertTrue(outputs.get(1).inscriptions().isEmpty());
+        Assertions.assertEquals(5000, outputs.get(1).value());
+        Assertions.assertTrue(outputs.get(1).indexed());
+        Assertions.assertFalse(outputs.get(1).carries());
+        Assertions.assertEquals(OrdOutput.unknown(LEGACY_C + ":0"), outputs.get(2));
+        Assertions.assertThrows(IOException.class, () -> LegacyOrdDialect.parseOutputs(List.of(LEGACY_A + ":0"), "{}"));
+    }
+
+    /** A june (rune-like) balance, or an id that is not one, keeps the output held. */
+    @Test
+    public void legacyOutputWithJunesOrOddIdsCarries() throws IOException {
+        String junes = "[{\"inscriptions\":[],\"junes\":[[\"AB\",{\"amount\":5,\"divisibility\":0,\"symbol\":null}]],\"transaction\":\"" + LEGACY_A + "\",\"value\":1}]";
+        Assertions.assertTrue(LegacyOrdDialect.parseOutputs(List.of(LEGACY_A + ":0"), junes).getFirst().carries());
+        String odd = "[{\"inscriptions\":[\"nope\"],\"junes\":[],\"transaction\":\"" + LEGACY_A + "\",\"value\":1}]";
+        OrdOutput output = LegacyOrdDialect.parseOutputs(List.of(LEGACY_A + ":0"), odd).getFirst();
+        Assertions.assertTrue(output.carries());
+        Assertions.assertTrue(output.inscriptions().isEmpty());
+    }
+
+    /** Outputs of one transaction cannot be told apart in an answer, so they never share a request; a 404 means one is unknown. */
+    @Test
+    public void legacyOutputsSplitSameTransactionAndFallBackOnNotFound() throws IOException {
+        String entryA = "{\"inscriptions\":[],\"junes\":[],\"transaction\":\"" + LEGACY_A + "\",\"value\":%d}";
+        String entryB = "{\"inscriptions\":[],\"junes\":[],\"transaction\":\"" + LEGACY_B + "\",\"value\":7}";
+        FixtureTransport transport = new FixtureTransport();
+        transport.answers.put(LEGACY_BASE + "/outputs/" + LEGACY_A + ":0," + LEGACY_B + ":0", ("[" + entryA.formatted(11) + "," + entryB + "]").getBytes(StandardCharsets.UTF_8));
+        transport.answers.put(LEGACY_BASE + "/outputs/" + LEGACY_A + ":1", ("[" + entryA.formatted(22) + "]").getBytes(StandardCharsets.UTF_8));
+        List<OrdOutput> outputs = new LegacyOrdDialect(LEGACY_BASE).outputs(transport, List.of(LEGACY_A + ":0", LEGACY_A + ":1", LEGACY_B + ":0"));
+        Assertions.assertEquals(List.of(11L, 22L, 7L), outputs.stream().map(OrdOutput::value).toList());
+        Assertions.assertEquals(2, transport.asked.size());
+
+        //One output the server does not know makes it answer 404 for the whole request: ask again one by one
+        FixtureTransport missing = new FixtureTransport();
+        missing.answers.put(LEGACY_BASE + "/outputs/" + LEGACY_A + ":0", ("[" + entryA.formatted(11) + "]").getBytes(StandardCharsets.UTF_8));
+        List<OrdOutput> partial = new LegacyOrdDialect(LEGACY_BASE).outputs(missing, List.of(LEGACY_A + ":0", LEGACY_C + ":0"));
+        Assertions.assertEquals(11, partial.get(0).value());
+        Assertions.assertEquals(OrdOutput.unknown(LEGACY_C + ":0"), partial.get(1));
+    }
+
+    @Test
+    public void legacyOutputsAreBatchedBy50() throws IOException {
+        List<String> outpoints = new java.util.ArrayList<>();
+        for(int i = 0; i < 120; i++) {
+            outpoints.add(String.format("%064x", i + 1) + ":0");
+        }
+        List<String> asked = new java.util.ArrayList<>();
+        Transport transport = new Transport() {
+            @Override
+            public String json(String url, String postBody) {
+                asked.add(url);
+                StringBuilder sb = new StringBuilder("[");
+                String[] list = url.substring((LEGACY_BASE + "/outputs/").length()).split(",");
+                for(String outpoint : list) {
+                    sb.append(sb.length() > 1 ? "," : "").append("{\"inscriptions\":[],\"junes\":[],\"transaction\":\"").append(outpoint.substring(0, 64)).append("\",\"value\":1}");
+                }
+                return sb.append("]").toString();
+            }
+
+            @Override
+            public byte[] bytes(String url, String accept, int maxBytes) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        List<OrdOutput> outputs = new LegacyOrdDialect(LEGACY_BASE).outputs(transport, outpoints);
+        Assertions.assertEquals(3, asked.size());
+        Assertions.assertEquals(outpoints, outputs.stream().map(OrdOutput::outpoint).toList());
+        Assertions.assertTrue(outputs.stream().allMatch(OrdOutput::indexed));
+    }
+
+    @Test
+    public void legacyInscriptionGivesSatpoint() throws IOException {
+        String id = LEGACY_A + "i0";
+        FixtureTransport transport = new FixtureTransport().answer(LEGACY_BASE + "/inscription/" + id + "?json=true", "legacy-inscription.json");
+        OrdInscription inscription = new LegacyOrdDialect(LEGACY_BASE).inscription(transport, id);
+        Assertions.assertEquals(id, inscription.id());
+        Assertions.assertEquals(12345, inscription.number());
+        Assertions.assertEquals("text/plain;charset=utf-8", inscription.contentType());
+        Assertions.assertEquals(10, inscription.contentLength());
+        Assertions.assertEquals(LEGACY_B + ":1:0", inscription.satpoint());
+        Assertions.assertEquals(100000, inscription.value());
+        //An answer for another inscription, or with a malformed satpoint, is refused
+        Assertions.assertThrows(IOException.class, () -> new LegacyOrdDialect(LEGACY_BASE).inscription(transport, LEGACY_B + "i0"));
+        String json = fixture("legacy-inscription.json");
+        for(String bad : List.of(LEGACY_B + ":1", "../x:1:0", LEGACY_B + ":1:-1", LEGACY_B.toUpperCase() + ":1:0")) {
+            Assertions.assertThrows(IOException.class, () -> LegacyOrdDialect.parseInscription(json.replace(LEGACY_B + ":1:0", bad)), bad);
+        }
+        Assertions.assertEquals("https://jkc.example/inscription/" + id, new LegacyOrdDialect(LEGACY_BASE).explorerUrl(LEGACY_BASE, id));
+    }
+
+    @Test
+    public void legacyStatusReadsOkAndIndexedBlockCount() throws IOException {
+        FixtureTransport transport = new FixtureTransport();
+        transport.answers.put(LEGACY_BASE + "/status", "OK".getBytes(StandardCharsets.UTF_8));
+        transport.answers.put(LEGACY_BASE + "/block-count", "1119951\n".getBytes(StandardCharsets.UTF_8));
+        //block-count is the number of indexed blocks, so the tip is one less
+        Assertions.assertEquals(new OrdStatus("unknown", true, 1119950, null), new LegacyOrdDialect(LEGACY_BASE).status(transport));
+        transport.answers.put(LEGACY_BASE + "/block-count", "<html>".getBytes(StandardCharsets.UTF_8));
+        Assertions.assertThrows(IOException.class, () -> new LegacyOrdDialect(LEGACY_BASE).status(transport));
+        transport.answers.put(LEGACY_BASE + "/status", "unrecoverable reorg detected, please rebuild the database.".getBytes(StandardCharsets.UTF_8));
+        Assertions.assertThrows(IOException.class, () -> new LegacyOrdDialect(LEGACY_BASE).status(transport));
+    }
+
+    /** A server that cannot name its chain is checked by height; Nintondo's and ord's own chain rules stay. */
+    @Test
+    public void wrongCoinServerRefused() throws IOException {
+        OrdStatus far = new OrdStatus("unknown", false, 1_000, null);
+        IOException e = Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(far, Network.MAINNET, 1_120_000));
+        Assertions.assertTrue(e.getMessage().contains("1000") && e.getMessage().contains("1120000"), e.getMessage());
+        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(new OrdStatus("unknown", false, 1_119_997, null), Network.MAINNET, 1_120_000));
+        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(new OrdStatus("unknown", false, 1_120_003, null), Network.MAINNET, 1_120_000));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(new OrdStatus("unknown", false, 1_120_004, null), Network.MAINNET, 1_120_000));
+        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(far, Network.MAINNET, null));
+        Assertions.assertDoesNotThrow(() -> OrdClient.requireChain(new OrdStatus("mainnet", true, 5, null), Network.MAINNET, 1_120_000));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.requireChain(new OrdStatus("regtest", true, 5, null), Network.MAINNET, 1_120_000));
+        Assertions.assertThrows(IOException.class, () -> OrdClient.nintondoStatus("{\"network\":\"Dogecoin\",\"ord_height\":5}", Coin.JUNKCOIN));
+    }
+}

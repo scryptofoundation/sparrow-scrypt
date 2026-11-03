@@ -33,6 +33,9 @@ import java.util.regex.Pattern;
 public class OrdClient {
     public static final int MAX_JSON_CHARS = 4_000_000;
     public static final int MAX_CONTENT_BYTES = 2_000_000;
+    /** The dialect name of ord 0.5 servers such as ord-junkcoin, whose status carries no chain; see dialect(). */
+    public static final String LEGACY_DIALECT = LegacyOrdDialect.NAME;
+    private static final long MAX_HEIGHT_DIFFERENCE = 3;
     private static final int TIMEOUT_SECONDS = 30;
     static final Pattern INSCRIPTION_ID = Pattern.compile("[0-9a-f]{64}i\\d{1,10}");
     private static final Pattern OUTPOINT = Pattern.compile("[0-9a-f]{64}:\\d{1,10}");
@@ -46,7 +49,8 @@ public class OrdClient {
     private final HttpClient httpClient;
     //The app's client carrying Tor or the user's SOCKS proxy (the JDK client cannot use SOCKS); null for direct
     private final HttpClientService proxiedClient;
-    private final OrdDialect dialect;
+    //Nintondo is known by host name; any other server is asked for /status on first use to tell ord 0.20 from ord 0.5
+    private volatile OrdDialect dialect;
     private final Transport transport = new Transport() {
         @Override
         public String json(String url, String postBody) throws IOException {
@@ -67,8 +71,7 @@ public class OrdClient {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
         this.proxiedClient = proxiedClient;
-        //Until detection exists, Nintondo's hosts are known by name and everything else is taken to be ord 0.20
-        this.dialect = OrdServer.isNintondo(this.baseUrl) ? new NintondoDialect(this.baseUrl) : new Ord020Dialect(this.baseUrl);
+        this.dialect = OrdServer.isNintondo(this.baseUrl) ? new NintondoDialect(this.baseUrl) : null;
     }
 
     /**
@@ -98,13 +101,53 @@ public class OrdClient {
         return URI.create(baseUrl).getHost();
     }
 
-    /** The name of the API dialect this client speaks, for messages. */
+    /** The name of the API dialect this client speaks, for messages; until the server has been asked, a non-Nintondo one is assumed to be ord 0.20. */
     public String dialect() {
-        return dialect.name();
+        OrdDialect known = dialect;
+        return known == null ? Ord020Dialect.NAME : known.name();
+    }
+
+    /** The server's answer to /status, fetched once, tells which dialect it speaks. */
+    private OrdDialect resolve() throws IOException {
+        OrdDialect known = dialect;
+        if(known == null) {
+            synchronized(this) {
+                known = dialect;
+                if(known == null) {
+                    known = detect(baseUrl, json(baseUrl + "/status", null));
+                    dialect = known;
+                }
+            }
+        }
+        return known;
+    }
+
+    /**
+     * Picks the dialect from the server's URL and its /status answer: Nintondo's hosts by name, a JSON status naming
+     * a chain is ord 0.20 (ordinalslite and ord-litecoin), a bare OK is ord 0.5 (ord-junkcoin).
+     */
+    static OrdDialect detect(String url, String statusBody) throws IOException {
+        if(OrdServer.isNintondo(url)) {
+            return new NintondoDialect(url);
+        }
+        String body = statusBody == null ? "" : statusBody.trim();
+        if(body.equals("OK")) {
+            return new LegacyOrdDialect(url);
+        }
+        if(body.startsWith("{")) {
+            try {
+                if(objectMapper.readTree(body).path("chain").isTextual()) {
+                    return new Ord020Dialect(url);
+                }
+            } catch(Exception e) {
+                //Not JSON, so not an ord server either
+            }
+        }
+        throw new IOException("Not an inscriptions server");
     }
 
     public OrdStatus status() throws IOException {
-        return dialect.status(transport);
+        return resolve().status(transport);
     }
 
     static OrdStatus nintondoStatus(String json, com.sparrowwallet.drongo.Coin coin) throws IOException {
@@ -113,6 +156,20 @@ public class OrdClient {
 
     public void requireChain(Network network) throws IOException {
         requireChain(status(), network);
+    }
+
+    /**
+     * For a server that does not name its chain (ord 0.5, as ord-junkcoin), the chain is judged by height: the wallet's
+     * last known block height must be within a few blocks of the index. Other servers are checked by chain as before.
+     */
+    public static void requireChain(OrdStatus status, Network network, Integer walletHeight) throws IOException {
+        if(LegacyOrdDialect.UNKNOWN_CHAIN.equals(status.chain())) {
+            if(walletHeight != null && Math.abs(status.height() - walletHeight) > MAX_HEIGHT_DIFFERENCE) {
+                throw new IOException("Inscriptions server is at height " + status.height() + ", wallet is at " + walletHeight);
+            }
+            return;
+        }
+        requireChain(status, network);
     }
 
     public static void requireChain(OrdStatus status, Network network) throws IOException {
@@ -136,14 +193,14 @@ public class OrdClient {
             }
         }
 
-        return dialect.outputs(transport, outpoints);
+        return resolve().outputs(transport, outpoints);
     }
 
     public OrdOutput output(String outpoint) throws IOException {
         if(!OUTPOINT.matcher(outpoint).matches()) {
             throw new IllegalArgumentException("Invalid outpoint " + outpoint);
         }
-        return dialect.output(transport, outpoint);
+        return resolve().output(transport, outpoint);
     }
 
     static OrdOutput parseNintondoMeta(String outpoint, String json) throws IOException {
@@ -152,7 +209,7 @@ public class OrdClient {
 
     public OrdInscription inscription(String id) throws IOException {
         requireId(id);
-        return dialect.inscription(transport, id);
+        return resolve().inscription(transport, id);
     }
 
     /** A rune by its spaced name, as shown in output balances. */
@@ -166,12 +223,13 @@ public class OrdClient {
     /** The inscription's content, at most MAX_CONTENT_BYTES. */
     public byte[] content(String id) throws IOException {
         requireId(id);
-        return dialect.content(transport, id);
+        return resolve().content(transport, id);
     }
 
     public String explorerUrl(String id) {
         requireId(id);
-        return dialect.explorerUrl(baseUrl, id);
+        //ord 0.20 and ord 0.5 share the page address, so no request is needed to name it
+        return (dialect == null ? new Ord020Dialect(baseUrl) : dialect).explorerUrl(baseUrl, id);
     }
 
     private static void requireId(String id) {
