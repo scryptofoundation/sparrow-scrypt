@@ -53,4 +53,40 @@ public class OrdClientLiveTest {
             }
         }
     }
+
+    /**
+     * Each coin's fixture inscription, read live: the satpoint's output must list the same id in find_meta, and the
+     * content served must be exactly the size the info reports. The inscription may have moved since the fixture was
+     * recorded, so the output is derived from the live location, not the fixture.
+     */
+    @Test
+    public void nintondoInscriptionDetails() throws Exception {
+        record Case(com.sparrowwallet.drongo.Coin coin, String id) {}
+        List<Case> cases = List.of(
+                new Case(com.sparrowwallet.drongo.Coin.DOGECOIN, "b5f9d2759c65df72dff76bbab840ff3d34d99c6679bad26148cb18344ff03f71i0"),
+                new Case(com.sparrowwallet.drongo.Coin.PEPECOIN, "d089eab0d91c5889eb2789804498ab51229048451eb9d9f9510ac2b84416c546i0"),
+                new Case(com.sparrowwallet.drongo.Coin.BELLSCOIN, "554a01b993871859e622b2c6391da63e74393b8cab2958ca09eebf4688af7773i0"));
+        for(Case c : cases) {
+            com.sparrowwallet.drongo.Coin previous = com.sparrowwallet.drongo.Coin.beginScope(c.coin());
+            try {
+                OrdClient client = new OrdClient(OrdServer.publicUrl(c.coin(), com.sparrowwallet.drongo.Network.MAINNET));
+                OrdInscription inscription = client.inscription(c.id());
+                String label = c.coin().toString();
+                System.out.println(label + " number=" + inscription.number() + " type=" + inscription.contentType()
+                        + " size=" + inscription.contentLength() + " satpoint=" + inscription.satpoint() + " value=" + inscription.value());
+                Assertions.assertEquals(c.id(), inscription.id(), label);
+                String[] satpoint = inscription.satpoint().split(":");
+                Assertions.assertEquals(3, satpoint.length, label + " satpoint " + inscription.satpoint());
+                String outpoint = satpoint[0] + ":" + satpoint[1];
+                OrdOutput output = client.output(outpoint);
+                Assertions.assertTrue(output.indexed(), label + " output indexed");
+                Assertions.assertTrue(output.inscriptions().contains(c.id()), label + " find_meta lists " + c.id() + " on " + outpoint + ": " + output.inscriptions());
+                Assertions.assertTrue(inscription.contentLength() >= 0, label + " size known");
+                byte[] content = client.content(c.id());
+                Assertions.assertEquals(inscription.contentLength(), content.length, label + " served bytes vs info file_size");
+            } finally {
+                com.sparrowwallet.drongo.Coin.endScope(previous);
+            }
+        }
+    }
 }
