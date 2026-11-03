@@ -16,7 +16,6 @@ import org.eclipse.jetty.http.HttpMethod;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -30,19 +29,16 @@ import java.util.regex.Pattern;
 /**
  * A client for an ord-litecoin server's JSON API: which inscriptions and runes sit on an output, inscription
  * details and content. Every response is untrusted: bodies are size-capped, ids and rune names are checked before
- * they are kept or put into a URL, and nothing fetched is ever executed or shown in a web view. For Nintondo's indexer
- * (Bellscoin, Dogecoin, Pepecoin) status and outputs come from its own endpoints, in the same shapes.
- */
+ * they are kept or put into a URL, and nothing fetched is ever executed or shown in a web view. The API differs by server,\n * so the paths and parsers live in an OrdDialect (ord 0.20, or Nintondo's indexer for Bellscoin, Dogecoin and Pepecoin);\n * this class keeps the transport: requests, size caps and proxy rules, for every host a dialect talks to.\n */
 public class OrdClient {
     public static final int MAX_JSON_CHARS = 4_000_000;
     public static final int MAX_CONTENT_BYTES = 2_000_000;
-    private static final int BATCH_SIZE = 100;
     private static final int TIMEOUT_SECONDS = 30;
-    private static final Pattern INSCRIPTION_ID = Pattern.compile("[0-9a-f]{64}i\\d{1,10}");
+    static final Pattern INSCRIPTION_ID = Pattern.compile("[0-9a-f]{64}i\\d{1,10}");
     private static final Pattern OUTPOINT = Pattern.compile("[0-9a-f]{64}:\\d{1,10}");
-    private static final Pattern RUNE_NAME = Pattern.compile("[A-Z•]{1,40}");
-    private static final Pattern DIGITS = Pattern.compile("\\d{1,40}");
-    private static final int MAX_DIVISIBILITY = 38;
+    static final Pattern RUNE_NAME = Pattern.compile("[A-Z•]{1,40}");
+    static final Pattern DIGITS = Pattern.compile("\\d{1,40}");
+    static final int MAX_DIVISIBILITY = 38;
     private static final String NO_SYMBOL = "¤";
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -50,6 +46,18 @@ public class OrdClient {
     private final HttpClient httpClient;
     //The app's client carrying Tor or the user's SOCKS proxy (the JDK client cannot use SOCKS); null for direct
     private final HttpClientService proxiedClient;
+    private final OrdDialect dialect;
+    private final Transport transport = new Transport() {
+        @Override
+        public String json(String url, String postBody) throws IOException {
+            return OrdClient.this.json(url, postBody);
+        }
+
+        @Override
+        public byte[] bytes(String url, String accept, int maxBytes) throws IOException {
+            return request(url, null, accept, maxBytes);
+        }
+    };
 
     public OrdClient(String baseUrl) {
         this(baseUrl, null);
@@ -59,6 +67,8 @@ public class OrdClient {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
         this.proxiedClient = proxiedClient;
+        //Until detection exists, Nintondo's hosts are known by name and everything else is taken to be ord 0.20
+        this.dialect = OrdServer.isNintondo(this.baseUrl) ? new NintondoDialect(this.baseUrl) : new Ord020Dialect(this.baseUrl);
     }
 
     /**
@@ -88,25 +98,17 @@ public class OrdClient {
         return URI.create(baseUrl).getHost();
     }
 
-    public OrdStatus status() throws IOException {
-        if(OrdServer.isNintondo(baseUrl)) {
-            return nintondoStatus(json("/status", null), com.sparrowwallet.drongo.Coin.get());
-        }
-        return parseStatus(json("/status", null));
+    /** The name of the API dialect this client speaks, for messages. */
+    public String dialect() {
+        return dialect.name();
     }
 
-    /**
-     * Nintondo's status names the chain, "Pepecoin" or "Pepecoin Testnet"; one for another coin is refused. It indexes
-     * inscriptions only. Those chains have no runes, so its empty answers count as clean, except for outputs of a
-     * runestone or dunestone transaction (Dogecoin's Dunes), which CollectiblesManager.vouchedFor keeps unknown.
-     */
+    public OrdStatus status() throws IOException {
+        return dialect.status(transport);
+    }
+
     static OrdStatus nintondoStatus(String json, com.sparrowwallet.drongo.Coin coin) throws IOException {
-        JsonNode node = readTree(json);
-        String network = node.path("network").asText("");
-        if(!network.equals(coin.getCapitalizedName()) && !network.equals(coin.getCapitalizedName() + " Testnet")) {
-            throw new IOException(network.isEmpty() ? "Not a Nintondo indexer" : "Inscriptions server is for " + network + ", wallet is " + coin.getCapitalizedName());
-        }
-        return new OrdStatus(network.endsWith(" Testnet") ? "testnet" : "mainnet", true, node.path("ord_height").asLong(0), null);
+        return NintondoDialect.parseStatus(json, coin);
     }
 
     public void requireChain(Network network) throws IOException {
@@ -134,71 +136,23 @@ public class OrdClient {
             }
         }
 
-        List<OrdOutput> results = new ArrayList<>();
-        if(OrdServer.isNintondo(baseUrl)) {
-            for(String outpoint : outpoints) {
-                results.add(output(outpoint));
-            }
-            return results;
-        }
-        for(int i = 0; i < outpoints.size(); i += BATCH_SIZE) {
-            List<String> batch = outpoints.subList(i, Math.min(outpoints.size(), i + BATCH_SIZE));
-            try {
-                results.addAll(parseOutputs(batch, json("/outputs", objectMapper.writeValueAsString(batch))));
-            } catch(HttpStatusException e) {
-                if(e.getStatus() != 404 && e.getStatus() != 405) {
-                    throw e;
-                }
-                //Older servers have no batch endpoint
-                for(String outpoint : batch) {
-                    results.add(output(outpoint));
-                }
-            }
-        }
-        return results;
+        return dialect.outputs(transport, outpoints);
     }
 
     public OrdOutput output(String outpoint) throws IOException {
         if(!OUTPOINT.matcher(outpoint).matches()) {
             throw new IllegalArgumentException("Invalid outpoint " + outpoint);
         }
-        try {
-            if(OrdServer.isNintondo(baseUrl)) {
-                //find_meta takes the outpoint as <txid>i<vout>
-                return parseNintondoMeta(outpoint, json("/find_meta/" + outpoint.replace(':', 'i'), null));
-            }
-            return parseOutput(outpoint, json("/output/" + outpoint, null));
-        } catch(HttpStatusException e) {
-            //An output the indexer does not know is unknown, never clean
-            if(e.getStatus() == 404) {
-                return OrdOutput.unknown(outpoint);
-            }
-            throw e;
-        }
+        return dialect.output(transport, outpoint);
     }
 
-    /** find_meta's answer: an array of the inscriptions on the output, each with its genesis id; empty when clean. */
     static OrdOutput parseNintondoMeta(String outpoint, String json) throws IOException {
-        JsonNode node = readTree(json);
-        if(!node.isArray()) {
-            throw new IOException("Unexpected answer from Nintondo indexer");
-        }
-        boolean unlisted = false;
-        List<String> inscriptions = new ArrayList<>();
-        for(JsonNode entry : node) {
-            JsonNode genesis = entry.path("genesis");
-            if(genesis.isTextual() && INSCRIPTION_ID.matcher(genesis.asText()).matches()) {
-                inscriptions.add(genesis.asText());
-            } else {
-                unlisted = true;
-            }
-        }
-        return new OrdOutput(outpoint, true, List.copyOf(inscriptions), Map.of(), 0, false, unlisted);
+        return NintondoDialect.parseMeta(outpoint, json);
     }
 
     public OrdInscription inscription(String id) throws IOException {
         requireId(id);
-        return parseInscription(json("/inscription/" + id, null));
+        return dialect.inscription(transport, id);
     }
 
     /** A rune by its spaced name, as shown in output balances. */
@@ -206,18 +160,18 @@ public class OrdClient {
         if(spacedName == null || !RUNE_NAME.matcher(spacedName).matches()) {
             throw new IllegalArgumentException("Invalid rune name " + spacedName);
         }
-        return parseRune(json("/rune/" + java.net.URLEncoder.encode(spacedName, StandardCharsets.UTF_8), null));
+        return parseRune(json(baseUrl + "/rune/" + java.net.URLEncoder.encode(spacedName, StandardCharsets.UTF_8), null));
     }
 
     /** The inscription's content, at most MAX_CONTENT_BYTES. */
     public byte[] content(String id) throws IOException {
         requireId(id);
-        return request("/content/" + id, null, "*/*", MAX_CONTENT_BYTES);
+        return dialect.content(transport, id);
     }
 
     public String explorerUrl(String id) {
         requireId(id);
-        return baseUrl + "/inscription/" + id;
+        return dialect.explorerUrl(baseUrl, id);
     }
 
     private static void requireId(String id) {
@@ -226,12 +180,12 @@ public class OrdClient {
         }
     }
 
-    private String json(String path, String postBody) throws IOException {
-        return new String(request(path, postBody, "application/json", MAX_JSON_CHARS), StandardCharsets.UTF_8);
+    private String json(String url, String postBody) throws IOException {
+        return new String(request(url, postBody, "application/json", MAX_JSON_CHARS), StandardCharsets.UTF_8);
     }
 
-    private byte[] request(String path, String jsonBody, String accept, int maxBytes) throws IOException {
-        String url = baseUrl + path;
+    /** One request to an absolute URL; a dialect may use several hosts, and each takes the same proxy route. */
+    private byte[] request(String url, String jsonBody, String accept, int maxBytes) throws IOException {
         if(proxiedClient != null) {
             return proxiedRequest(url, jsonBody, accept, maxBytes);
         }
@@ -323,7 +277,7 @@ public class OrdClient {
         return thread;
     });
 
-    private static JsonNode readTree(String json) throws IOException {
+    static JsonNode readTree(String json) throws IOException {
         if(json.length() > MAX_JSON_CHARS) {
             throw new IOException("Inscriptions server response too large");
         }
@@ -335,93 +289,21 @@ public class OrdClient {
     }
 
     public static OrdStatus parseStatus(String json) throws IOException {
-        JsonNode node = readTree(json);
-        if(!node.path("chain").isTextual()) {
-            throw new IOException("Not an ord server status");
-        }
-        JsonNode minimum = node.path("minimum_rune_for_next_block");
-        String minimumRune = minimum.isTextual() && RUNE_NAME.matcher(minimum.asText()).matches() ? minimum.asText() : null;
-        return new OrdStatus(node.path("chain").asText(), node.path("rune_index").asBoolean(false), node.path("height").asLong(0), minimumRune);
+        return Ord020Dialect.parseStatus(json);
     }
 
     static List<OrdOutput> parseOutputs(List<String> outpoints, String json) throws IOException {
-        JsonNode node = readTree(json);
-        //The answers carry no output index, so they can only be matched by position
-        if(!node.isArray() || node.size() != outpoints.size()) {
-            throw new IOException("Inscriptions server answered " + (node.isArray() ? node.size() : 0) + " outputs for " + outpoints.size() + " asked");
-        }
-        List<OrdOutput> outputs = new ArrayList<>();
-        for(int i = 0; i < outpoints.size(); i++) {
-            outputs.add(parseOutput(outpoints.get(i), node.get(i)));
-        }
-        return outputs;
+        return Ord020Dialect.parseOutputs(outpoints, json);
     }
 
     static OrdOutput parseOutput(String outpoint, String json) throws IOException {
-        return parseOutput(outpoint, readTree(json));
+        return Ord020Dialect.parseOutput(outpoint, json);
     }
 
-    private static OrdOutput parseOutput(String outpoint, JsonNode node) throws IOException {
-        if(!node.isObject()) {
-            throw new IOException("Unexpected output from inscriptions server");
-        }
-        boolean unlisted = false;
-        List<String> inscriptions = new ArrayList<>();
-        for(JsonNode id : node.path("inscriptions")) {
-            if(id.isTextual() && INSCRIPTION_ID.matcher(id.asText()).matches()) {
-                inscriptions.add(id.asText());
-            } else {
-                unlisted = true;
-            }
-        }
-
-        Map<String, RuneBalance> runes = new LinkedHashMap<>();
-        JsonNode runesNode = node.path("runes");
-        //ord writes runes as an object keyed by name; some versions write an array of [name, balance] pairs
-        List<Map.Entry<JsonNode, JsonNode>> entries = new ArrayList<>();
-        if(runesNode.isObject()) {
-            runesNode.fields().forEachRemaining(field -> entries.add(Map.entry(objectMapper.getNodeFactory().textNode(field.getKey()), field.getValue())));
-        } else if(runesNode.isArray()) {
-            for(JsonNode pair : runesNode) {
-                if(pair.isArray() && pair.size() == 2) {
-                    entries.add(Map.entry(pair.get(0), pair.get(1)));
-                } else {
-                    unlisted = true;
-                }
-            }
-        }
-        for(Map.Entry<JsonNode, JsonNode> entry : entries) {
-            RuneBalance balance = parseBalance(entry.getValue());
-            String name = entry.getKey().isTextual() ? entry.getKey().asText() : null;
-            if(name == null || !RUNE_NAME.matcher(name).matches() || balance == null) {
-                unlisted = true;
-            } else {
-                runes.put(name, balance);
-            }
-        }
-
-        return new OrdOutput(outpoint, node.path("indexed").asBoolean(false), List.copyOf(inscriptions), Collections.unmodifiableMap(runes),
-                node.path("value").asLong(0), node.path("spent").asBoolean(false), unlisted);
+    static OrdInscription parseInscription(String json) throws IOException {
+        return Ord020Dialect.parseInscription(json);
     }
-
-    private static RuneBalance parseBalance(JsonNode node) {
-        JsonNode amountNode = node.path("amount");
-        BigInteger amount;
-        if(amountNode.isIntegralNumber()) {
-            amount = amountNode.bigIntegerValue();
-        } else if(amountNode.isTextual() && DIGITS.matcher(amountNode.asText()).matches()) {
-            amount = new BigInteger(amountNode.asText());
-        } else {
-            return null;
-        }
-        JsonNode divisibilityNode = node.path("divisibility");
-        if(amount.signum() < 0 || !divisibilityNode.isInt() || divisibilityNode.asInt() < 0 || divisibilityNode.asInt() > MAX_DIVISIBILITY) {
-            return null;
-        }
-        return new RuneBalance(amount, divisibilityNode.asInt(), symbol(node.path("symbol")));
-    }
-
-    private static String symbol(JsonNode node) {
+    static String symbol(JsonNode node) {
         if(!node.isTextual() || node.asText().codePointCount(0, node.asText().length()) != 1) {
             return NO_SYMBOL;
         }
@@ -463,18 +345,6 @@ public class OrdClient {
         } catch(IllegalArgumentException e) {
             throw new IOException("Unexpected rune id from inscriptions server");
         }
-    }
-
-    static OrdInscription parseInscription(String json) throws IOException {
-        JsonNode node = readTree(json);
-        String id = node.path("id").asText("");
-        if(!INSCRIPTION_ID.matcher(id).matches()) {
-            throw new IOException("Unexpected inscription from inscriptions server");
-        }
-        String contentType = node.path("content_type").isTextual() ? node.path("content_type").asText() : null;
-        long contentLength = node.path("content_length").isIntegralNumber() ? node.path("content_length").asLong() : -1;
-        String satpoint = node.path("satpoint").isTextual() ? node.path("satpoint").asText() : null;
-        return new OrdInscription(id, node.path("number").asLong(0), contentType, contentLength, satpoint, node.path("value").asLong(0));
     }
 
     public static class HttpStatusException extends IOException {

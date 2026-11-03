@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Me-Seeks</title>
+<!-- me-seeks.pep: a search engine that is only an inscription. It asks the arcade showing it (/r/search): an arcade
+     whose operator hosts the sites search answers from its own index of every site, any other asks a linked arcade
+     that does. On an arcade too old for /r/search it reads every site itself (/r/sites, /r/site) and searches here,
+     which only suits a small web. Nothing is sent anywhere but the arcade the page is shown by. -->
+<style>
+:root { --ink:#222; --muted:#666; --link:#1a0dab; --visited:#609; --green:#0a7a2f; --line:#ccc; --hl:#fff3b0; }
+* { box-sizing:border-box; }
+html, body { margin:0; background:#fff; color:var(--ink); font:15px/1.45 Arial, Helvetica, sans-serif; }
+a { color:var(--link); cursor:pointer; }
+.logo { font:bold 64px/1 Georgia, "Times New Roman", serif; letter-spacing:-2px; user-select:none; white-space:nowrap;
+  text-shadow:1px 2px 0 rgba(0,0,0,.18); }
+.logo span:nth-child(1) { color:#2a5bd7; } .logo span:nth-child(2) { color:#d7372a; } .logo span:nth-child(3) { color:#7a8a12; }
+.logo span:nth-child(4) { color:#e09a00; } .logo span:nth-child(5) { color:#2a5bd7; } .logo span:nth-child(6) { color:#1f9e55; }
+.logo span:nth-child(7) { color:#d7372a; } .logo span:nth-child(8) { color:#8a3fc6; }
+.logo small { display:block; font:italic 13px Arial, sans-serif; letter-spacing:0; color:var(--muted); text-shadow:none;
+  text-align:right; margin:-4px 6px 0 0; }
+#front { min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:14vh 16px 24px; }
+#front form { width:100%; max-width:520px; margin-top:26px; text-align:center; }
+input[type=search] { width:100%; height:38px; padding:0 12px; font:16px Arial, sans-serif; border:1px solid #a9a9a9;
+  border-top-color:#888; box-shadow:inset 0 1px 2px rgba(0,0,0,.12); }
+input[type=search]:focus { outline:2px solid #8ab4f8; outline-offset:0; }
+.buttons { margin-top:16px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+button { font:13px Arial, sans-serif; padding:6px 14px; background:#f2f2f2; border:1px solid #bbb; border-radius:2px;
+  color:#222; cursor:pointer; }
+button:hover { border-color:#888; background:#e8e8e8; }
+.where { margin-top:28px; color:var(--muted); font-size:13px; text-align:center; }
+.where a { font-size:13px; }
+footer { margin-top:auto; padding-top:40px; color:#999; font-size:12px; text-align:center; }
+#results { display:none; }
+.top { display:flex; align-items:center; gap:16px; padding:14px 16px 12px; border-bottom:1px solid #e5e5e5; flex-wrap:wrap; }
+.top .logo { font-size:30px; letter-spacing:-1px; cursor:pointer; }
+.top .logo small { display:none; }
+.top form { flex:1; min-width:220px; max-width:560px; display:flex; gap:8px; }
+.bar { background:#eef3fc; border-top:1px solid #6b90da; padding:5px 16px; font-size:13px; color:#333; display:flex;
+  justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.list { max-width:640px; padding:8px 16px 40px; }
+.hit { margin:18px 0; }
+.hit a.t { font-size:17px; text-decoration:underline; }
+.hit .s { margin-top:2px; }
+.hit .s b { background:var(--hl); font-weight:bold; }
+.hit .u { color:var(--green); font-size:13px; overflow-wrap:anywhere; }
+.none { margin:24px 0; }
+.none ul { color:var(--muted); }
+.pager { text-align:center; margin:10px 0 40px; }
+.pager .logo { font-size:30px; letter-spacing:-1px; }
+.pager .nums { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; font-size:14px; margin-top:4px; }
+.pager .nums b { color:var(--ink); }
+@media (max-width:480px) { .logo { font-size:48px; } #front { padding-top:10vh; } }
+</style>
+</head>
+<body>
+<div id="front">
+  <div class="logo" aria-label="Me-Seeks"><span>M</span><span>e</span><span>-</span><span>S</span><span>e</span><span>e</span><span>k</span><span>s</span><small>on chain</small></div>
+  <form id="f1">
+    <input type="search" id="q1" autocomplete="off" spellcheck="false" aria-label="Search" enterkeyhint="search">
+    <div class="buttons">
+      <button type="button" id="go1">Me-Seeks Search</button>
+      <button type="button" id="lucky">I'm Feeling Lucky</button>
+    </div>
+  </form>
+  <p class="where" id="where">Reading the chain&hellip;</p>
+  <footer>Me-Seeks lives on chain as an inscription. It searches every published name, right in your browser.</footer>
+</div>
+<div id="results">
+  <div class="top">
+    <div class="logo" id="tohome"><span>M</span><span>e</span><span>-</span><span>S</span><span>e</span><span>e</span><span>k</span><span>s</span></div>
+    <form id="f2"><input type="search" id="q2" autocomplete="off" spellcheck="false" aria-label="Search" enterkeyhint="search"><button type="button" id="go2">Search</button></form>
+  </div>
+  <div class="bar"><span id="said"></span><span id="took"></span></div>
+  <div class="list" id="list"></div>
+  <div class="pager" id="pager"></div>
+</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const CHAINS = {main: "Pepecoin", doge: "Dogecoin", test: "Pepecoin testnet", ltc: "Litecoin", bel: "Bellscoin", lky: "Luckycoin"};
+const PAGES_PER_SITE = 25, AT_ONCE = 6, TEXT_MAX = 60000;
+
+let pages = [], sites = 0, ready = null, local = false;   // local: this arcade has no /r/search, read every site here
+
+/* --- the arcade's search: /r/search, 10 a page --- */
+async function json(url) { const r = await fetch(url); if (r.status === 404) throw Object.assign(new Error("gone"), {gone: true}); return r.json(); }
+async function about() {
+  try {
+    const d = await json("/r/sites?per=1");
+    sites = d.total != null ? d.total : (d.names || []).length;
+    local = d.total == null;                          // an arcade from before paging has no /r/search either
+    if (local) { ready = readAll(); return; }
+    $("where").innerHTML = `Searching <b>${Number(sites).toLocaleString()}</b> site${sites === 1 ? "" : "s"}, every one of them on chain.`;
+  } catch (e) {
+    $("where").textContent = "This arcade did not answer. Try again in a moment.";
+  }
+}
+
+/* --- an old arcade: every site read here (a small web only) --- */
+function plain(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script,style,noscript,template,svg").forEach((n) => n.remove());
+  const title = (doc.querySelector("title") || doc.querySelector("h1") || {}).textContent || "";
+  const meta = (doc.querySelector('meta[name="description"]') || {content: ""}).content || "";
+  return {title: title.trim(), text: (meta + " " + (doc.body ? doc.body.textContent : "")).replace(/\s+/g, " ").trim()};
+}
+function meshText(body) {
+  const lines = String(body).split("\n");
+  const h = lines.find((l) => /^#\s/.test(l));
+  const text = lines.filter((l) => !/^!\[/.test(l)).map((l) => l.replace(/^(#+|\*|>|=>\s*\S+)\s*/, "")).join(" ");
+  return {title: h ? h.replace(/^#+\s*/, "") : "", text: text.replace(/\s+/g, " ").trim()};
+}
+async function readPage(site, path) {
+  const p = await json(`/r/site/${site.name}${path === "/" ? "" : path}?chain=${encodeURIComponent(site.chain)}`);
+  let got = null;
+  if (p.kind === "text") got = meshText(p.body || "");
+  else if (p.url) {
+    const r = await fetch(p.inscription ? `/content/${p.inscription}` : p.url);
+    const type = r.headers.get("content-type") || "";
+    got = /text\/html/.test(type) ? plain(await r.text()) : /^text\//.test(type) ? {title: "", text: (await r.text()).replace(/\s+/g, " ")} : {title: "", text: ""};
+  }
+  return got && {name: site.name, chain: site.chain, path, title: got.title || p.title || "", text: got.text.slice(0, 60000),
+                 address: site.name + (path === "/" ? "" : path)};
+}
+async function readAll() {
+  const list = (await json("/r/sites")).names || [];
+  sites = list.length;
+  let done = 0;
+  const queue = list.slice();
+  const say = () => { $("where").textContent = `Reading the chain… ${done} of ${sites} sites`; };
+  say();
+  await Promise.all(Array.from({length: 6}, async () => {
+    while (queue.length) {
+      const s = queue.shift();
+      let first = null;
+      try { first = await json(`/r/site/${s.name}?chain=${encodeURIComponent(s.chain)}`); } catch (e) {}
+      for (const path of ((first && first.paths) || ["/"]).slice(0, 25)) { try { const p = await readPage(s, path); if (p) pages.push(p); } catch (e) {} }
+      done++; say();
+    }
+  }));
+  $("where").innerHTML = `Searching <b>${pages.length}</b> page${pages.length === 1 ? "" : "s"} on <b>${sites}</b> site${sites === 1 ? "" : "s"}, every one of them on chain.`;
+}
+const words = (q) => String(q).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+function searchHere(q) {
+  const ws = words(q);
+  const scored = pages.map((p) => {
+    const name = p.address.toLowerCase(), title = p.title.toLowerCase(), text = p.text.toLowerCase();
+    let score = 0, all = true;
+    for (const w of ws) { const s = (name.includes(w) ? 12 : 0) + (title.includes(w) ? 6 : 0) + Math.min(text.split(w).length - 1, 8); if (!s) all = false; score += s; }
+    return {p, score: score + (p.path === "/" ? 1 : 0), all};
+  }).filter((h) => h.score > 1);
+  const hits = (scored.some((h) => h.all) ? scored.filter((h) => h.all) : scored).sort((a, b) => b.score - a.score);
+  return hits.map(({p}) => {
+    const low = p.text.toLowerCase(); let at = -1;
+    for (const w of ws) { at = low.indexOf(w); if (at >= 0) break; }
+    const from = Math.max(0, at - 70);
+    let snip = p.text.slice(from, from + 220);
+    for (const w of ws) snip = snip.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi"), "\x02$1\x03");
+    return {name: p.name, path: p.path, chain: p.chain, address: p.address, title: p.title, snippet: (from ? "… " : "") + snip};
+  });
+}
+
+/* --- one page of results --- */
+async function results(q, n) {
+  if (local) {
+    await ready;
+    const all = searchHere(q);
+    return {results: all.slice(n * 10, n * 10 + 10), total: all.length, pages: Math.ceil(all.length / 10)};
+  }
+  return json(`/r/search?q=${encodeURIComponent(q)}&page=${n}`);
+}
+const marked = (s) => esc(s).replace(/\x02/g, "<b>").replace(/\x03/g, "</b>");
+
+/* --- going to a site: the Browser around us opens it --- */
+function open(address) {
+  if (window.parent !== window) window.parent.postMessage({arcade: "browser", go: address}, "*");
+  else location.href = "/browser/" + address;
+}
+
+let asked = "";
+async function show(q, n = 0) {
+  q = q.trim();
+  if (!q) return;
+  asked = q;
+  $("q1").value = $("q2").value = q;
+  $("front").style.display = "none"; $("results").style.display = "block";
+  $("said").innerHTML = "Searching&hellip;"; $("took").textContent = ""; $("list").innerHTML = ""; $("pager").innerHTML = "";
+  const t0 = performance.now();
+  let d;
+  try { d = await results(q, n); } catch (e) { d = {results: [], total: 0, pages: 0, trouble: ["this arcade did not answer"]}; }
+  if (asked !== q) return;
+  const hits = d.results || [], first = n * 10 + 1;
+  $("said").innerHTML = hits.length ? `Results <b>${first}</b> - <b>${first + hits.length - 1}</b> of about <b>${Number(d.total).toLocaleString()}</b> for <b>${esc(q)}</b>`
+    : `No results for <b>${esc(q)}</b>`;
+  $("took").textContent = `(${((performance.now() - t0) / 1000).toFixed(2)} seconds)`;
+  $("list").innerHTML = hits.length ? hits.map((p) =>
+    `<div class="hit"><a class="t" data-to="${esc(p.chain + ":" + p.address)}">${esc(p.title || p.address)}</a>`
+    + `<div class="s">${marked(p.snippet) || "<i>No words on this page: a picture, a game or a tool.</i>"}</div>`
+    + `<div class="u">${esc(p.address)} &ndash; ${esc(CHAINS[p.chain] || p.chain)}</div></div>`).join("")
+    : `<div class="none"><p>Your search - <b>${esc(q)}</b> - did not match any page on chain.</p>
+       <ul><li>Make sure all words are spelled correctly.</li><li>Try different words.</li><li>Try fewer words.</li></ul>`
+      + ((d.trouble || []).length ? `<p style="color:#999;font-size:13px">No arcade that hosts the sites search answered (${esc(d.trouble.join("; "))}).</p>` : "") + `</div>`;
+  const pagesOf = Math.min(d.pages || 0, 100);
+  if (pagesOf > 1) {
+    const from = Math.max(0, Math.min(n - 4, pagesOf - 10)), to = Math.min(pagesOf, from + 10);
+    $("pager").innerHTML = `<div class="logo"><span>M</span><span>e</span><span>-</span><span>S</span>`
+      + "e".repeat(to - from + 1).split("").map(() => "<span>e</span>").join("") + `<span>k</span><span>s</span></div><div class="nums">`
+      + (n > 0 ? `<a data-page="${n - 1}">Previous</a>` : "")
+      + Array.from({length: to - from}, (_, k) => from + k).map((k) => k === n ? `<b>${k + 1}</b>` : `<a data-page="${k}">${k + 1}</a>`).join("")
+      + (n + 1 < pagesOf ? `<a data-page="${n + 1}">Next</a>` : "") + `</div>`;
+  }
+  window.scrollTo(0, 0);
+}
+$("pager").onclick = (e) => { const a = e.target.closest("a[data-page]"); if (a) show(asked, Number(a.dataset.page)); };
+$("list").onclick = (e) => { const a = e.target.closest("a[data-to]"); if (a) open(a.dataset.to); };
+// No form submits: a sandboxed inscription may not submit forms, so Enter and the buttons are listened to instead.
+$("f1").onsubmit = $("f2").onsubmit = (e) => e.preventDefault();
+$("go1").onclick = () => show($("q1").value);
+$("go2").onclick = () => show($("q2").value);
+$("q1").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); show($("q1").value); } };
+$("q2").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); show($("q2").value); } };
+$("tohome").onclick = () => { $("results").style.display = "none"; $("front").style.display = "flex"; $("q1").focus(); };
+$("lucky").onclick = async () => {
+  const q = $("q1").value.trim();
+  if (!q) {                                           // no words: a site picked at random
+    try {
+      const d = await json(`/r/sites?per=1&page=${Math.floor(Math.random() * Math.max(1, sites))}`);
+      if ((d.names || [])[0]) return open(d.names[0].chain + ":" + d.names[0].name);
+    } catch (e) {}
+    return;
+  }
+  try { const d = await results(q, 0); if ((d.results || [])[0]) return open(d.results[0].chain + ":" + d.results[0].address); } catch (e) {}
+  show(q);
+};
+about();
+$("q1").focus();
+</script>
+</body>
+</html>

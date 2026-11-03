@@ -234,4 +234,156 @@ public class OrdClientParseTest {
         Assertions.assertTrue(output.inscriptions().isEmpty());
         Assertions.assertTrue(output.carries());
     }
-}
+
+    /** Serves recorded Nintondo answers by absolute URL and remembers what was asked, so the three-host flow is pinned. */
+    private static class FixtureTransport implements Transport {
+        final java.util.Map<String, byte[]> answers = new java.util.LinkedHashMap<>();
+        final List<String> asked = new java.util.ArrayList<>();
+
+        FixtureTransport answer(String url, String resource) throws IOException {
+            try(InputStream in = OrdClientParseTest.class.getResourceAsStream(resource)) {
+                Assertions.assertNotNull(in, resource);
+                answers.put(url, in.readAllBytes());
+            }
+            return this;
+        }
+
+        @Override
+        public String json(String url, String postBody) throws IOException {
+            return new String(bytes(url, "application/json", OrdClient.MAX_JSON_CHARS), StandardCharsets.UTF_8);
+        }
+
+        @Override
+        public byte[] bytes(String url, String accept, int maxBytes) throws IOException {
+            asked.add(url);
+            byte[] answer = answers.get(url);
+            if(answer == null) {
+                throw new OrdClient.HttpStatusException(404);
+            }
+            return answer;
+        }
+    }
+
+    private static final String DOGE_ID = "b5f9d2759c65df72dff76bbab840ff3d34d99c6679bad26148cb18344ff03f71i0";
+    private static final String PEPE_ID = "d089eab0d91c5889eb2789804498ab51229048451eb9d9f9510ac2b84416c546i0";
+    private static final String BELLS_ID = "554a01b993871859e622b2c6391da63e74393b8cab2958ca09eebf4688af7773i0";
+
+    private static FixtureTransport nintondo(String coin, String id) throws IOException {
+        return new FixtureTransport()
+                .answer("https://" + coin + "-mainnet-api.nintondo.io/location/" + id, "nintondo-" + coin + "-location.json")
+                .answer("https://" + coin + "-mainnet-search.nintondo.io/pub/" + id + "/info", "nintondo-" + coin + "-info.json");
+    }
+
+    /** Location gives txid, vout and offset (the satpoint), info gives number, mime and size; both are real recordings. */
+    @Test
+    public void nintondoLocationGivesSatpoint() throws IOException {
+        FixtureTransport transport = nintondo("doge", DOGE_ID);
+        OrdInscription inscription = new NintondoDialect("https://doge-mainnet-api.nintondo.io").inscription(transport, DOGE_ID);
+        Assertions.assertEquals(DOGE_ID, inscription.id());
+        Assertions.assertEquals("b5f9d2759c65df72dff76bbab840ff3d34d99c6679bad26148cb18344ff03f71:0:0", inscription.satpoint());
+        Assertions.assertEquals(180433203L, inscription.number());
+        Assertions.assertEquals("text/plain; charset=utf-8", inscription.contentType());
+        Assertions.assertEquals(15, inscription.contentLength());
+        Assertions.assertEquals(100000, inscription.value());
+        Assertions.assertEquals(List.of("https://doge-mainnet-api.nintondo.io/location/" + DOGE_ID,
+                "https://doge-mainnet-search.nintondo.io/pub/" + DOGE_ID + "/info"), transport.asked);
+    }
+
+    @Test
+    public void nintondoPepecoinAndBellscoinFixturesParse() throws IOException {
+        OrdInscription pepe = new NintondoDialect("https://pepe-mainnet-api.nintondo.io").inscription(nintondo("pepe", PEPE_ID), PEPE_ID);
+        Assertions.assertEquals("77405cbde12fbd5939fc54f9e041868aabb1a25b9a0b48edad47f051af3f9635:0:0", pepe.satpoint());
+        Assertions.assertEquals("text/html; charset=utf-8", pepe.contentType());
+        Assertions.assertEquals(14346, pepe.contentLength());
+        OrdInscription bells = new NintondoDialect("https://bells-mainnet-api.nintondo.io").inscription(nintondo("bells", BELLS_ID), BELLS_ID);
+        Assertions.assertEquals("554a01b993871859e622b2c6391da63e74393b8cab2958ca09eebf4688af7773:0:0", bells.satpoint());
+        Assertions.assertEquals(276671008L, bells.number());
+        Assertions.assertEquals(1000, bells.value());
+    }
+
+    @Test
+    public void nintondoOutputFixturesParse() throws IOException {
+        for(String[] coin : new String[][] {{"doge", DOGE_ID}, {"pepe", PEPE_ID}, {"bells", BELLS_ID}}) {
+            String api = "https://" + coin[0] + "-mainnet-api.nintondo.io";
+            String txid = coin[1].substring(0, 64);
+            FixtureTransport transport = new FixtureTransport().answer(api + "/find_meta/" + txid + "i0", "nintondo-" + coin[0] + "-find-meta.json");
+            OrdOutput output = new NintondoDialect(api).outputs(transport, List.of(txid + ":0")).getFirst();
+            Assertions.assertEquals(List.of(coin[1]), output.inscriptions(), coin[0]);
+            Assertions.assertTrue(output.indexed());
+        }
+    }
+
+    @Test
+    public void nintondoUnknownOutputIsUnknownNotClean() throws IOException {
+        String api = "https://doge-mainnet-api.nintondo.io";
+        OrdOutput output = new NintondoDialect(api).outputs(new FixtureTransport(), List.of(OUTPOINT)).getFirst();
+        Assertions.assertFalse(output.indexed());
+        Assertions.assertFalse(output.carries());
+    }
+
+    @Test
+    public void nintondoHostsDerivedFromApi() {
+        Assertions.assertEquals("https://doge-mainnet-search.nintondo.io/pub", NintondoDialect.searchBase("https://doge-mainnet-api.nintondo.io"));
+        Assertions.assertEquals("https://doge-mainnet-content.nintondo.io", NintondoDialect.contentBase("https://doge-mainnet-api.nintondo.io"));
+        Assertions.assertEquals("https://bells-testnet-content.nintondo.io", NintondoDialect.contentBase("https://bells-testnet-api.nintondo.io"));
+        //The scheme and port follow the configured server, so the proxy rules for it cover the other hosts too
+        Assertions.assertEquals("http://pepe-mainnet-search.nintondo.io:8080/pub", NintondoDialect.searchBase("http://pepe-mainnet-api.nintondo.io:8080"));
+        Assertions.assertNull(NintondoDialect.searchBase("https://nintondo.io"));
+        Assertions.assertNull(NintondoDialect.contentBase("https://doge-mainnet-search.nintondo.io"));
+    }
+
+    @Test
+    public void nintondoContentComesFromContentHost() throws IOException {
+        FixtureTransport transport = new FixtureTransport().answer("https://doge-mainnet-content.nintondo.io/content/" + DOGE_ID, "nintondo-doge-content.bin");
+        byte[] content = new NintondoDialect("https://doge-mainnet-api.nintondo.io").content(transport, DOGE_ID);
+        Assertions.assertEquals(15, content.length);
+    }
+
+    @Test
+    public void nintondoExplorerUrl() {
+        Assertions.assertEquals("https://nintondo.io/doge/inscriptions/" + DOGE_ID, new NintondoDialect("https://doge-mainnet-api.nintondo.io").explorerUrl("https://doge-mainnet-api.nintondo.io", DOGE_ID));
+        Assertions.assertEquals("https://nintondo.io/pepe/inscriptions/" + PEPE_ID, new NintondoDialect("https://pepe-mainnet-api.nintondo.io").explorerUrl("https://pepe-mainnet-api.nintondo.io", PEPE_ID));
+        Assertions.assertEquals("https://nintondo.io/bells/inscriptions/" + BELLS_ID, new NintondoDialect("https://bells-mainnet-api.nintondo.io").explorerUrl("https://bells-mainnet-api.nintondo.io", BELLS_ID));
+        //No page is known for testnet, so the content host's rendered view stands in
+        Assertions.assertEquals("https://bells-testnet-content.nintondo.io/html/" + BELLS_ID, new NintondoDialect("https://bells-testnet-api.nintondo.io").explorerUrl("https://bells-testnet-api.nintondo.io", BELLS_ID));
+        Assertions.assertEquals("https://ordinalslite.com/inscription/" + INSCRIPTION, new Ord020Dialect("https://ordinalslite.com").explorerUrl("https://ordinalslite.com", INSCRIPTION));
+    }
+
+    @Test
+    public void nintondoHostileAnswersAreRefused() throws IOException {
+        String api = "https://doge-mainnet-api.nintondo.io";
+        String locationUrl = api + "/location/" + DOGE_ID;
+        String infoUrl = "https://doge-mainnet-search.nintondo.io/pub/" + DOGE_ID + "/info";
+        String info = new String(OrdClientParseTest.class.getResourceAsStream("nintondo-doge-info.json").readAllBytes(), StandardCharsets.UTF_8);
+        for(String location : List.of("{\"location\":\"../../x\",\"value\":1}", "{\"location\":\"" + DOGE_ID + "i0\",\"value\":1}", "{\"value\":1}", "[]",
+                "{\"location\":\"" + "g".repeat(64) + "i0i0i1\",\"value\":1}")) {
+            FixtureTransport transport = new FixtureTransport();
+            transport.answers.put(locationUrl, location.getBytes(StandardCharsets.UTF_8));
+            transport.answers.put(infoUrl, info.getBytes(StandardCharsets.UTF_8));
+            Assertions.assertThrows(IOException.class, () -> new NintondoDialect(api).inscription(transport, DOGE_ID), location);
+        }
+        //Info for a different inscription than asked is refused
+        FixtureTransport mismatched = nintondo("doge", DOGE_ID);
+        mismatched.answers.put(infoUrl, info.replace(DOGE_ID, PEPE_ID).getBytes(StandardCharsets.UTF_8));
+        Assertions.assertThrows(IOException.class, () -> new NintondoDialect(api).inscription(mismatched, DOGE_ID));
+        //Hosts that are not Nintondo's api shape cannot reach info or content
+        Assertions.assertThrows(IOException.class, () -> new NintondoDialect("https://nintondo.io").inscription(nintondo("doge", DOGE_ID), DOGE_ID));
+    }
+
+    /** The client picks the dialect from the server URL: Nintondo's hosts get Nintondo's, everything else ord 0.20. */
+    @Test
+    public void clientPicksDialectFromUrl() {
+        Assertions.assertEquals(NintondoDialect.NAME, new OrdClient("https://pepe-mainnet-api.nintondo.io").dialect());
+        Assertions.assertEquals(Ord020Dialect.NAME, new OrdClient("https://ordinalslite.com").dialect());
+    }
+
+    /** Nintondo content is never rendered as a web page: html shows the placeholder (existing behaviour, pinned for its content). */
+    @Test
+    public void htmlContentNotRendered() throws IOException {
+        byte[] html;
+        try(InputStream in = OrdClientParseTest.class.getResourceAsStream("nintondo-pepe-content.html")) {
+            html = in.readAllBytes();
+        }
+        Assertions.assertEquals(com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview.Kind.PLACEHOLDER,
+                com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview.kind("text/html; charset=utf-8", html));
+    }}
