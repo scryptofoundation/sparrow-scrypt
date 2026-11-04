@@ -220,6 +220,9 @@ public class AppController implements Initializable {
     private Menu restart;
 
     @FXML
+    private MenuItem aboutMenuItem;
+
+    @FXML
     private StackPane rootStack;
 
     @FXML
@@ -436,6 +439,7 @@ public class AppController implements Initializable {
             restart.getItems().add(networkItem);
         }
         restart.setVisible(System.getProperty(SparrowWallet.JPACKAGE_APP_PATH) != null);
+        aboutMenuItem.setText("About " + SparrowWallet.APP_NAME);
 
         saveTransaction.setDisable(true);
         showTransaction.visibleProperty().bind(Bindings.and(saveTransaction.visibleProperty(), saveTransaction.disableProperty().not()));
@@ -540,8 +544,11 @@ public class AppController implements Initializable {
         }
     }
 
+    //Help goes to this fork's own repository, not Sparrow Wallet's: its users report coin-specific problems upstream cannot fix
+    private static final String PROJECT_URL = "https://github.com/scryptofoundation/sparrow-scrypt";
+
     public void showDocumentation(ActionEvent event) {
-        AppServices.get().getApplication().getHostServices().showDocument("https://sparrowwallet.com/docs");
+        AppServices.get().getApplication().getHostServices().showDocument(PROJECT_URL + "/wiki");
     }
 
     public void showLogFile(ActionEvent event) throws IOException {
@@ -554,7 +561,7 @@ public class AppController implements Initializable {
     }
 
     public void openSupport(ActionEvent event) {
-        AppServices.get().getApplication().getHostServices().showDocument("https://sparrowwallet.com/opensupport");
+        AppServices.get().getApplication().getHostServices().showDocument(PROJECT_URL + "/issues");
     }
 
     public void submitBugReport(ActionEvent event) {
@@ -564,7 +571,7 @@ public class AppController implements Initializable {
 
         if(optResponse.isPresent()) {
             if(optResponse.get() == bugType) {
-                AppServices.get().getApplication().getHostServices().showDocument("https://sparrowwallet.com/submitbugreport");
+                AppServices.get().getApplication().getHostServices().showDocument(PROJECT_URL + "/issues/new/choose");
             } else {
                 openSupport(event);
             }
