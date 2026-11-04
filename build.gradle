@@ -387,7 +387,8 @@ tasks.register('patchLauncherUuid') {
     def appDir = layout.buildDirectory.dir("jpackage/${appName}.app").get().asFile
     def launcherUuid = UUID.nameUUIDFromBytes("com.sparrowwallet.${appName}.${osArch}".getBytes('UTF-8'))
     doLast {
-        def launcher = new File(appDir, "Contents/MacOS/${appName}")
+        //The launcher keeps the jlink launcher's name in every flavor
+        def launcher = new File(appDir, 'Contents/MacOS/sparrow')
         if(!launcher.isFile()) {
             def found = []
             appDir.parentFile.eachFileRecurse { f -> if(f.path.count(File.separator) - appDir.parentFile.path.count(File.separator) <= 4) found << f.path }
@@ -474,7 +475,7 @@ tasks.register('prepareResourceDir', Copy) {
     }
 }
 
-//jpackage takes Info.plist as is, and its launcher and icon carry the flavor's app name, so the plist must name them too.
+//jpackage takes Info.plist as is, and its icon carries the flavor's app name, so the plist must name it too.
 //Sparrow-LTC keeps Sparrow's bundle identifier; the other flavors get their own so macOS does not treat them as Sparrow
 tasks.register('prepareMacResourceDir', Copy) {
     from('src/main/deploy/package/macos')

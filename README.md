@@ -41,7 +41,7 @@ The builds are not code-signed yet:
 
 - Windows: unzip and run `Sparrow-Scrypt.exe`. If SmartScreen stops it, choose More info, then Run anyway.
 - macOS: unzip and move `Sparrow-Scrypt.app` to Applications. The app is not notarized, so run `xattr -dr com.apple.quarantine /Applications/Sparrow-Scrypt.app` once in Terminal, then open it.
-- Linux: extract and run `Sparrow-Scrypt/bin/Sparrow-Scrypt`.
+- Linux: extract and run `Sparrow-Scrypt/bin/sparrow`.
 
 ## Building
 
