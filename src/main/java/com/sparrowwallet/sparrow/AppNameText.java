@@ -21,7 +21,7 @@ public class AppNameText {
             return named;
         }
 
-        return named.replace("is a Litecoin wallet", "is a wallet for Litecoin, Dogecoin, Pepecoin, Junkcoin, Luckycoin, Bellscoin and Dingocoin")
+        return named.replace("is a Litecoin wallet", "is a wallet for seven Scrypt coins")
                 .replace("to the Litecoin blockchain", "to each coin's blockchain")
                 .replace("index all Litecoin transactions", "index all transactions");
     }

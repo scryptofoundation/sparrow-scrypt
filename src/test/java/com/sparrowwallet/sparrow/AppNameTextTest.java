@@ -12,7 +12,7 @@ public class AppNameTextTest {
     @Test
     public void multiCoinAppNamesItselfAndItsCoins() {
         String text = AppNameText.apply("Sparrow-LTC is a Litecoin wallet with a focus on security and usability.", "Sparrow-Scrypt", true);
-        assertEquals("Sparrow-Scrypt is a wallet for Litecoin, Dogecoin, Pepecoin, Junkcoin, Luckycoin, Bellscoin and Dingocoin with a focus on security and usability.", text);
+        assertEquals("Sparrow-Scrypt is a wallet for seven Scrypt coins with a focus on security and usability.", text);
     }
 
     @Test
