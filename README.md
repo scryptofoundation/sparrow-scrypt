@@ -4,6 +4,8 @@ Sparrow-Scrypt is a desktop wallet for the Scrypt coins: Litecoin, Dogecoin, Pep
 
 ## Status: beta
 
+Current version: **2.5.7 beta 1** (tag `scrypt-v2.5.7-beta.1`), based on Sparrow Wallet 2.5.7.
+
 Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can and small amounts where you can't, and never put a seed that holds real savings into a beta build.
 
 | Coin | Ticker | Test mode |
@@ -48,10 +50,10 @@ Builds are on the [Releases](../../releases) page, with SHA256 checksums. Check 
 
 | System | File |
 | --- | --- |
-| Windows 10 and 11, x64 | `Sparrow-Scrypt-<version>.zip` |
-| Linux x64 | `sparrowscryptwallet-<version>-x86_64.tar.gz` |
-| macOS 11 or later, Apple Silicon | `Sparrow-Scrypt-<version>-macos-aarch64.zip` |
-| macOS 11 or later, Intel | `Sparrow-Scrypt-<version>-macos-x86_64.zip` |
+| Windows 10 and 11, x64 | `Sparrow-Scrypt-2.5.7.zip` |
+| Linux x64 | `sparrowscryptwallet-2.5.7-x86_64.tar.gz` |
+| macOS 11 or later, Apple Silicon | `Sparrow-Scrypt-2.5.7-macos-aarch64.zip` |
+| macOS 11 or later, Intel | `Sparrow-Scrypt-2.5.7-macos-x86_64.zip` |
 
 The builds are not code-signed yet:
 
