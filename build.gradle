@@ -388,6 +388,11 @@ tasks.register('patchLauncherUuid') {
     def launcherUuid = UUID.nameUUIDFromBytes("com.sparrowwallet.${appName}.${osArch}".getBytes('UTF-8'))
     doLast {
         def launcher = new File(appDir, "Contents/MacOS/${appName}")
+        if(!launcher.isFile()) {
+            def found = []
+            appDir.parentFile.eachFileRecurse { f -> if(f.path.count(File.separator) - appDir.parentFile.path.count(File.separator) <= 4) found << f.path }
+            throw new GradleException("Launcher ${launcher} not found; build/jpackage holds: ${found.take(40).join(', ')}")
+        }
         byte[] bytes = launcher.bytes
         def buffer = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         if(Integer.toUnsignedLong(buffer.getInt(0)) != 0xfeedfacfL) {
