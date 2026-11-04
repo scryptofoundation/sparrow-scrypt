@@ -1648,12 +1648,18 @@ public class AppServices {
         }
     }
 
+    //The app is only online once a connection has succeeded. A switch to another coin reconnects whenever the app means to
+    //be online, so a coin whose server is down at startup cannot keep the others offline; only offline by choice stays so
+    static boolean reconnectsOnCoinChange(boolean online, boolean connecting, Mode mode, boolean hasServer) {
+        return hasServer && (online || connecting || mode == Mode.ONLINE);
+    }
+
     @Subscribe
     public void activeCoinChanged(ActiveCoinChangedEvent event) {
         //The server connection follows the active coin - drop the old chain's connection and reconnect
         //under the newly focused coin's server configuration. Cancel closes the old transport and posts
         //DisconnectionEvent; reset restores firstCall for a fresh connect.
-        if(onlineProperty.get() && Config.get().hasServer()) {
+        if(reconnectsOnCoinChange(onlineProperty.get(), connectionService != null && connectionService.isRunning(), Config.get().getMode(), Config.get().hasServer())) {
             restartService(connectionService);
         } else if(connectionService != null && connectionService.isRunning()) {
             connectionService.cancel();
