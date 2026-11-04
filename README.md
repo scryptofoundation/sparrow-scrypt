@@ -1,125 +1,83 @@
-# Sparrow-LTC Litecoin Wallet
+# Sparrow-Scrypt
 
-Sparrow-LTC is a modern desktop Litecoin wallet application supporting most hardware wallets and built on common standards such as PSBT, with an emphasis on transparency and usability.
+Sparrow-Scrypt is a desktop wallet for the Scrypt coins: Litecoin, Dogecoin, Pepecoin, Junkcoin, Luckycoin, Bellscoin and Dingocoin, in one app. Each wallet belongs to one coin. It is built on [Sparrow-LTC](https://github.com/sparrow-ltc/sparrow), which is built on [Sparrow Wallet](https://github.com/sparrowwallet/sparrow), and keeps their focus on PSBTs, coin control and transparency.
 
-More information (and release binaries) can be found at https://sparrowwallet.com. Release binaries are also available directly from [GitHub](https://github.com/sparrowwallet/sparrow/releases).
+## Status: beta
 
-![Sparrow-LTC Wallet](https://sparrowwallet.com/assets/images/control-your-sends.png)
+Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can and small amounts where you can't, and never put a seed that holds real savings into a beta build.
+
+| Coin | Ticker | Test mode |
+| --- | --- | --- |
+| Litecoin | LTC | Public testnet |
+| Pepecoin | PEP | Public testnet |
+| Junkcoin | JKC | Public testnet |
+| Dogecoin | DOGE | Your own node, or mainnet with small amounts |
+| Luckycoin | LKY | Your own node, or mainnet with small amounts |
+| Bellscoin | BELLS | Your own node, or mainnet with small amounts |
+| Dingocoin | DINGO | Your own node, or mainnet with small amounts |
+
+## What it adds
+
+- Seven Scrypt coins in one app, with servers set per coin and test mode for every coin.
+- Litecoin MWEB: a private wallet next to the public one, one-click moves between them, and Electrum-LTC view-key import and export.
+- Litecoin inscriptions and runes: view, protect, send, mint and etch. Inscriptions on Dogecoin, Pepecoin, Bellscoin and Junkcoin: view and send.
+- Seed imports from each coin's own wallet app (MyDoge, Peppool, Dingo, JunkieWally, luckycoinwallet, Nintondo) and from Cake Wallet.
+- An encrypted seed backup file (Argon2id and AES-GCM, with its own password).
+- LitVM on testnet: zkLTC, ERC-20 tokens, token creation and bridges, linked to a Litecoin wallet.
+- An Android companion app, paired by QR, that can also act as an air-gapped signer.
+
+## Downloads
+
+Builds are on the [Releases](../../releases) page, with SHA256 checksums. Check the file before you run it.
+
+| System | File |
+| --- | --- |
+| Windows 10 and 11, x64 | `Sparrow-Scrypt-<version>.zip` |
+| Linux x64 | `sparrowscryptwallet-<version>-x86_64.tar.gz` |
+| macOS 11 or later, Apple Silicon | `Sparrow-Scrypt-<version>-macos-aarch64.zip` |
+| macOS 11 or later, Intel | `Sparrow-Scrypt-<version>-macos-x86_64.zip` |
+
+The builds are not code-signed yet:
+
+- Windows: unzip and run `Sparrow-Scrypt.exe`. If SmartScreen stops it, choose More info, then Run anyway.
+- macOS: unzip and move `Sparrow-Scrypt.app` to Applications. The app is not notarized, so run `xattr -dr com.apple.quarantine /Applications/Sparrow-Scrypt.app` once in Terminal, then open it.
+- Linux: extract and run `Sparrow-Scrypt/bin/Sparrow-Scrypt`.
 
 ## Building
 
-To clone this project, use
+Clone with the drongo and lark submodules:
 
-`git clone --recursive git@github.com:sparrowwallet/sparrow.git`
+`git clone --recursive https://github.com/scryptofoundation/sparrow-scrypt.git`
 
-or for those without SSH credentials:
+Building needs Java 25 or higher; the release builds use [Eclipse Temurin](https://adoptium.net/) 25. Build the app with
 
-`git clone --recursive https://github.com/sparrowwallet/sparrow.git`
+`./gradlew jpackageImage`
 
-In order to build, Sparrow-LTC requires Java 25 or higher to be installed. 
-The release binaries are built with [Eclipse Temurin 25.0.2+10](https://github.com/adoptium/temurin25-binaries/releases/tag/jdk-25.0.2%2B10).
-If you are using [SDKMAN](https://sdkman.io/), you can use `sdk env install` to ensure you have the correct version.
+and find it in `build/jpackage/Sparrow-Scrypt`. To run from source instead, use `./sparrow` in the project folder.
 
-Other packages may also be necessary to build depending on the platform. On Debian/Ubuntu systems:
-
-`sudo apt install -y rpm fakeroot binutils`
-
-The Sparrow-LTC binaries can be built from source using
-
-`./gradlew jpackage`
-
-On Linux distributions without `deb` or `rpm` packaging tools installed (such as Arch), building the installers can be skipped with
-
-`./gradlew jpackage -PskipInstallers=true`
-
-Note that to build the Windows installer, you will need to install [WiX](https://github.com/wixtoolset/wix3/releases).
-
-When updating to the latest HEAD
-
-`git pull --recurse-submodules`
-
-The release binaries are reproducible from v1.5.0 onwards (pre codesigning and installer packaging). More detailed [instructions on reproducing the binaries](docs/reproducible.md) are provided.
-
-> Video documentation of your build process uploaded to [bitcoinbinary.org](https://bitcoinbinary.org/) is appreciated. Alternatively check the site if you wish to see if someone else already verified the provided binaries. 
-
-## Running
-
-If you prefer to run Sparrow-LTC directly from source, it can be launched from within the project directory with
-
-`./sparrow`
-
-Java 25 or higher must be installed. 
+`-Pcoin=ltc|doge|pep|lky|bells|dingo` builds a single-coin app (for example Sparrow-DOGE) instead of the multi-coin one.
 
 ## Configuration
 
-Sparrow-LTC has a number of command line options, for example to change its home folder or use testnet:
+`./sparrow -h` lists the command line options. The most useful are `--dir` for another home folder and `--network` for `testnet` or `regtest`.
 
-```
-./sparrow -h
-
-Usage: sparrow [options]
-  Options:
-    --dir, -d
-      Path to Sparrow-LTC home folder
-    --help, -h
-      Show usage
-    --level, -l
-      Set log level
-      Possible Values: [ERROR, WARN, INFO, DEBUG, TRACE]      
-    --network, -n
-      Network to use
-      Possible Values: [mainnet, testnet, regtest, signet, testnet4]
-```
-
-Note that testnet currently refers to testnet3.
-
-As a fallback, the network (mainnet, testnet, testnet4, regtest or signet) can also be set using an environment variable `SPARROW_NETWORK`. For example:
-
-`export SPARROW_NETWORK=testnet`
-
-A final fallback which can be useful when running the Sparrow-LTC binary is to create a file called ``network-testnet`` in the Sparrow-LTC home folder (see below) to configure the testnet network.
-
-Note that if you are connecting to an Electrum server when using testnet, that server will need to be running on testnet configuration as well.
-
-When not explicitly configured using the command line argument above, Sparrow-LTC stores its mainnet config file, log file and wallets in a home folder location appropriate to the operating system:
+The config file, log and wallets live in:
 
 | Platform | Location |
-|----------| -------- |
-| OSX      | ~/.sparrow-ltc |
-| Linux    | ~/.sparrow-ltc |
-| Windows  | %APPDATA%/Sparrow-LTC |
+| --- | --- |
+| Windows | `%APPDATA%\Sparrow-Scrypt` |
+| macOS and Linux | `~/.sparrow-scrypt` |
 
-Testnet3, testnet4, regtest and signet configurations (along with their wallets) are stored in subfolders to allow easy switching between networks.
+Test networks keep their own config and wallets in subfolders.
 
-On macOS and Linux, Sparrow-LTC also supports the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/). 
-This is opt in: for each category below, if the corresponding directory already exists, Sparrow-LTC uses it, otherwise it continues to use the home folder above. Categories are resolved independently, so files can be moved across one at a time.
+## Reporting problems
 
-| Category | Location | Contents                              |
-|----------| -------- |---------------------------------------|
-| Config   | `$XDG_CONFIG_HOME/sparrow-ltc` (default `~/.config/sparrow-ltc`) | `config`, `network-*` markers         |
-| Data     | `$XDG_DATA_HOME/sparrow-ltc` (default `~/.local/share/sparrow-ltc`) | `wallets`, `certs`, `lark`            |
-| State    | `$XDG_STATE_HOME/sparrow-ltc` (default `~/.local/state/sparrow-ltc`) | `sparrow.log`, `tor/work`, lock files |
-| Cache    | `$XDG_CACHE_HOME/sparrow-ltc` (default `~/.cache/sparrow-ltc`) | `tor/cache`                           |
-
-Specifying a home folder with the `-d` argument disables XDG resolution entirely, and stores all files in the given folder.
-
-## Reporting Issues
-
-Please use the [Issues](https://github.com/sparrowwallet/sparrow/issues) tab above to report an issue. If possible, look in the sparrow.log file in the configuration directory for information helpful in debugging. 
+Open an issue in this repository with the coin, the build, your system and what happened. The `sparrow.log` file in the home folder usually helps. Never post a seed, a private key or a wallet file.
 
 ## License
 
-Sparrow-LTC is licensed under the Apache 2 software licence.
-
-## GPG Key
-
-The Sparrow-LTC release binaries here and on [sparrowwallet.com](https://sparrowwallet.com/download/) are signed using [craigraw's GPG key](https://keybase.io/craigraw):  
-Fingerprint: D4D0D3202FC06849A257B38DE94618334C674B40  
-64-bit: E946 1833 4C67 4B40
+Sparrow-Scrypt is licensed under the Apache 2 software licence, like Sparrow Wallet and Sparrow-LTC.
 
 ## Credit
 
-![Yourkit](https://www.yourkit.com/images/yklogo.png)
-
-Sparrow-LTC Wallet uses the [Yourkit Java Profiler](https://www.yourkit.com/java/profiler/) to profile and improve performance. 
-YourKit supports open source projects with useful tools for monitoring and profiling Java and .NET applications.
+Sparrow Wallet is by Craig Raw. Sparrow-LTC, the Litecoin port this builds on, is by Hector Chu.
