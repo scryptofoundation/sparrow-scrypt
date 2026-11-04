@@ -26,6 +26,22 @@ Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can a
 - LitVM on testnet: zkLTC, ERC-20 tokens, token creation and bridges, linked to a Litecoin wallet.
 - An Android companion app, paired by QR, that can also act as an air-gapped signer.
 
+## Public servers
+
+With Server set to Public Server, each coin connects to one of these. You can point any coin at your own Electrum server, Esplora API or node instead.
+
+| Coin | Mainnet | Testnet |
+| --- | --- | --- |
+| Litecoin | Electrum: ltc.aftrek.org, electrum-ltc.bysh.me, electrum1.cipig.net, backup.electrum-ltc.org, l.fem.sh, fallacy.fiatfaucet.com, electrum.jhoenicke.de, electrum.jochen-hoenicke.de, electrum.petrkr.net, ltc.rentonisk.com, electrum.ltc.xurious.com | Electrum: electrum-ltc.bysh.me, electrum.ltc.xurious.com |
+| Dogecoin | Electrum: doge.electrum1.cipig.net, doge.electrum2.cipig.net, dogecoin.stackwallet.com, doge.aftrek.org | None |
+| Dingocoin | Electrum: seed1.dingocoin.com, seed3.dingocoin.com, elecx2.kmsoftware.org | None |
+| Pepecoin | Esplora: peppool.space | Esplora: pepe-testnet-api.nintondo.io |
+| Junkcoin | Esplora: junk-api.s3na.xyz, explorer.junk-coin.com (read only, cannot broadcast) | Esplora: jkc-testnet-api.s3na.xyz |
+| Luckycoin | Esplora: luckyscan.org | None |
+| Bellscoin | Esplora: api.nintondo.io | None |
+
+Inscriptions are read from ordinalslite.com for Litecoin and from Nintondo for Dogecoin, Pepecoin and Bellscoin, or from your own ord server. Junkcoin inscriptions need your own ord-junkcoin server.
+
 ## Downloads
 
 Builds are on the [Releases](../../releases) page, with SHA256 checksums. Check the file before you run it.
