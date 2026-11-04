@@ -1055,11 +1055,18 @@ public class SettingsController extends WalletFormController implements Initiali
             enableMweb.setDisable(!canEnableMweb(event.getWallet()));
             linkPrivateWallet.setDisable(!canLinkPrivateWallet(event.getWallet()));
             scanDescriptorQR.setVisible(!event.getWallet().isValid());
+            //The saved wallet itself: on a new wallet's first save the open wallets may still hold the unsaved one,
+            //which left Link LitVM greyed out until the wallet was reopened
+            Wallet savedWallet = event.getWallet();
+            updateLinkLitVm(savedWallet.isMasterWallet() ? savedWallet : savedWallet.getMasterWallet());
         }
     }
 
     private void updateLinkLitVm() {
-        Wallet openMasterWallet = getOpenMasterWallet();
+        updateLinkLitVm(getOpenMasterWallet());
+    }
+
+    private void updateLinkLitVm(Wallet openMasterWallet) {
         boolean linked = openMasterWallet != null && openMasterWallet.getLitVmLink() != null;
         linkLitVm.setText(linked ? "Unlink LitVM..." : "Link LitVM...");
         linkLitVm.setDisable(openMasterWallet == null || (!linked && !LitVmLinkDialog.canLink(openMasterWallet)));
