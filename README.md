@@ -2,6 +2,10 @@
 
 Sparrow-Scrypt is a desktop wallet for the Scrypt coins: Litecoin, Dogecoin, Pepecoin, Junkcoin, Luckycoin, Bellscoin and Dingocoin, in one app. Each wallet belongs to one coin. It is built on [Sparrow-LTC](https://github.com/sparrow-ltc/sparrow), which is built on [Sparrow Wallet](https://github.com/sparrowwallet/sparrow), and keeps their focus on PSBTs, coin control and transparency.
 
+![A Litecoin testnet wallet in Sparrow-Scrypt, with its Public and Private (MWEB) tabs](docs/images/litecoin-transactions.png)
+
+The [wiki](../../wiki) has a guide to every part of the app.
+
 ## Status: beta
 
 Current version: **2.5.7 beta 1** (tag `scrypt-v2.5.7-beta.1`), based on Sparrow Wallet 2.5.7.
@@ -27,6 +31,23 @@ Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can a
 - An encrypted seed backup file (Argon2id and AES-GCM, with its own password).
 - LitVM on testnet: zkLTC, ERC-20 tokens, token creation and bridges, linked to a Litecoin wallet.
 - An Android companion app, paired by QR, that can also act as an air-gapped signer.
+
+## Screenshots
+
+All taken in test mode with throwaway wallets.
+
+| | |
+| --- | --- |
+| ![Choosing the coin for a new wallet](docs/images/new-wallet-coin.png) | ![Importing a wallet](docs/images/import-wallet.png) |
+| A new wallet: pick the coin | Import from a seed, Cake Wallet, or another wallet |
+| ![Sending Litecoin](docs/images/litecoin-send.png) | ![Receiving Litecoin](docs/images/litecoin-receive.png) |
+| Send | Receive |
+| ![Moving Litecoin into MWEB](docs/images/mweb-move-to-private.png) | ![A Pepecoin wallet](docs/images/pepecoin-transactions.png) |
+| Move to Private fills in a send to the wallet's own MWEB address | A Pepecoin wallet on the public testnet |
+
+## Roadmap
+
+![Roadmap: what is done, what comes next, and what comes later](docs/images/roadmap.png)
 
 ## Public servers
 
