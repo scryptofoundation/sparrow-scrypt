@@ -48,13 +48,85 @@ jobs:
       - name: Repackage Linux deb
         if: ${{ runner.os == 'Linux' }}
         run: ./repackage.sh
-      # Not notarized: an ad-hoc signature lets the app run on Apple Silicon once the quarantine flag is cleared
-      - name: Sign ad hoc and zip the macOS app
+      # With the Developer ID secrets the app is signed with the hardened runtime and notarized by Apple; without them it
+      # gets an ad-hoc signature, which runs on Apple Silicon once the quarantine flag is cleared
+      - name: Choose the macOS signing
         if: ${{ runner.os == 'macOS' }}
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        run: echo "MAC_SIGNED=$([ -n "$MACOS_CERTIFICATE" ] && echo true || echo false)" >> "$GITHUB_ENV"
+      - name: Sign ad hoc
+        if: ${{ runner.os == 'macOS' && env.MAC_SIGNED != 'true' }}
         shell: bash
         run: |
           codesign --force --deep --sign - build/jpackage/Sparrow-Scrypt.app
           codesign --verify --deep --strict build/jpackage/Sparrow-Scrypt.app
+      - name: Set up the signing keychain
+        if: ${{ runner.os == 'macOS' && env.MAC_SIGNED == 'true' }}
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" > /dev/null
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+      # SignPackage signs the native libraries inside the app's jars, which notarization checks too. It runs with the
+      # signing keychain unlocked, so it is pinned to a reviewed commit rather than taken from HEAD
+      - name: Build SignPackage
+        if: ${{ runner.os == 'macOS' && env.MAC_SIGNED == 'true' }}
+        shell: bash
+        run: |
+          git clone --quiet https://github.com/sparrowwallet/signpackage.git "$RUNNER_TEMP/signpackage"
+          cd "$RUNNER_TEMP/signpackage"
+          git checkout --quiet 61598d6a2b4619bf3d73de0a1f1f58868b9de467
+          mvn -q clean package assembly:single
+          echo "SIGNPACKAGE_JAR=$RUNNER_TEMP/signpackage/target/SignPackage-1.0-jar-with-dependencies.jar" >> "$GITHUB_ENV"
+      - name: Sign with Developer ID
+        if: ${{ runner.os == 'macOS' && env.MAC_SIGNED == 'true' }}
+        shell: bash
+        env:
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          APP=build/jpackage/Sparrow-Scrypt.app
+          ENTITLEMENTS=src/main/deploy/package/macos/Sparrow-LTC.entitlements
+          java -jar "$SIGNPACKAGE_JAR" -d "$APP" -t -r -k "$IDENTITY" -e "$ENTITLEMENTS"
+          codesign --timestamp --entitlements "$ENTITLEMENTS" --options runtime -f --sign "$IDENTITY" "$APP"/Contents/MacOS/*
+          codesign --timestamp --entitlements "$ENTITLEMENTS" --options runtime -f --sign "$IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+      - name: Notarize
+        if: ${{ runner.os == 'macOS' && env.MAC_SIGNED == 'true' }}
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          ditto -c -k --keepParent build/jpackage/Sparrow-Scrypt.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 60m --output-format json | tee "$RUNNER_TEMP/notary.json"
+          rm "$RUNNER_TEMP/AuthKey.p8"
+          grep -q '"status" *: *"Accepted"' "$RUNNER_TEMP/notary.json"
+          xcrun stapler staple build/jpackage/Sparrow-Scrypt.app
+          spctl --assess --type execute --verbose=2 build/jpackage/Sparrow-Scrypt.app
+      - name: Remove the signing keychain
+        if: ${{ always() && runner.os == 'macOS' && env.KEYCHAIN_PATH != '' }}
+        shell: bash
+        run: security delete-keychain "$KEYCHAIN_PATH" || true
+      - name: Zip the macOS app
+        if: ${{ runner.os == 'macOS' }}
+        shell: bash
+        run: |
           arch=$([ "$RUNNER_ARCH" = "ARM64" ] && echo aarch64 || echo x86_64)
           ditto -c -k --keepParent build/jpackage/Sparrow-Scrypt.app "build/jpackage/Sparrow-Scrypt-${VERSION}-macos-${arch}.zip"
       - name: Checksums
