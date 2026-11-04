@@ -363,7 +363,7 @@ jlink {
         }
         if(os.macOsX) {
             installerOptions.addAll(['--mac-sign', '--mac-signing-key-user-name', 'Craig Raw (UPLVMSK9D7)'])
-            imageOptions.addAll(['--icon', "src/main/deploy/package/macos/sparrow-${coinIcon}.icns".toString(), '--resource-dir', 'src/main/deploy/package/macos/'])
+            imageOptions.addAll(['--icon', "src/main/deploy/package/macos/sparrow-${coinIcon}.icns".toString(), '--resource-dir', layout.buildDirectory.dir('deploy/package/macos').get().asFile.toString()])
             installerType = "dmg"
         }
     }
@@ -375,6 +375,7 @@ jlink {
 }
 
 if(os.macOsX) {
+    tasks.jpackageImage.dependsOn('prepareMacResourceDir')
     tasks.jpackageImage.finalizedBy('patchLauncherUuid')
     tasks.jpackage.dependsOn('patchLauncherUuid')
 }
@@ -382,10 +383,11 @@ if(os.macOsX) {
 // Give the launcher a Sparrow LC_UUID, since the stock jpackage launcher shares its Mach-O UUID with every app packaged by the same JDK
 tasks.register('patchLauncherUuid') {
     dependsOn tasks.jpackageImage
-    def appDir = layout.buildDirectory.dir('jpackage/Sparrow.app').get().asFile
-    def launcherUuid = UUID.nameUUIDFromBytes("com.sparrowwallet.sparrow.${osArch}".getBytes('UTF-8'))
+    //The image and launcher take the flavor's app name; seeding the UUID with it keeps it apart from Sparrow Wallet's
+    def appDir = layout.buildDirectory.dir("jpackage/${appName}.app").get().asFile
+    def launcherUuid = UUID.nameUUIDFromBytes("com.sparrowwallet.${appName}.${osArch}".getBytes('UTF-8'))
     doLast {
-        def launcher = new File(appDir, 'Contents/MacOS/Sparrow')
+        def launcher = new File(appDir, "Contents/MacOS/${appName}")
         byte[] bytes = launcher.bytes
         def buffer = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         if(Integer.toUnsignedLong(buffer.getInt(0)) != 0xfeedfacfL) {
@@ -462,6 +464,25 @@ tasks.register('prepareResourceDir', Copy) {
                     line = line.replace('${size}', getDirectorySize(layout.buildDirectory.dir("jpackage/${appName}").get().asFile))
                 }
                 return line.replace('${version}', "${version}").replace('${arch}', osArch == 'aarch64' ? 'arm64' : 'amd64')
+            }
+        }
+    }
+}
+
+//jpackage takes Info.plist as is, and its launcher and icon carry the flavor's app name, so the plist must name them too.
+//Sparrow-LTC keeps Sparrow's bundle identifier; the other flavors get their own so macOS does not treat them as Sparrow
+tasks.register('prepareMacResourceDir', Copy) {
+    from('src/main/deploy/package/macos')
+    into(layout.buildDirectory.dir('deploy/package/macos'))
+    def bundleId = appName == 'Sparrow-LTC' ? 'com.sparrowwallet.sparrow' : "com.sparrowwallet.sparrow.${coin}".toString()
+    inputs.property('appName', appName)
+    inputs.property('version', version)
+    eachFile { file ->
+        if(file.name.equals('Info.plist')) {
+            filter { line ->
+                return line.replace('<string>com.sparrowwallet.sparrow</string>', "<string>${bundleId}</string>")
+                        .replace('<string>2.5.7</string>', "<string>${version}</string>")
+                        .replace('Sparrow-LTC', appName)
             }
         }
     }
