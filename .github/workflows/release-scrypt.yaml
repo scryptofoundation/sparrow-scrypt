@@ -35,15 +35,19 @@ jobs:
       - name: Read the version
         shell: bash
         run: echo "VERSION=$(sed -n "s/^version = '\(.*\)'/\1/p" build.gradle)" >> "$GITHUB_ENV"
-      # Portable archives only: the installers still carry Sparrow-LTC names (the Linux deb in particular)
-      - name: Build the app image
-        run: ./gradlew jpackageImage
+      # The app image, plus the Windows msi and the Linux deb (macOS gets no installer, only the zipped app)
+      - name: Build the app image and installer
+        run: ./gradlew jpackage -PlinuxInstallerType=deb
       - name: Package Windows zip
         if: ${{ runner.os == 'Windows' }}
         run: ./gradlew packageZipDistribution
       - name: Package Linux tar
         if: ${{ runner.os == 'Linux' }}
         run: ./gradlew packageTarDistribution
+      # jpackage compresses the deb with zstd, which older dpkg versions cannot read
+      - name: Repackage Linux deb
+        if: ${{ runner.os == 'Linux' }}
+        run: ./repackage.sh
       # Not notarized: an ad-hoc signature lets the app run on Apple Silicon once the quarantine flag is cleared
       - name: Sign ad hoc and zip the macOS app
         if: ${{ runner.os == 'macOS' }}
@@ -57,7 +61,7 @@ jobs:
         shell: bash
         run: |
           cd build/jpackage
-          for f in *.zip *.tar.gz; do [ -f "$f" ] || continue; if command -v sha256sum >/dev/null; then sha256sum "$f"; else shasum -a 256 "$f"; fi; done > "SHA256SUMS-${RUNNER_OS}-${RUNNER_ARCH}.txt"
+          for f in *.zip *.tar.gz *.msi *.deb; do [ -f "$f" ] || continue; if command -v sha256sum >/dev/null; then sha256sum "$f"; else shasum -a 256 "$f"; fi; done > "SHA256SUMS-${RUNNER_OS}-${RUNNER_ARCH}.txt"
           cat SHA256SUMS-*.txt
       - name: Upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -66,5 +70,7 @@ jobs:
           path: |
             build/jpackage/*.zip
             build/jpackage/*.tar.gz
+            build/jpackage/*.msi
+            build/jpackage/*.deb
             build/jpackage/SHA256SUMS-*.txt
           retention-days: 14

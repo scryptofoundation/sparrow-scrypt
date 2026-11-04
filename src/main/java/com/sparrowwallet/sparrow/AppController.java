@@ -628,8 +628,9 @@ public class AppController implements Initializable {
                 sudo usermod -aG plugdev `whoami`
                 """;
         String home = System.getProperty(SparrowWallet.JPACKAGE_APP_PATH);
-        if(home != null && !home.startsWith("/opt/sparrowwallet") && home.endsWith("bin/Sparrow-LTC")) {
-            home = home.replace("bin/Sparrow-LTC", "");
+        //The app path is the launcher, <install dir>/bin/<launcher>; each flavor installs to its own folder under /opt
+        if(home != null && home.contains("/bin/")) {
+            home = home.substring(0, home.lastIndexOf("/bin/") + 1);
             commands = commands.replace("/opt/sparrowwallet/", home);
         }
 

@@ -358,6 +358,10 @@ jlink {
                 installerName = "${installerBase}wallet"
                 installerOptions.addAll(['--linux-shortcut', '--linux-menu-group', appName])
             }
+            //Without a type jpackage builds every Linux package type and fails where rpmbuild is missing
+            if(project.hasProperty('linuxInstallerType')) {
+                installerType = project.property('linuxInstallerType')
+            }
             installerOptions.addAll(['--resource-dir', layout.buildDirectory.dir('deploy/package').get().asFile.toString(), '--linux-app-category', 'utils', '--linux-app-release', '1', '--linux-rpm-license-type', 'ASL 2.0', '--linux-deb-maintainer', 'mail@sparrowwallet.com'])
             imageOptions.addAll(['--icon', "src/main/deploy/package/linux/${iconAppName}.png".toString(), '--resource-dir', 'src/main/deploy/package/linux/'])
         }
@@ -459,17 +463,26 @@ tasks.register('copyUdevRules', Copy) {
     include('*')
 }
 
+//jpackage only uses a resource whose name matches the package and launcher it is building, so the wallet's resources are
+//templates named here for the flavor: package.spec becomes <package>.spec, launcher.desktop <launcher>.desktop
+def linuxPackage = "${installerBase}${headless ? 'server' : 'wallet'}".toString()
+def linuxLauncher = rootProject.name
+
 tasks.register('prepareResourceDir', Copy) {
     from("src/main/deploy/package/linux${headless ? '-headless' : ''}")
     into(layout.buildDirectory.dir('deploy/package'))
     include('*')
+    rename('package.spec', "${linuxPackage}.spec")
+    rename('launcher.desktop', "${linuxLauncher}.desktop")
+    rename('MimeInfo.xml', "${linuxPackage}-${linuxLauncher}-MimeInfo.xml")
     eachFile { file ->
-        if(file.name.equals('control') || file.name.endsWith('.spec')) {
+        if(file.name.equals('control') || file.name.equals('postinst') || file.name.endsWith('.spec') || file.name.endsWith('.desktop')) {
             filter { line ->
                 if(line.contains('${size}')) {
                     line = line.replace('${size}', getDirectorySize(layout.buildDirectory.dir("jpackage/${appName}").get().asFile))
                 }
                 return line.replace('${version}', "${version}").replace('${arch}', osArch == 'aarch64' ? 'arm64' : 'amd64')
+                        .replace('${package}', linuxPackage).replace('${launcher}', linuxLauncher).replace('${appName}', appName)
             }
         }
     }
@@ -496,9 +509,10 @@ tasks.register('prepareMacResourceDir', Copy) {
 
 tasks.register('copyMimeInfo', Copy) {
     mustRunAfter tasks.jpackageImage
-    from('src/main/deploy/package/linux')
+    dependsOn 'prepareResourceDir'
+    from(layout.buildDirectory.dir('deploy/package'))
     into(layout.buildDirectory.dir("jpackage/${appName}/lib"))
-    include("${installerBase}wallet-${appName}-MimeInfo.xml")
+    include("${linuxPackage}-${linuxLauncher}-MimeInfo.xml")
 }
 
 static def getDirectorySize(File directory) {
