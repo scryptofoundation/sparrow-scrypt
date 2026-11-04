@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in Sparrow-Scrypt does not work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Never post a seed, a private key, a wallet password or a wallet file here: this page is public.
+        A security hole (anything that could lose funds or leak keys) goes to the Security tab instead, not here.
+  - type: dropdown
+    id: coin
+    attributes:
+      label: Coin
+      multiple: true
+      options:
+        - Litecoin
+        - Litecoin MWEB
+        - Dogecoin
+        - Pepecoin
+        - Junkcoin
+        - Luckycoin
+        - Bellscoin
+        - Dingocoin
+        - LitVM
+        - Not coin specific
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - Mainnet
+        - Testnet (test mode)
+        - Regtest
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Sparrow-Scrypt version
+      description: Help > About, or the release you downloaded
+      placeholder: 2.5.7 beta 1
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Windows
+        - macOS, Apple Silicon
+        - macOS, Intel
+        - Linux
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server
+      description: Public server, or your own (Electrum, Esplora or a node). Leave out any address you want to keep private.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The relevant lines from sparrow.log in the home folder (%APPDATA%\Sparrow-Scrypt on Windows, ~/.sparrow-scrypt on macOS and Linux). Remove anything private first.
+      render: text

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/scryptofoundation/sparrow-scrypt/security/advisories/new
+    about: Anything that could lose funds or leak keys. Reported privately, not as a public issue.
