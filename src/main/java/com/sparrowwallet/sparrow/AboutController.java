@@ -16,6 +16,7 @@ public class AboutController {
     private DialogImage dialogImage;
 
     public void initializeView() {
+        AppNameText.applyToWindowOf(title);
         title.setText(SparrowWallet.APP_NAME + " " + SparrowWallet.APP_VERSION + SparrowWallet.APP_VERSION_SUFFIX);
     }
 

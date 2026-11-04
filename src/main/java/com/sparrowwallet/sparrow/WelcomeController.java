@@ -41,6 +41,7 @@ public class WelcomeController {
     private UnlabeledToggleSwitch serverToggle;
 
     public void initializeView() {
+        AppNameText.applyToWindowOf(welcomeBox);
         step1.managedProperty().bind(step1.visibleProperty());
         step2.managedProperty().bind(step2.visibleProperty());
         step3.managedProperty().bind(step3.visibleProperty());

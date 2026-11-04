@@ -1,9 +1,12 @@
 package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.sparrow.AppServices;
+import com.sparrowwallet.sparrow.SparrowWallet;
 import javafx.beans.NamedArg;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import org.girod.javafx.svgimage.SVGImage;
 import org.girod.javafx.svgimage.SVGLoader;
 import org.slf4j.Logger;
@@ -39,6 +42,16 @@ public class DialogImage extends DecorativePane {
     }
 
     protected void refresh(Type type) {
+        //The multi-coin app shows its own Cut Crystal icon instead of the Sparrow bird, in both themes
+        if(type == Type.SPARROW && SparrowWallet.isUnified()) {
+            ImageView appIcon = new ImageView(new Image(AppServices.class.getResourceAsStream("/image/sparrow-scrypt-icon@2x.png")));
+            appIcon.setFitWidth(WIDTH);
+            appIcon.setFitHeight(HEIGHT);
+            appIcon.setSmooth(true);
+            getChildren().setAll(appIcon);
+            return;
+        }
+
         SVGImage svgImage;
         if(AppServices.isDarkTheme()) {
             svgImage = loadSVGImage("/image/dialog/" + type.name().toLowerCase(Locale.ROOT) + "-invert.svg");
