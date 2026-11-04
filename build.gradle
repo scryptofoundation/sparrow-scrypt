@@ -342,6 +342,7 @@ jlink {
         imageName = appName
         installerName = appName
         appVersion = "${version}"
+        vendor = 'Scrypt Foundation'
         skipInstaller = os.macOsX || skipInstallers
         imageOptions = []
         installerOptions = ['--file-associations', 'src/main/deploy/psbt.properties', '--file-associations', 'src/main/deploy/txn.properties', '--file-associations', 'src/main/deploy/asc.properties', '--license-file', 'LICENSE']

@@ -8,7 +8,7 @@ The [wiki](../../wiki) has a guide to every part of the app.
 
 ## Status: beta
 
-Current version: **2.5.7 beta 2** (tag `scrypt-v2.5.7-beta.2`), based on Sparrow Wallet 2.5.7.
+Current version: **2.5.7 beta 3** (tag `scrypt-v2.5.7-beta.3`), based on Sparrow Wallet 2.5.7.
 
 Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can and small amounts where you can't, and never put a seed that holds real savings into a beta build.
 
@@ -71,18 +71,16 @@ Inscriptions are read from ordinalslite.com for Litecoin and from Nintondo for D
 
 Builds are on the [Releases](../../releases) page, with SHA256 checksums. Check the file before you run it.
 
-| System | File |
-| --- | --- |
-| Windows 10 and 11, x64 | `Sparrow-Scrypt-2.5.7.zip` |
-| Linux x64 | `sparrowscryptwallet-2.5.7-x86_64.tar.gz` |
-| macOS 11 or later, Apple Silicon | `Sparrow-Scrypt-2.5.7-macos-aarch64.zip` |
-| macOS 11 or later, Intel | `Sparrow-Scrypt-2.5.7-macos-x86_64.zip` |
+| System | Installer | Portable |
+| --- | --- | --- |
+| Windows 10 and 11, x64 | `Sparrow-Scrypt-2.5.7.msi` | `Sparrow-Scrypt-2.5.7.zip` |
+| Linux x64 (Debian, Ubuntu) | `sparrowscryptwallet_2.5.7-1_amd64.deb` | `sparrowscryptwallet-2.5.7-x86_64.tar.gz` |
+| macOS 11 or later, Apple Silicon | | `Sparrow-Scrypt-2.5.7-macos-aarch64.zip` |
+| macOS 11 or later, Intel | | `Sparrow-Scrypt-2.5.7-macos-x86_64.zip` |
 
-The builds are not code-signed yet:
-
-- Windows: unzip and run `Sparrow-Scrypt.exe`. If SmartScreen stops it, choose More info, then Run anyway.
-- macOS: unzip and move `Sparrow-Scrypt.app` to Applications. The app is not notarized, so run `xattr -dr com.apple.quarantine /Applications/Sparrow-Scrypt.app` once in Terminal, then open it.
-- Linux: extract and run `Sparrow-Scrypt/bin/sparrow`.
+- macOS: unzip, move `Sparrow-Scrypt.app` to Applications and open it. The app is signed and notarized by Apple.
+- Windows: run the `.msi`, or unzip the portable build and run `Sparrow-Scrypt.exe`. The Windows builds are not code-signed yet, so if SmartScreen stops it, choose More info, then Run anyway.
+- Linux: install the `.deb` (`sudo apt install ./sparrowscryptwallet_2.5.7-1_amd64.deb`), or extract the portable build and run `Sparrow-Scrypt/bin/sparrow`.
 
 ## Building
 

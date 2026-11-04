@@ -48,7 +48,7 @@ There is currently no bug bounty programme for Sparrow-Scrypt.
 
 Sparrow-Scrypt is in beta. Security fixes are made against the latest release only, available from the [Releases](../../releases) page.
 
-The release builds are not code-signed yet. Each release lists SHA256 checksums: check a download against them before you run it.
+The macOS builds are signed with a Developer ID (EquipNexus LLC) and notarized by Apple. The Windows and Linux builds are not code-signed yet. Each release lists SHA256 checksums: check a download against them before you run it.
 
 ## Scope
 
