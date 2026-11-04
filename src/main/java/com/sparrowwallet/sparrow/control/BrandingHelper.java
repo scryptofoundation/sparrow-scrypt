@@ -53,7 +53,10 @@ public class BrandingHelper {
         //skipped and any unexpected failure is caught rather than allowed to abort the load. Skipping the
         //rebrand of a node still leaves the walk to continue over its siblings and children.
         try {
-            if(node instanceof Labeled labeled) {
+            if(node instanceof HelpLabel helpLabel) {
+                //A help label's tooltip text is bound to its help text, so the help text is what gets rebranded
+                helpLabel.setHelpText(brand(helpLabel.getHelpText()));
+            } else if(node instanceof Labeled labeled) {
                 if(!labeled.textProperty().isBound()) {
                     labeled.setText(brand(labeled.getText()));
                 }

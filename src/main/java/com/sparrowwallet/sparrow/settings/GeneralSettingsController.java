@@ -4,6 +4,7 @@ import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.Mode;
+import com.sparrowwallet.sparrow.control.HelpLabel;
 import com.sparrowwallet.sparrow.control.TextfieldDialog;
 import com.sparrowwallet.sparrow.control.UnlabeledToggleSwitch;
 import com.sparrowwallet.sparrow.event.*;
@@ -12,6 +13,7 @@ import com.sparrowwallet.sparrow.io.Server;
 import com.sparrowwallet.sparrow.net.BlockExplorer;
 import com.sparrowwallet.sparrow.net.ExchangeSource;
 import com.sparrowwallet.sparrow.net.FeeRatesSource;
+import com.sparrowwallet.sparrow.net.VersionCheckService;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
@@ -68,6 +70,9 @@ public class GeneralSettingsController extends SettingsDetailController {
 
     @FXML
     private UnlabeledToggleSwitch checkNewVersions;
+
+    @FXML
+    private HelpLabel checkNewVersionsHelp;
 
     private final ChangeListener<Currency> fiatCurrencyListener = new ChangeListener<Currency>() {
         @Override
@@ -188,11 +193,18 @@ public class GeneralSettingsController extends SettingsDetailController {
             config.setNotifyNewTransactions(newValue);
         });
 
-        checkNewVersions.setSelected(config.isCheckNewVersions());
-        checkNewVersions.selectedProperty().addListener((observableValue, oldValue, newValue) -> {
-            config.setCheckNewVersions(newValue);
-            EventManager.get().post(new VersionCheckStatusEvent(newValue));
-        });
+        //The switch shows off and stays off while the build makes no update check, leaving the saved preference as it was
+        if(!VersionCheckService.isCheckEnabled()) {
+            checkNewVersions.setSelected(false);
+            checkNewVersions.setDisable(true);
+            checkNewVersionsHelp.setHelpText("This build does not check for updates. New builds are announced on the project's Releases page.");
+        } else {
+            checkNewVersions.setSelected(config.isCheckNewVersions());
+            checkNewVersions.selectedProperty().addListener((observableValue, oldValue, newValue) -> {
+                config.setCheckNewVersions(newValue);
+                EventManager.get().post(new VersionCheckStatusEvent(newValue));
+            });
+        }
     }
 
     private static Server getBlockExplorer(String serverUrl) {

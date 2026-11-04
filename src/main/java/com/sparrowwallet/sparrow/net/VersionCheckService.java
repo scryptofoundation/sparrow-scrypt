@@ -25,6 +25,10 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
     //version file of its own, no request is made rather than offer users another app's update
     private static final boolean CHECK_ENABLED = false;
 
+    public static boolean isCheckEnabled() {
+        return CHECK_ENABLED;
+    }
+
     private static String version;
 
     @Override

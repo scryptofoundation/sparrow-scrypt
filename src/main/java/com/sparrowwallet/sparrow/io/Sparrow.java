@@ -5,6 +5,7 @@ import com.sparrowwallet.drongo.wallet.MnemonicException;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletModel;
 import com.sparrowwallet.sparrow.AppServices;
+import com.sparrowwallet.sparrow.SparrowWallet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +22,7 @@ public class Sparrow implements WalletImport, WalletExport {
 
     @Override
     public String getName() {
-        return "Sparrow-LTC";
+        return SparrowWallet.APP_NAME;
     }
 
     @Override
@@ -52,8 +53,8 @@ public class Sparrow implements WalletImport, WalletExport {
             Files.copy(tempStorage.getWalletFile().toPath(), outputStream);
             outputStream.flush();
         } catch(Exception e) {
-            log.error("Error exporting Sparrow-LTC wallet file", e);
-            throw new ExportException("Error exporting Sparrow-LTC wallet file", e);
+            log.error("Error exporting " + SparrowWallet.APP_NAME + " wallet file", e);
+            throw new ExportException("Error exporting " + SparrowWallet.APP_NAME + " wallet file", e);
         } finally {
             deleteTempDirectory(tempDir);
         }
@@ -61,7 +62,7 @@ public class Sparrow implements WalletImport, WalletExport {
 
     @Override
     public String getWalletExportDescription() {
-        return "Exports your Sparrow-LTC wallet file, which can be imported into another Sparrow-LTC instance running on any supported platform. If the wallet is encrypted, the same password is used to encrypt the exported file.";
+        return "Exports your " + SparrowWallet.APP_NAME + " wallet file, which can be imported into another " + SparrowWallet.APP_NAME + " instance running on any supported platform. If the wallet is encrypted, the same password is used to encrypt the exported file.";
     }
 
     @Override
@@ -86,7 +87,7 @@ public class Sparrow implements WalletImport, WalletExport {
 
     @Override
     public String getWalletImportDescription() {
-        return "Imports an exported Sparrow-LTC wallet file into Sparrow-LTC's wallets folder.";
+        return "Imports an exported " + SparrowWallet.APP_NAME + " wallet file into " + SparrowWallet.APP_NAME + "'s wallets folder.";
     }
 
     @Override
@@ -125,7 +126,7 @@ public class Sparrow implements WalletImport, WalletExport {
 
             return wallet;
         } catch(IOException | StorageException | MnemonicException e) {
-            throw new ImportException("Error importing Sparrow-LTC wallet", e);
+            throw new ImportException("Error importing " + SparrowWallet.APP_NAME + " wallet", e);
         } finally {
             if(storage != null) {
                 storage.closeAndWait();

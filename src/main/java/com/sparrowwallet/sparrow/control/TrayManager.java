@@ -33,7 +33,12 @@ public class TrayManager {
 
         try {
             List<Image> imgList = new ArrayList<>();
-            if(OsType.getCurrent() == OsType.WINDOWS) {
+            if(SparrowWallet.isUnified()) {
+                //The Cut Crystal tile reads on both light and dark trays, so one set serves every platform
+                imgList.add(ImageIO.read(getClass().getResource("/image/sparrow-scrypt-tray.png")));
+                imgList.add(ImageIO.read(getClass().getResource("/image/sparrow-scrypt-tray@2x.png")));
+                imgList.add(ImageIO.read(getClass().getResource("/image/sparrow-scrypt-tray@3x.png")));
+            } else if(OsType.getCurrent() == OsType.WINDOWS) {
                 imgList.add(ImageIO.read(getClass().getResource("/image/sparrow-black-small.png")));
                 imgList.add(ImageIO.read(getClass().getResource("/image/sparrow-black-small@2x.png")));
                 imgList.add(ImageIO.read(getClass().getResource("/image/sparrow-black-small@3x.png")));
