@@ -26,6 +26,10 @@ public class TcpOverTlsTransport extends TcpTransport {
     protected final SSLSocketFactory sslSocketFactory;
     protected final boolean usingCaTrust;
 
+    //Bounds the handshake, which runs before connect() sets the socket read timeout: a server that accepts the connection
+    //and never answers would otherwise hold the connect, and a close of it on a coin switch, forever. Long enough for Tor.
+    int handshakeTimeoutMillis = 30000;
+
     public TcpOverTlsTransport(HostAndPort server) throws NoSuchAlgorithmException, KeyManagementException, CertificateException, KeyStoreException, IOException {
         super(server);
 
@@ -170,6 +174,7 @@ public class TcpOverTlsTransport extends TcpTransport {
             sslSocket.setSSLParameters(sslParameters);
         }
 
+        sslSocket.setSoTimeout(handshakeTimeoutMillis);
         sslSocket.startHandshake();
     }
 
