@@ -12,15 +12,17 @@ Current version: **2.5.7 beta 2** (tag `scrypt-v2.5.7-beta.2`), based on Sparrow
 
 Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can and small amounts where you can't, and never put a seed that holds real savings into a beta build.
 
-| Coin | Ticker | Test mode |
-| --- | --- | --- |
-| Litecoin | LTC | Public testnet |
-| Pepecoin | PEP | Public testnet |
-| Junkcoin | JKC | Public testnet |
-| Dogecoin | DOGE | Your own node, or mainnet with small amounts |
-| Luckycoin | LKY | Your own node, or mainnet with small amounts |
-| Bellscoin | BELLS | Your own node, or mainnet with small amounts |
-| Dingocoin | DINGO | Your own node, or mainnet with small amounts |
+Every coin is supported on mainnet, through the public servers listed below or your own server.
+
+| Coin | Ticker | Mainnet | Test mode |
+| --- | --- | --- | --- |
+| Litecoin | LTC | Supported (public Electrum servers) | Public testnet |
+| Pepecoin | PEP | Supported (public Esplora server) | Public testnet |
+| Junkcoin | JKC | Supported (public Esplora server) | Public testnet |
+| Dogecoin | DOGE | Supported (public Electrum servers) | Your own node, or mainnet with small amounts |
+| Luckycoin | LKY | Supported (public Esplora server) | Your own node, or mainnet with small amounts |
+| Bellscoin | BELLS | Supported (public Esplora server) | Your own node, or mainnet with small amounts |
+| Dingocoin | DINGO | Supported (public Electrum servers) | Your own node, or mainnet with small amounts |
 
 ## What it adds
 
