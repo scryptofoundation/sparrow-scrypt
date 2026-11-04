@@ -32,7 +32,7 @@ Every coin is supported on mainnet, through the public servers listed below or y
 - Seed imports from each coin's own wallet app (MyDoge, Peppool, Dingo, JunkieWally, luckycoinwallet, Nintondo) and from Cake Wallet.
 - An encrypted seed backup file (Argon2id and AES-GCM, with its own password).
 - LitVM on testnet: zkLTC, ERC-20 tokens, token creation and bridges, linked to a Litecoin wallet.
-- An Android companion app, paired by QR, that can also act as an air-gapped signer.
+- An Android companion app, [Sparrow-Scrypt Mobile](https://github.com/scryptofoundation/sparrow-scrypt-mobile), paired by QR, that can also act as an air-gapped signer.
 
 ## Screenshots
 
