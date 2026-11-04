@@ -3637,7 +3637,7 @@ public class AppController implements Initializable {
         Hyperlink versionUpdateLabel = new Hyperlink(SparrowWallet.APP_NAME + " " + event.getVersion() + " available");
         versionUpdateLabel.getStyleClass().add("version-hyperlink");
         versionUpdateLabel.setOnAction(event1 -> {
-            AppServices.get().getApplication().getHostServices().showDocument("https://www.sparrowwallet.com/download");
+            AppServices.get().getApplication().getHostServices().showDocument(PROJECT_URL + "/releases");
         });
 
         Hyperlink existingUpdateLabel = null;

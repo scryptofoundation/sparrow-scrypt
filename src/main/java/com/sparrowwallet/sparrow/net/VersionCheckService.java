@@ -21,6 +21,9 @@ import java.util.Map;
 public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
     private static final Logger log = LoggerFactory.getLogger(VersionCheckService.class);
     private static final String VERSION_CHECK_URL = "https://www.sparrowwallet.com/version";
+    //That file and its signing key announce Sparrow Wallet's releases, not this fork's. Until the fork publishes a signed
+    //version file of its own, no request is made rather than offer users another app's update
+    private static final boolean CHECK_ENABLED = false;
 
     private static String version;
 
@@ -30,6 +33,10 @@ public class VersionCheckService extends ScheduledService<VersionUpdatedEvent> {
         com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.get();
         return new Task<>() {
             protected VersionUpdatedEvent call() {
+                if(!CHECK_ENABLED) {
+                    return null;
+                }
+
                 com.sparrowwallet.drongo.Coin previousCoin = com.sparrowwallet.drongo.Coin.beginScope(taskCoin);
                 try {
                     VersionCheck versionCheck = getVersionCheck();
