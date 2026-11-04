@@ -1,7 +1,7 @@
 Package: ${package}
 Version: ${version}-1
 Section: utils
-Maintainer: Craig Raw <mail@sparrowwallet.com>
+Maintainer: Scrypt Foundation <15646181+jscottdouglas@users.noreply.github.com>
 Priority: optional
 Architecture: ${arch}
 Provides: ${package}

@@ -362,7 +362,7 @@ jlink {
             if(project.hasProperty('linuxInstallerType')) {
                 installerType = project.property('linuxInstallerType')
             }
-            installerOptions.addAll(['--resource-dir', layout.buildDirectory.dir('deploy/package').get().asFile.toString(), '--linux-app-category', 'utils', '--linux-app-release', '1', '--linux-rpm-license-type', 'ASL 2.0', '--linux-deb-maintainer', 'mail@sparrowwallet.com'])
+            installerOptions.addAll(['--resource-dir', layout.buildDirectory.dir('deploy/package').get().asFile.toString(), '--linux-app-category', 'utils', '--linux-app-release', '1', '--linux-rpm-license-type', 'ASL 2.0', '--linux-deb-maintainer', '15646181+jscottdouglas@users.noreply.github.com'])
             imageOptions.addAll(['--icon', "src/main/deploy/package/linux/${iconAppName}.png".toString(), '--resource-dir', 'src/main/deploy/package/linux/'])
         }
         if(os.macOsX) {
