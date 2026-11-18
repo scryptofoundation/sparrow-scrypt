@@ -3,7 +3,9 @@ package com.sparrowwallet.sparrow.control;
 import com.google.common.base.Throwables;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.io.Files;
+import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.address.InvalidAddressException;
 import com.sparrowwallet.drongo.crypto.BIP38;
@@ -483,7 +485,33 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
         }
         transaction.addOutput(new TransactionOutput(transaction, total - fee, destAddress.getOutputScript()));
 
+        //The sweep spends on the chain the app is connected to, the focused coin's, whose tip the app knows
+        PSBT psbt;
+        try {
+            psbt = signSweep(transaction, txOutputs, privKey, scriptType, Coin.get(), Network.get(), AppServices.getCurrentBlockHeight());
+        } catch(IllegalStateException e) {
+            AppServices.showErrorDialog("Failed to sign", e.getMessage());
+            return;
+        }
+
+        try {
+            setResult(psbt.extractTransaction());
+        } catch(PSBTProofException e) {
+            AppServices.showErrorDialog("Invalid Silent Payments Transaction", e.getMessage());
+        }
+    }
+
+    /**
+     * Signs and finalizes a sweep of the given outputs with the private key, for the given chain at the given tip. The chain decides the signature
+     * hash (see Coin.getSigHashPrefix), so the PSBT carries the coin and the prefix before anything is signed.
+     *
+     * @throws IllegalStateException where an output cannot be signed for
+     */
+    static PSBT signSweep(Transaction transaction, List<TransactionOutput> txOutputs, ECKey privKey, ScriptType scriptType, Coin coin, Network network, Integer tipHeight) {
+        ECKey pubKey = ECKey.fromPublicOnly(privKey);
         PSBT psbt = new PSBT(transaction);
+        psbt.setCoin(coin);
+        psbt.setSigHashPrefix(coin.getSigHashPrefix(network, tipHeight));
         //Set witness UTXOs on PSBT inputs first - they are all required when hashing for a Taproot signature
         for(int i = 0; i < txOutputs.size(); i++) {
             TransactionOutput utxoOutput = txOutputs.get(i);
@@ -505,8 +533,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
             }
 
             if(!psbtInput.sign(scriptType.getOutputKey(PolicyType.SINGLE_HD, privKey))) {
-                AppServices.showErrorDialog("Failed to sign", "Failed to sign for transaction output " + utxoOutput.getHash() + ":" + utxoOutput.getIndex());
-                return;
+                throw new IllegalStateException("Failed to sign for transaction output " + utxoOutput.getHash() + ":" + utxoOutput.getIndex());
             }
 
             TransactionSignature signature = psbtInput.isTaproot() ? psbtInput.getTapKeyPathSignature() : psbtInput.getPartialSignature(pubKey);
@@ -517,11 +544,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
             psbtInput.setFinalScriptWitness(finalizedTxInput.getWitness());
         }
 
-        try {
-            setResult(psbt.extractTransaction());
-        } catch(PSBTProofException e) {
-            AppServices.showErrorDialog("Invalid Silent Payments Transaction", e.getMessage());
-        }
+        return psbt;
     }
 
     private Address computeSilentPaymentAddress(ECKey privKey, ScriptType scriptType, List<TransactionOutput> txOutputs, SilentPayment silentPayment) {
