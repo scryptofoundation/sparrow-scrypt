@@ -46,6 +46,10 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class Hwi {
     private static final Logger log = LoggerFactory.getLogger(Hwi.class);
+
+    public static final String LUCKYCOIN_HARDWARE_SIGNING_REFUSED = "Hardware wallets cannot sign this Luckycoin transaction. From block 276500 on, "
+            + "Luckycoin signatures commit to its chain id (replay protection), while a hardware wallet signs by Bitcoin's rule, so Luckycoin nodes "
+            + "would reject its signatures. Sign with a software keystore instead.";
     private static final String HWI_HOME_DIR = "hwi";
     private static final String LARK_HOME_DIR = "lark";
     private static final String BITBOX_FILENAME = "bitbox02.json";
@@ -251,6 +255,12 @@ public class Hwi {
 
     public PSBT signPSBT(Device device, String passphrase, PSBT psbt,
                          OutputDescriptor walletDescriptor, String walletName, byte[] walletRegistration) throws SignTransactionException {
+        //A hardware wallet works out the signature hash on the device, by Bitcoin's rule. A chain with its own rule (Luckycoin, see
+        //Coin.getSigHashPrefix) would reject what it signs, so the PSBT is not sent
+        if(psbt.getSigHashPrefix().length > 0) {
+            throw new SignTransactionException(LUCKYCOIN_HARDWARE_SIGNING_REFUSED);
+        }
+
         deviceLock.lock();
         try {
             Lark lark = getLark(passphrase, walletDescriptor, walletName, walletRegistration);
