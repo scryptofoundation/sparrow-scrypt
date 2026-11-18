@@ -340,6 +340,11 @@ public class BatchedElectrumServerRpc implements ElectrumServerRpc {
     }
 
     @Override
+    public String getTransactionIdFromPosition(Transport transport, int height, int position) {
+        return ElectrumServerRpc.transactionIdFromPosition(new JsonRpcClient(transport), idCounter.incrementAndGet(), height, position);
+    }
+
+    @Override
     public Map<Integer, BlockHeaders> getBlockHeadersChunks(Transport transport, Map<Integer, Integer> startHeightCounts) {
         //A page of the default size would be tens of megabytes of hex, far beyond what any server returns in one response
         PagedBatchRequestBuilder<Integer, BlockHeaders> batchRequest = PagedBatchRequestBuilder.create(transport, idCounter).keysType(Integer.class).returnType(BlockHeaders.class)

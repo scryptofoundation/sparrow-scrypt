@@ -1671,6 +1671,8 @@ public class AppController implements Initializable {
                         Platform.runLater(() -> selectTab(wallet));
                     } catch(IOException | StorageException | MnemonicException e) {
                         log.error("Error saving imported wallet", e);
+                        //Outside the coin scope: no dialog opens inside one on the FX thread
+                        Platform.runLater(() -> showErrorDialog("Error Importing Wallet", e.getMessage()));
                     } finally {
                         com.sparrowwallet.drongo.Coin.endScope(previousCoin);
                         if(key != null) {
@@ -3105,7 +3107,7 @@ public class AppController implements Initializable {
                         EventManager.get().post(new StorageEvent(selectedWalletForm.getWalletId(), TimedEvent.Action.END, "Done"));
 
                         try {
-                            tabs.getTabs().remove(tabs.getSelectionModel().getSelectedItem());
+                            removeWalletTab(storage);
                             deleteStorage(storage, true);
                         } finally {
                             keyDerivationService = null;
@@ -3116,7 +3118,7 @@ public class AppController implements Initializable {
                         if(keyDerivationService.getException() instanceof InvalidPasswordException) {
                             Optional<ButtonType> optResponse = showErrorDialog("Invalid Password", "The wallet password was invalid. Try again?", ButtonType.CANCEL, ButtonType.OK);
                             if(optResponse.isPresent() && optResponse.get().equals(ButtonType.OK)) {
-                                Platform.runLater(() -> deleteWallet(getSelectedWalletForm()));
+                                Platform.runLater(() -> deleteWallet(selectedWalletForm));
                             }
                         } else {
                             log.error("Error deriving wallet key", keyDerivationService.getException());
@@ -3127,10 +3129,16 @@ public class AppController implements Initializable {
                     keyDerivationService.start();
                 }
             } else {
-                tabs.getTabs().remove(tabs.getSelectionModel().getSelectedItem());
+                removeWalletTab(storage);
                 deleteStorage(storage, true);
             }
         }
+    }
+
+    /** Removes the tab of the wallet file being deleted, which is not necessarily the selected one (tab menu Delete). */
+    private void removeWalletTab(Storage storage) {
+        tabs.getTabs().stream().filter(tab -> tab.getUserData() instanceof WalletTabData walletTabData && walletTabData.getStorage() == storage)
+                .findFirst().ifPresent(tab -> tabs.getTabs().remove(tab));
     }
 
     private void deleteStorage(Storage storage, boolean deleteBackups) {

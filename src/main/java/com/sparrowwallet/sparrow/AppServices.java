@@ -1763,6 +1763,17 @@ public class AppServices {
         Platform.runLater(() -> showErrorDialog("Invalid Transaction", content));
     }
 
+    @Subscribe
+    public void uncheckedTransactions(UncheckedTransactionsEvent event) {
+        boolean one = event.getTxids().size() == 1;
+        String firstId = event.getTxids().iterator().next().toString().substring(0, 8) + "..";
+        String content = (one ? "Transaction " + firstId + " was" : event.getTxids().size() + " transactions, the first being " + firstId + ", were")
+                + " reported by the connected server as confirmed and spending from " + event.getWallet().getFullName() + ", but could not be checked, as the"
+                + " server did not provide a transaction " + (one ? "it depends" : "they depend") + " on. " + (one ? "It has" : "They have") + " been added to the wallet."
+                + "\n\nIf you do not recognise " + (one ? "it" : "them") + ", switch servers.";
+        Platform.runLater(() -> showWarningDialog("Unchecked Transaction", content));
+    }
+
     private void showProofsDialog(TransactionProofsEvent event, String title, String content) {
         Platform.runLater(() -> {
             if(event.getWallet() == null) {

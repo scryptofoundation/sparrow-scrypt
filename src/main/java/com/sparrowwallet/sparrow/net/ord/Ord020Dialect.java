@@ -30,10 +30,20 @@ final class Ord020Dialect implements OrdDialect {
 
     /**
      * The hash of block 0 as the server indexed it: GET /blockhash/0 answers the bare hash as text (ord-litecoin 0.20.1
-     * server.rs line 170, block_hash_from_height; its test block_hash_from_height_endpoint). Null when the answer is not a hash.
+     * server.rs line 170, block_hash_from_height; its test block_hash_from_height_endpoint). ord-pepecoin has no such route,
+     * so a 404 there falls back to GET /block/0, whose JSON names the block's hash (both servers answer it). Null when the
+     * answer is not a hash.
      */
     String genesis(Transport t) throws IOException {
-        String hash = t.json(baseUrl + "/blockhash/0", null).trim();
+        String hash;
+        try {
+            hash = t.json(baseUrl + "/blockhash/0", null).trim();
+        } catch(OrdClient.HttpStatusException e) {
+            if(e.getStatus() != 404) {
+                throw e;
+            }
+            hash = OrdClient.readTree(t.json(baseUrl + "/block/0", null)).path("hash").asText("");
+        }
         if(hash.length() == 66 && hash.startsWith("\"") && hash.endsWith("\"")) {
             hash = hash.substring(1, 65);
         }

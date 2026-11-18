@@ -152,23 +152,10 @@ public final class InscriptionPreview {
     /** As {@link #node(String, byte[], double)}, reusing the decoded image for the same key and size. */
     public static Node node(String key, String contentType, byte[] bytes, double size) {
         Kind kind = bytes == null ? Kind.PLACEHOLDER : kind(contentType, bytes);
-        if(kind == Kind.IMAGE && safeToDecode(bytes)) {
-            String cacheKey = key == null ? null : key + "@" + size;
-            Image image = cacheKey == null ? null : images.get(cacheKey);
-            if(image == null) {
-                //Decoded at display size, so the full-resolution pixels are not kept
-                image = new Image(new ByteArrayInputStream(bytes), size, size, true, true);
-                if(cacheKey != null && !image.isError()) {
-                    images.put(cacheKey, image);
-                }
-            }
-            if(!image.isError()) {
-                ImageView view = new ImageView(image);
-                view.setPreserveRatio(true);
-                view.setFitWidth(size);
-                view.setFitHeight(size);
-                view.setSmooth(image.getWidth() > size);
-                return frame(view, size);
+        if(kind == Kind.IMAGE) {
+            Optional<Node> image = image(key, bytes, size);
+            if(image.isPresent()) {
+                return image.get();
             }
         }
         if(kind == Kind.TEXT) {
@@ -180,6 +167,35 @@ public final class InscriptionPreview {
             return frame(label, size);
         }
         return placeholder(kind == Kind.IMAGE ? "Image too large to preview" : (contentType == null ? "Unknown content" : contentType), size);
+    }
+
+    /**
+     * The picture in these bytes, framed at display size, or empty when the bytes are not a supported image (decided
+     * by the bytes alone), declare a size beyond the limits, or fail to decode. The decoded image is reused for the
+     * same key and size.
+     */
+    public static Optional<Node> image(String key, byte[] bytes, double size) {
+        if(bytes == null || kind(null, bytes) != Kind.IMAGE || !safeToDecode(bytes)) {
+            return Optional.empty();
+        }
+        String cacheKey = key == null ? null : key + "@" + size;
+        Image image = cacheKey == null ? null : images.get(cacheKey);
+        if(image == null) {
+            //Decoded at display size, so the full-resolution pixels are not kept
+            image = new Image(new ByteArrayInputStream(bytes), size, size, true, true);
+            if(cacheKey != null && !image.isError()) {
+                images.put(cacheKey, image);
+            }
+        }
+        if(image.isError()) {
+            return Optional.empty();
+        }
+        ImageView view = new ImageView(image);
+        view.setPreserveRatio(true);
+        view.setFitWidth(size);
+        view.setFitHeight(size);
+        view.setSmooth(image.getWidth() > size);
+        return Optional.of(frame(view, size));
     }
 
     public static Node placeholder(String text, double size) {

@@ -127,6 +127,40 @@ public interface ElectrumServerRpc {
     Map<Integer, BlockHeaders> getBlockHeadersChunks(Transport transport, Map<Integer, Integer> startHeightCounts);
 
     /**
+     * The txid at a position in the block at a height (blockchain.transaction.id_from_pos), or null past the block's
+     * end. Servers without the call throw UnsupportedMethodException.
+     */
+    default String getTransactionIdFromPosition(Transport transport, int height, int position) {
+        throw new UnsupportedMethodException("blockchain.transaction.id_from_pos", null);
+    }
+
+    /** True for a server's answer that a block has no transaction at the asked position (ElectrumX, Fulcrum wording). */
+    static boolean isPastBlockEnd(String message) {
+        if(message == null) {
+            return false;
+        }
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        return (lower.contains("no tx at position") || lower.contains("no transaction at position"));
+    }
+
+    /** One id_from_pos call: null past the block's end, UnsupportedMethodException without the call, else the txid. */
+    static String transactionIdFromPosition(com.github.arteam.simplejsonrpc.client.JsonRpcClient client, long id, int height, int position) {
+        try {
+            return client.createRequest().returnAs(String.class).method("blockchain.transaction.id_from_pos").id(id).params(height, position).execute();
+        } catch(JsonRpcException e) {
+            if(isMethodNotFound(e)) {
+                throw new UnsupportedMethodException("blockchain.transaction.id_from_pos", e);
+            }
+            if(e.getErrorMessage() != null && isPastBlockEnd(e.getErrorMessage().getMessage())) {
+                return null;
+            }
+            throw new ElectrumServerRpcException("Failed to read position " + position + " of block " + height, e);
+        } catch(Exception e) {
+            throw new ElectrumServerRpcException("Failed to read position " + position + " of block " + height, e);
+        }
+    }
+
+    /**
      * Retrieves the fee rate in BTC/kB estimated to confirm within each number of blocks. Targets beyond the number the server will estimate for are
      * answered with the lowest rate already seen rather than being absent, so the caller always receives a rate for every target it asked about.
      */

@@ -12,7 +12,7 @@ import java.sql.ResultSet;
 import java.util.Arrays;
 
 public class MigrationVersionTest {
-    //V10 to V12 are feature/coin-axis (Coin, LitVm, PendingMint), so upstream's silent payments migration is V13
+    //V10 to V12 are feature/coin-axis (Coin, LitVm, PendingMint), so upstream's silent payments migration is V13; V14 is the swap tab's (feature/swap-tab), so Doginals mints are V15 and inscription checks V16
     private static final File MIGRATIONS = new File("src/main/resources/" + DbPersistence.MIGRATION_RESOURCES_DIR);
 
     @TempDir
@@ -34,14 +34,14 @@ public class MigrationVersionTest {
     public void silentPaymentsMigrationFollowsTheCoinAxisOnes() {
         String[] migrations = MIGRATIONS.list((dir, name) -> name.matches("V1[0-9]__.*"));
         Arrays.sort(migrations);
-        Assertions.assertArrayEquals(new String[]{"V10__Coin.sql", "V11__LitVm.sql", "V12__PendingMint.sql", "V13__SilentPayments.sql"}, migrations);
+        Assertions.assertArrayEquals(new String[]{"V10__Coin.sql", "V11__LitVm.sql", "V12__PendingMint.sql", "V13__SilentPayments.sql", "V14__Swap.sql", "V15__DoginalMint.sql", "V16__InscriptionCheck.sql"}, migrations);
     }
 
     @Test
-    public void freshDatabaseMigratesToV13() throws Exception {
+    public void freshDatabaseMigratesToV16() throws Exception {
         File db = new File(tempDir, "fresh");
         flyway(db, null).migrate();
-        Assertions.assertEquals("13", flyway(db, null).info().current().getVersion().getVersion());
+        Assertions.assertEquals("16", flyway(db, null).info().current().getVersion().getVersion());
         try(Connection connection = DriverManager.getConnection(url(db), "", "")) {
             for(String column : new String[]{"coin", "birthHeight"}) {
                 try(ResultSet columns = connection.getMetaData().getColumns(null, null, "wallet", column)) {
@@ -52,13 +52,13 @@ public class MigrationVersionTest {
     }
 
     @Test
-    public void ltcWalletAtV9MigratesToV13() throws Exception {
+    public void ltcWalletAtV9MigratesToV16() throws Exception {
         File db = new File(tempDir, "ltc");
         flyway(db, "9").migrate();
         Assertions.assertEquals("9", flyway(db, null).info().current().getVersion().getVersion());
 
         flyway(db, null).migrate();
-        Assertions.assertEquals("13", flyway(db, null).info().current().getVersion().getVersion());
+        Assertions.assertEquals("16", flyway(db, null).info().current().getVersion().getVersion());
         try(Connection connection = DriverManager.getConnection(url(db), "", "");
             ResultSet columns = connection.getMetaData().getColumns(null, null, "keystore", "silentPaymentScanAddress")) {
             Assertions.assertTrue(columns.next());

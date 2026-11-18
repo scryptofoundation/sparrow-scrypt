@@ -206,12 +206,12 @@
                         <ToggleGroup fx:id="inscriptionsToggleGroup" />
                     </toggleGroup>
                     <buttons>
-                        <ToggleButton fx:id="inscriptionsOff" text="Off" toggleGroup="$inscriptionsToggleGroup" />
                         <ToggleButton fx:id="inscriptionsPublic" text="Public" toggleGroup="$inscriptionsToggleGroup" />
-                        <ToggleButton fx:id="inscriptionsCustom" text="Custom" toggleGroup="$inscriptionsToggleGroup" />
+                        <ToggleButton fx:id="inscriptionsCustom" text="Your own" toggleGroup="$inscriptionsToggleGroup" />
+                        <ToggleButton fx:id="inscriptionsBuiltIn" text="Built-in" toggleGroup="$inscriptionsToggleGroup" />
                     </buttons>
                 </SegmentedButton>
-                <HelpLabel helpText="Checks each output of a wallet for inscriptions and tokens, so they are never spent by accident. The server sees the outputs it is asked about. With checks off, coins that look like they may carry one are held back from automatic coin selection." />
+                <HelpLabel helpText="Checks each output of a wallet for inscriptions and tokens, so they are never spent by accident. The server sees the outputs it is asked about. Built-in checks on-chain through your wallet server only, and also checks what an indexer says. Coins not shown clean are held back from automatic coin selection." />
             </Field>
             <Field fx:id="inscriptionsPublicField" text="Server:">
                 <CopyableLabel fx:id="inscriptionsPublicHost" text="ordinalslite.com" />

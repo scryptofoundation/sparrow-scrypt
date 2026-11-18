@@ -899,6 +899,20 @@ public class EntryCell extends TreeTableCell<Entry, Entry> implements Confirmati
                     });
                     getItems().add(markPlain);
                 }
+                Wallet checkedMaster = holdingWallet.isNested() ? holdingWallet.getMasterWallet() : holdingWallet;
+                com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.Snapshot checkSnapshot =
+                        com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.get().getSnapshot(checkedMaster);
+                com.sparrowwallet.drongo.wallet.InscriptionCheck inscriptionCheck = checkSnapshot == null ? null : checkSnapshot.checks().get(hashIndexEntry.getHashIndex().toString());
+                //Any checked coin can be checked again, with the larger budget
+                if(inscriptionCheck != null) {
+                    MenuItem checkDeeper = new MenuItem("Check deeper");
+                    checkDeeper.setGraphic(getUnfreezeGlyph());
+                    checkDeeper.setOnAction(AE -> {
+                        hide();
+                        com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.get().checkDeeper(holdingWallet, hashIndexEntry.getHashIndex());
+                    });
+                    getItems().add(checkDeeper);
+                }
                 if(hashIndexEntry.getWallet().getScriptType() == ScriptType.MWEB &&
                         hashIndexEntry.getHashIndex().getHeight() == 0) {
                     MenuItem removeUtxo = new MenuItem("Remove UTXO");

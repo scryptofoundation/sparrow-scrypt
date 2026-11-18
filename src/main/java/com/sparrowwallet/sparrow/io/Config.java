@@ -69,8 +69,10 @@ public class Config {
     private File walletsDir;
     private List<File> recentWalletFiles;
     private List<String> litVmTokens;
+    private List<String> litVmNfts;
     private List<String> litVmCreatedTokens;
     private List<String> litVmBridgeHistory;
+    private List<String> litVmNotices;
     private Integer keyDerivationPeriod;
     private long dustAttackThreshold = DUST_ATTACK_THRESHOLD_SATS;
     private long dustAttackThresholdSp = DUST_ATTACK_THRESHOLD_SP_SATS;
@@ -477,6 +479,16 @@ public class Config {
         flush();
     }
 
+    /** ERC-721 collection contracts the user watches in LitVM tabs, as "chainId:0x..." (public, not wallet-specific). */
+    public List<String> getLitVmNfts() {
+        return litVmNfts == null ? new ArrayList<>() : new ArrayList<>(litVmNfts);
+    }
+
+    public void setLitVmNfts(List<String> litVmNfts) {
+        this.litVmNfts = new ArrayList<>(litVmNfts);
+        flush();
+    }
+
     /** Tokens deployed from this app, as "chainId:0x...:template key". */
     public List<String> getLitVmCreatedTokens() {
         return litVmCreatedTokens == null ? new ArrayList<>() : new ArrayList<>(litVmCreatedTokens);
@@ -484,6 +496,16 @@ public class Config {
 
     public void setLitVmCreatedTokens(List<String> litVmCreatedTokens) {
         this.litVmCreatedTokens = new ArrayList<>(litVmCreatedTokens);
+        flush();
+    }
+
+    /** LitVM transactions whose fate is not known yet, as "chainId|account|txHash|state[|tag]" (public chain data, no secrets). */
+    public List<String> getLitVmNotices() {
+        return litVmNotices == null ? new ArrayList<>() : new ArrayList<>(litVmNotices);
+    }
+
+    public void setLitVmNotices(List<String> litVmNotices) {
+        this.litVmNotices = new ArrayList<>(litVmNotices);
         flush();
     }
 
@@ -604,8 +626,8 @@ public class Config {
         private File electrumServerCert;
     }
 
-    //Where inscription and rune data comes from, per coin (Litecoin only for now). Off unless the user turns it on,
-    //because a public server sees every output it is asked about.
+    //Where inscription and rune data comes from, per coin and network. Public by default where the coin has a public indexer,
+    //otherwise Built-in (the on-chain tracker alone), which also checks whatever an indexer says.
     private static class InscriptionSettings {
         private InscriptionServerMode mode;
         private String customUrl;
@@ -625,7 +647,7 @@ public class Config {
 
     public InscriptionServerMode getInscriptionServerMode() {
         InscriptionSettings settings = inscriptionSettings();
-        return settings == null || settings.mode == null ? InscriptionServerMode.OFF : settings.mode;
+        return settings == null || settings.mode == null ? InscriptionServerMode.defaultFor(Coin.get(), Network.get()) : settings.mode;
     }
 
     public String getInscriptionCustomUrl() {
@@ -1152,7 +1174,18 @@ public class Config {
             writer.flush();
             writer.close();
         } catch (IOException e) {
-            //Ignore
+            //Not fatal, but not silent: what was meant to be kept is only in memory now
+            org.slf4j.LoggerFactory.getLogger(Config.class).warn("Could not write the config file", e);
+        }
+    }
+
+    /** Whether the config file as it is on disk holds every one of these strings: a write that failed leaves it without them. */
+    public static boolean holdsOnDisk(List<String> values) {
+        try {
+            String text = java.nio.file.Files.readString(getConfigFile().toPath());
+            return values.stream().allMatch(text::contains);
+        } catch(IOException | RuntimeException e) {
+            return false;
         }
     }
 

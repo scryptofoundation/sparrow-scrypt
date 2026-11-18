@@ -28,8 +28,6 @@ class LitVmTokensView extends LitVmFlowPane {
     private final LitVmContext context;
     private final LitVmNetwork network;
     private final TableView<Row> table = new TableView<>();
-    //The deployment awaiting broadcast; set when the user confirms it
-    private Pending pending;
 
     private record Row(Erc20Token token, String balance, String mark, String reason) {}
 
@@ -119,21 +117,28 @@ class LitVmTokensView extends LitVmFlowPane {
                 rows.add(new Row(token, token.format(b.tokenBalances().get(i)), mark, lookalike.orElse(null)));
             }
             table.setItems(FXCollections.observableArrayList(rows));
-            if(!b.errors().isEmpty()) {
-                context.status("Could not read token(s): " + String.join("; ", b.errors()));
+            if(!b.unread().isEmpty()) {
+                context.status(LitVmWords.tokensUnread(b.unread()));
             }
         });
-        task.setOnFailed(e -> context.status("Could not reach " + network.getDisplayName() + ": " + LitVmContext.message(task.getException())));
+        task.setOnFailed(e -> context.status(LitVmWords.balancesUnread(network, task.getException())));
         LitVmContext.start(task);
     }
 
-    private void addToken() {
+    /** The dialog that asks for a token's contract. Not shown: the caller shows it. */
+    static TextInputDialog addTokenDialog(javafx.stage.Window owner, LitVmNetwork network) {
         TextInputDialog dialog = new TextInputDialog();
-        dialog.initOwner(context.window());
+        dialog.initOwner(owner);
         dialog.setTitle("Add Token");
         dialog.setHeaderText("Track an ERC-20 token on " + network.getDisplayName());
         dialog.setContentText("Token contract:");
-        Optional<String> input = dialog.showAndWait();
+        //Room for a whole address
+        dialog.getEditor().setPrefColumnCount(34);
+        return dialog;
+    }
+
+    private void addToken() {
+        Optional<String> input = addTokenDialog(context.window(), network).showAndWait();
         if(input.isEmpty() || input.get().isBlank()) {
             return;
         }
@@ -149,7 +154,7 @@ class LitVmTokensView extends LitVmFlowPane {
         Task<Erc20Token> read = new Task<>() {
             @Override
             protected Erc20Token call() throws Exception {
-                client.verifyChain();
+                verifyChain(client);
                 return client.readToken(contract);
             }
         };
@@ -173,13 +178,13 @@ class LitVmTokensView extends LitVmFlowPane {
             Optional<ButtonType> answer = confirm.showAndWait();
             if(answer.isPresent() && answer.get() == ButtonType.OK) {
                 LitVmContext.track(network, token.contract());
-                context.status("Tracking " + token.symbol() + " on " + network.getDisplayName() + ".");
+                context.status(tracking(token, network));
                 context.balancesChanged();
             } else {
                 context.status("Not added.");
             }
         });
-        read.setOnFailed(e -> context.status("Not a readable token: " + LitVmContext.message(read.getException())));
+        read.setOnFailed(e -> context.status(addTokenFailed(read.getException())));
         LitVmContext.start(read);
     }
 
@@ -192,8 +197,10 @@ class LitVmTokensView extends LitVmFlowPane {
         LitVmCreateTokenDialog.Request request = chosen.get();
         Erc20Templates.Params params = request.params();
         LitVmRpcClient client = context.client(network);
+        //This creation's own: set when the user confirms it, and read when it is sent, or seen confirmed later
+        Pending[] pending = new Pending[1];
         prepare(() -> {
-            client.verifyChain();
+            verifyChain(client);
             byte[] code = Erc20Templates.get().creationCode(request.options(), params);
             Eip1559Transaction tx = client.prepareCall(me, null, BigInteger.ZERO, code);
             List<Step> steps = List.of(new Step(client, tx, "Create " + params.symbol()));
@@ -210,19 +217,18 @@ class LitVmTokensView extends LitVmFlowPane {
             boolean ok = confirmSteps("Create Token", "Create " + params.symbol() + " on " + network.getDisplayName() + "?", details, steps,
                     "The token's name, symbol and rules are fixed once it is created.");
             if(ok) {
-                pending = new Pending(steps.get(0).tx().createdContract(me), request.options(), params.symbol(), request.publishSource());
+                pending[0] = new Pending(steps.get(0).tx().createdContract(me), request.options(), params.symbol(), request.publishSource());
             }
             return ok;
         }, hashes -> {
-            Pending created = pending;
-            pending = null;
+            Pending created = pending[0];
             LitVmContext.track(network, created.contract());
             LitVmContext.recordCreated(network, created.contract(), created.options().key());
             context.status("Created " + created.symbol() + " at " + created.contract() + ".");
             if(created.publish()) {
                 publishSource(created.contract(), created.options(), created.symbol());
             }
-        });
+        }, () -> pending[0] == null ? null : LitVmNotices.tokenTag(pending[0].contract(), pending[0].options().key()));
     }
 
     /**
@@ -232,14 +238,15 @@ class LitVmTokensView extends LitVmFlowPane {
     private void publishSource(EvmAddress contract, Erc20Templates.Options options, String symbol) {
         Erc20Templates templates = Erc20Templates.get();
         String input = templates.verificationInput(options);
-        BlockscoutClient explorer = new BlockscoutClient(network);
+        BlockscoutClient explorer = new BlockscoutClient(network, context.transport());
         Task<String> task = new Task<>() {
             @Override
             protected String call() throws Exception {
                 boolean onSourcify = false;
+                //Each problem is a whole sentence in the app's own words; what a service answered goes to the log only
                 String sourcifyProblem = null;
                 if(SourcifyClient.supports(network)) {
-                    SourcifyClient sourcify = new SourcifyClient(network);
+                    SourcifyClient sourcify = new SourcifyClient(network, context.transport());
                     for(int i = 0; i < SOURCIFY_TRIES && !onSourcify; i++) {
                         try {
                             onSourcify = sourcify.isVerified(contract);
@@ -254,10 +261,11 @@ class LitVmTokensView extends LitVmFlowPane {
                                 status = sourcify.job(id);
                             }
                             onSourcify = status == SourcifyClient.Status.EXACT;
-                            sourcifyProblem = onSourcify ? null : "Sourcify reported " + status.name().toLowerCase(Locale.ROOT);
+                            sourcifyProblem = onSourcify ? null : "Sourcify reported " + status.name().toLowerCase(Locale.ROOT).replace('_', ' ') + ".";
                         } catch(IOException e) {
                             //Sourcify reads the chain through its own node, which may not have the new contract yet
-                            sourcifyProblem = e.getMessage();
+                            LitVmWords.logOnly("Sourcify did not take the source of " + contract, e);
+                            sourcifyProblem = LitVmWords.sentence(e, LitVmWords.SOURCIFY);
                         }
                         if(!onSourcify) {
                             Thread.sleep(15000);
@@ -278,7 +286,8 @@ class LitVmTokensView extends LitVmFlowPane {
                         }
                     } catch(IOException e) {
                         //Most often the explorer has not indexed the new contract yet, which can take many minutes
-                        explorerProblem = e.getMessage();
+                        LitVmWords.logOnly("the explorer did not take the source of " + contract, e);
+                        explorerProblem = LitVmWords.sentence(e, LitVmWords.EXPLORER);
                         updateMessage("Waiting for the explorer to see " + symbol + " before publishing its source...");
                         Thread.sleep(15000);
                     }
@@ -293,26 +302,56 @@ class LitVmTokensView extends LitVmFlowPane {
                     }
                 }
                 if(submitted && !onExplorer) {
-                    explorerProblem = "The explorer accepted the source but has not verified it; its verifier service may be down";
+                    explorerProblem = "The explorer accepted the source but has not verified it; its verifier service may be down.";
                 }
 
-                String retry = " Manage > Publish Source tries again.";
                 if(onExplorer) {
                     return "The source of " + symbol + " is verified on the explorer" + (onSourcify ? " and on Sourcify" : "") + ": " + network.explorerAddressUrl(contract);
                 }
                 if(onSourcify) {
-                    return "The source of " + symbol + " is verified on Sourcify (exact match): " + new SourcifyClient(network).repositoryUrl(contract)
-                            + ". The explorer has not verified it (" + explorerProblem + ")." + retry;
+                    return "The source of " + symbol + " is verified on Sourcify (exact match): " + new SourcifyClient(network, context.transport()).repositoryUrl(contract)
+                            + ". " + notOnExplorer(explorerProblem);
                 }
-                return "The source of " + symbol + " is not verified yet (" + explorerProblem
-                        + (sourcifyProblem != null ? "; " + sourcifyProblem : "") + ")." + retry;
+                return notVerified(explorerProblem, sourcifyProblem);
             }
         };
         task.messageProperty().addListener((o, a, text) -> context.status(text));
         task.setOnSucceeded(e -> context.status(task.getValue()));
-        task.setOnFailed(e -> context.status("Could not publish the source of " + symbol + ": " + LitVmContext.message(task.getException())
-                + ". Use Manage > Publish Source to try again."));
+        task.setOnFailed(e -> context.status(publishFailed(task.getException())));
         LitVmContext.start(task);
+    }
+
+    /** The status line once a token is tracked. Its symbol is the contract's, cleaned and cut to 16 characters by Erc20Token. */
+    static String tracking(Erc20Token token, LitVmNetwork network) {
+        return "Tracking " + token.symbol() + " on " + network.getDisplayName() + ".";
+    }
+
+    /** The status line when the contract typed into Add Token could not be read as a token. */
+    static String addTokenFailed(Throwable failure) {
+        return LitVmWords.failure("Could not read a token at that address.", failure);
+    }
+
+    /** The status line when a tracked token could not be read for Manage. */
+    static String manageFailed(Throwable failure) {
+        return LitVmWords.failure("Could not read the token.", failure);
+    }
+
+    /** The status line when publishing a token's source stopped. */
+    static String publishFailed(Throwable failure) {
+        return LitVmWords.failure("Could not publish the token's source.", failure) + " Use Manage > Publish Source to try again.";
+    }
+
+    private static final String RETRY = " Manage > Publish Source tries again.";
+
+    /** The end of the status line when Sourcify has the source and the explorer does not. problem is one of the app's sentences, or null. */
+    static String notOnExplorer(String problem) {
+        return "The explorer has not verified it." + (problem == null ? "" : " " + problem) + RETRY;
+    }
+
+    /** The status line when neither service has verified the source. Each problem is one of the app's sentences, or null. */
+    static String notVerified(String explorerProblem, String sourcifyProblem) {
+        return "The token's source is not verified yet." + (explorerProblem == null ? "" : " " + explorerProblem)
+                + (sourcifyProblem == null ? "" : " " + sourcifyProblem) + RETRY;
     }
 
     private void manageToken(Erc20Token token) {
@@ -323,14 +362,14 @@ class LitVmTokensView extends LitVmFlowPane {
         Task<LitVmManageTokenDialog.Info> read = new Task<>() {
             @Override
             protected LitVmManageTokenDialog.Info call() throws Exception {
-                client.verifyChain();
+                verifyChain(client);
                 BigInteger totalSupply = Abi.decodeUint(client.ethCall(token.contract(), Abi.selector("totalSupply()")), 0);
                 BigInteger balance = client.getTokenBalance(token, me);
                 Erc20Admin.Capabilities caps = Erc20Admin.read(client, token.contract(), me);
                 boolean verified;
                 try {
-                    verified = new BlockscoutClient(network).isVerified(token.contract())
-                            || (SourcifyClient.supports(network) && new SourcifyClient(network).isVerified(token.contract()));
+                    verified = new BlockscoutClient(network, context.transport()).isVerified(token.contract())
+                            || (SourcifyClient.supports(network) && new SourcifyClient(network, context.transport()).isVerified(token.contract()));
                 } catch(IOException e) {
                     verified = false;
                 }
@@ -343,7 +382,7 @@ class LitVmTokensView extends LitVmFlowPane {
             LitVmManageTokenDialog.Info info = read.getValue();
             new LitVmManageTokenDialog(context.window(), info, me).showAndWait().ifPresent(action -> act(info, action));
         });
-        read.setOnFailed(e -> context.status("Could not read " + token.symbol() + ": " + LitVmContext.message(read.getException())));
+        read.setOnFailed(e -> context.status(manageFailed(read.getException())));
         LitVmContext.start(read);
     }
 
@@ -366,7 +405,7 @@ class LitVmTokensView extends LitVmFlowPane {
                     return;
                 }
                 if(info.capabilities().cap().isPresent() && info.totalSupply().add(amount).compareTo(info.capabilities().cap().get()) > 0) {
-                    context.status("That would take the supply past its cap of " + token.format(info.capabilities().cap().get()) + " " + token.symbol() + ".");
+                    context.status("That would take the supply past its cap of " + token.format(info.capabilities().cap().get()) + ".");
                     return;
                 }
                 run(token, Erc20Admin.mint(recipient, amount), "Mint " + token.format(amount) + " " + token.symbol(),
@@ -374,7 +413,7 @@ class LitVmTokensView extends LitVmFlowPane {
             });
             case BURN -> amount("Burn " + token.symbol(), "Amount to burn (you hold " + token.format(info.balance()) + "):", token).ifPresent(amount -> {
                 if(amount.compareTo(info.balance()) > 0) {
-                    context.status("You hold only " + token.format(info.balance()) + " " + token.symbol() + ".");
+                    context.status("You hold only " + token.format(info.balance()) + " of this token.");
                     return;
                 }
                 run(token, Erc20Admin.burn(amount), "Burn " + token.format(amount) + " " + token.symbol(),
@@ -435,7 +474,7 @@ class LitVmTokensView extends LitVmFlowPane {
         EvmAddress me = address();
         LitVmRpcClient client = context.client(network);
         prepare(() -> {
-            client.verifyChain();
+            verifyChain(client);
             client.simulate(me, token.contract(), BigInteger.ZERO, data);
             Eip1559Transaction tx = client.prepareCall(me, token.contract(), BigInteger.ZERO, data);
             List<Step> steps = List.of(new Step(client, tx, description));

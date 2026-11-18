@@ -8,7 +8,7 @@ The [wiki](../../wiki) has a guide to every part of the app.
 
 ## Status: beta
 
-Current version: **2.5.7 beta 4** (tag `scrypt-v2.5.7-beta.4`), based on Sparrow Wallet 2.5.7.
+Current version: **2.5.7 beta 5** (tag `scrypt-v2.5.7-beta.5`), based on Sparrow Wallet 2.5.7.
 
 Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can and small amounts where you can't, and never put a seed that holds real savings into a beta build.
 
@@ -28,10 +28,12 @@ Every coin is supported on mainnet, through the public servers listed below or y
 
 - Seven Scrypt coins in one app, with servers set per coin and test mode for every coin.
 - Litecoin MWEB: a private wallet next to the public one, one-click moves between them, and Electrum-LTC view-key import and export.
-- Litecoin inscriptions and runes: view, protect, send, mint and etch. Inscriptions on Dogecoin, Pepecoin, Bellscoin and Junkcoin: view and send.
+- Litecoin inscriptions and runes: view, protect, send, mint and etch. Inscriptions on Dogecoin, Pepecoin, Bellscoin and Junkcoin: view, send and mint (Doginals on Dogecoin, Pepecoin and Junkcoin).
+- An inscription check for every wallet output, so coins holding an inscription or token are not spent by accident: Public (the coin's public indexer), Your own (your ord server) or Built-in (on-chain through your wallet server). Each output's result shows in the UTXOs tab, and the check catches reorgs and inscriptions an indexer missed.
+- Token balances: LTC-20, DRC-20, PRC-20, BEL-20 and junk-20, and dunes and junes.
 - Seed imports from each coin's own wallet app (MyDoge, Peppool, Dingo, JunkieWally, luckycoinwallet, Nintondo) and from Cake Wallet.
 - An encrypted seed backup file (Argon2id and AES-GCM, with its own password).
-- LitVM on testnet: zkLTC, ERC-20 tokens, token creation and bridges, linked to a Litecoin wallet.
+- LitVM on testnet: zkLTC, ERC-20 tokens, NFTs, token creation and bridges, linked to a Litecoin wallet. LitVM requests go through the app's proxy or Tor, and a send whose outcome is not known yet keeps a notice until it is.
 - An Android companion app, [Sparrow-Scrypt Mobile](https://github.com/scryptofoundation/sparrow-scrypt-mobile), paired by QR, that can also act as an air-gapped signer.
 
 ## Screenshots
@@ -65,7 +67,7 @@ With Server set to Public Server, each coin connects to one of these. You can po
 | Luckycoin | Esplora: luckyscan.org | None |
 | Bellscoin | Esplora: api.nintondo.io | None |
 
-Inscriptions are read from ordinalslite.com for Litecoin and from Nintondo for Dogecoin, Pepecoin and Bellscoin, or from your own ord server. Junkcoin inscriptions need your own ord-junkcoin server.
+Inscriptions are read from ordinalslite.com for Litecoin and from Nintondo for Dogecoin, Pepecoin and Bellscoin, or from your own ord server. Junkcoin inscriptions need your own ord-junkcoin server. LTC-20 balances are read from Litescribe on mainnet.
 
 ## Downloads
 

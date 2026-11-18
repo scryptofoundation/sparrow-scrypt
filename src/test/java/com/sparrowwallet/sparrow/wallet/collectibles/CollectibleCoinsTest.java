@@ -34,7 +34,8 @@ public class CollectibleCoinsTest {
     public void featuresPerCoin() {
         for(Coin coin : Coin.values()) {
             Assertions.assertEquals(coin == Coin.LITECOIN, CollectibleCoins.hasRunes(coin), coin.getName());
-            Assertions.assertEquals(coin == Coin.LITECOIN, CollectibleCoins.canMint(coin), coin.getName());
+            boolean mints = coin == Coin.LITECOIN || coin == Coin.DOGECOIN || coin == Coin.PEPECOIN || coin == Coin.JUNKCOIN || coin == Coin.BELLSCOIN;
+            Assertions.assertEquals(mints, CollectibleCoins.canMint(coin), coin.getName());
         }
         Assertions.assertTrue(CollectibleCoins.hasCollectibles(Coin.DOGECOIN));
         Assertions.assertTrue(CollectibleCoins.hasCollectibles(Coin.PEPECOIN));

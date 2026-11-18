@@ -20,6 +20,9 @@ public interface Persistence {
     default void savePendingMints(Storage storage, Wallet wallet) throws StorageException {
         throw new StorageException("This wallet file cannot hold pending mints");
     }
+    default void saveInscriptionChecks(Storage storage, Wallet wallet) throws StorageException {
+        throw new StorageException("This wallet file cannot hold inscription checks");
+    }
     boolean isPersisted(Storage storage, Wallet wallet);
     ECKey getEncryptionKey(CharSequence password) throws IOException, StorageException;
     AsymmetricKeyDeriver getKeyDeriver();

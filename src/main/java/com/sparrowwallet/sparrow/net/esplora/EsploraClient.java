@@ -182,6 +182,38 @@ public class EsploraClient {
         return List.of(get("/block/" + blockHash + "/txids", String[].class));
     }
 
+    /** The number of transactions in a block, coinbase included (/block/:hash, field tx_count). */
+    public int getBlockTxCount(String blockHash) throws EsploraException {
+        return parseTxCount(getString("/block/" + blockHash));
+    }
+
+    /** One page of a block's transactions in block order, 25 from startIndex (/block/:hash/txs/:start). */
+    public List<EsploraTransaction> getBlockTxs(String blockHash, int startIndex) throws EsploraException {
+        return parseTransactions(getString("/block/" + blockHash + "/txs/" + startIndex));
+    }
+
+    static int parseTxCount(String json) throws EsploraException {
+        try {
+            com.fasterxml.jackson.databind.JsonNode count = objectMapper.readTree(json).get("tx_count");
+            if(count == null || !count.canConvertToInt()) {
+                throw new EsploraException("Block response has no tx_count");
+            }
+            return count.asInt();
+        } catch(EsploraException e) {
+            throw e;
+        } catch(Exception e) {
+            throw new EsploraException("Could not parse block response", e);
+        }
+    }
+
+    static List<EsploraTransaction> parseTransactions(String json) throws EsploraException {
+        try {
+            return List.of(objectMapper.readValue(json, EsploraTransaction[].class));
+        } catch(Exception e) {
+            throw new EsploraException("Could not parse block transactions", e);
+        }
+    }
+
     /** Recent mempool transaction ids. Present on both dialects. */
     public List<String> getRecentMempoolTxids() throws EsploraException {
         MempoolRecentTx[] recent = get("/mempool/recent", MempoolRecentTx[].class);

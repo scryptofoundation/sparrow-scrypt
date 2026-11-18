@@ -161,6 +161,15 @@ test {
     useJUnitPlatform {
         //Checkpoint verification needs the network and checks compiled in data rather than code, so it is a release checklist step
         excludeTags 'checkpoint'
+        //The in-app driver starts the whole app and changes JVM-wide state: only with -PappCheck, and then alone
+        if(!project.hasProperty('appCheck')) {
+            excludeTags 'app'
+        }
+    }
+    if(project.hasProperty('appCheck')) {
+        filter {
+            includeTestsMatching '*AppCollectiblesCheck'
+        }
     }
     jvmArgs = ["--enable-native-access=ALL-UNNAMED"]
     systemProperty 'sparrow-ltc.home', layout.buildDirectory.dir('test-home').get().asFile.absolutePath
@@ -280,7 +289,9 @@ jlink {
                    'glob:/io.github.doblon8.jzbar/native/**,' +
                    'glob:/io.github.doblon8.openpnp.capture/native/**']
     launcher {
-        name = 'sparrow'
+        //jpackage adds a launcher named other than the image as a second one, and the Windows installer gives every
+        //launcher a shortcut; upstream's "sparrow" and "Sparrow" are one file on Windows, the flavor names are not
+        name = os.windows ? appName : 'sparrow'
         //This list (not application.applicationDefaultJvmArgs) is what populates the jpackage app .cfg.
         //Single-coin flavors bake -Dscrypto.coin below; the unified Sparrow-Scrypt build bakes none.
         jvmArgs = ["--enable-native-access=com.sparrowwallet.drongo",

@@ -36,7 +36,7 @@ public final class TaprootWallets {
             return Optional.of(child);
         }
         String fingerprint = fingerprint(master);
-        return openWallets.stream().filter(TaprootWallets::isTaproot)
+        return openWallets.stream().filter(TaprootWallets::isTaproot).filter(wallet -> wallet.getCoin() == open.getCoin())
                 .filter(wallet -> fingerprint != null && fingerprint.equals(fingerprint(wallet))).findFirst();
     }
 
@@ -55,16 +55,25 @@ public final class TaprootWallets {
                     + "(it needs a single-signature wallet with its seed in this app). Open or create a taproot wallet of the same seed and try again.", Alert.AlertType.WARNING, ButtonType.OK);
             return;
         }
-        Optional<ButtonType> answer = AppServices.showAlertDialog("Create Taproot wallet?", "Inscriptions and runes are kept in this seed's taproot wallet (m/86'/2'/0'). "
-                + "Create it now as a Taproot view of " + master.getFullDisplayName() + "?", Alert.AlertType.CONFIRMATION, ButtonType.CANCEL, ButtonType.OK);
+        Optional<ButtonType> answer = AppServices.showAlertDialog("Create Taproot wallet?", createText(master), Alert.AlertType.CONFIRMATION, ButtonType.CANCEL, ButtonType.OK);
         if(answer.isEmpty() || answer.get() != ButtonType.OK) {
             return;
         }
         SameSeedChildWallets.add(walletForm, master, owner, Wallet::addTaprootChildWallet, then, () -> ensure(walletForm, owner, then));
     }
 
+    /** The offer to create the taproot wallet, with its path on the wallet's coin. */
+    static String createText(Wallet master) {
+        Coin coin = master.getCoin();
+        String kept = coin == Coin.LITECOIN ? "Inscriptions and runes are" : "Inscriptions are";
+        return kept + " kept in this seed's taproot wallet (m/86'/" + coin.getBip44CoinType() + "'/0'). Create it now as a Taproot view of "
+                + master.getFullDisplayName() + "?";
+    }
+
+    //Litecoin and Bellscoin are the coins whose inscriptions use taproot
     private static boolean isTaproot(Wallet wallet) {
-        return wallet != null && wallet.getScriptType() == ScriptType.P2TR && wallet.getPolicyType() == PolicyType.SINGLE_HD && wallet.getCoin() == Coin.LITECOIN;
+        return wallet != null && wallet.getScriptType() == ScriptType.P2TR && wallet.getPolicyType() == PolicyType.SINGLE_HD
+                && (wallet.getCoin() == Coin.LITECOIN || wallet.getCoin() == Coin.BELLSCOIN);
     }
 
     private static String fingerprint(Wallet wallet) {

@@ -29,7 +29,7 @@ import java.util.Map;
  * QR code, with the explorer link and (on LiteForge) the faucet.
  */
 class LitVmReceiveView extends VBox {
-    static final String LITEFORGE_FAUCET = "https://liteforge.hub.caldera.xyz/";
+    static final String LITEFORGE_FAUCET = "https://faucet.testnet.liteforge.zeeve.net/";
 
     LitVmReceiveView(LitVmContext context, LitVmNetwork network) {
         super(14);

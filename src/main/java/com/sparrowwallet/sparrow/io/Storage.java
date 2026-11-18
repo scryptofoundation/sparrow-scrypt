@@ -38,6 +38,9 @@ public class Storage {
     private static final Logger log = LoggerFactory.getLogger(Storage.class);
     public static final ECKey NO_PASSWORD_KEY = ECKey.fromPublicOnly(ECKey.fromPrivate(Utils.hexToBytes("885e5a09708a167ea356a252387aa7c4893d138d632e296df8fbf5c12798bd28")));
 
+    public static final String SWAP_RECORDS_PASSWORD_REFUSAL = "This wallet file holds swap records written by a Sparrow-Scrypt build with the swap tab. " +
+            "They are sealed to the wallet password, and only that build can seal them again, so the password cannot be changed or removed here.";
+
     private static final DateTimeFormatter BACKUP_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final Set<String> warnedDirectories = ConcurrentHashMap.newKeySet();
 
@@ -251,6 +254,25 @@ public class Storage {
     /** Writes the wallet's pending mints, returning once they are on disk. Not for the FX thread. */
     public void savePendingMints(Wallet wallet) throws StorageException {
         persistence.savePendingMints(this, wallet);
+    }
+
+    /** Writes the wallet's inscription checks now, replacing those stored. */
+    public void saveInscriptionChecks(Wallet wallet) throws StorageException {
+        persistence.saveInscriptionChecks(this, wallet);
+    }
+
+    /**
+     * Whether a wallet of this wallet's file (the master or one of its accounts) holds swap records written by a build
+     * with the swap tab. This build carries them through every save unchanged, sealed to the file's key.
+     */
+    public static boolean holdsSwapRecords(Wallet anyWalletOfFile) {
+        Wallet master = anyWalletOfFile.isMasterWallet() ? anyWalletOfFile : anyWalletOfFile.getMasterWallet();
+        return !master.getSwapEntries().isEmpty() || master.getChildWallets().stream().anyMatch(child -> !child.getSwapEntries().isEmpty());
+    }
+
+    /** Why the file's password cannot be changed or removed: its swap records are sealed to the current key. */
+    public static Optional<String> passwordChangeRefusal(Wallet anyWalletOfFile) {
+        return holdsSwapRecords(anyWalletOfFile) ? Optional.of(SWAP_RECORDS_PASSWORD_REFUSAL) : Optional.empty();
     }
 
     public boolean isPersisted(Wallet wallet) {

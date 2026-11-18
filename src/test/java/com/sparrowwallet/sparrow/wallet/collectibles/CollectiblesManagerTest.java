@@ -147,4 +147,45 @@ public class CollectiblesManagerTest {
 
     private static boolean lagged(String dialect) {
         return CollectiblesManager.laggingDialect(dialect, dialect.equals("Nintondo"));
-    }}
+    }
+
+    /** Review focus 1: a wallet whose coin is not the one the app is connected to keeps what it has and asks no other coin's server. */
+    @Test
+    public void waitingForTheCoinsServer() {
+        com.sparrowwallet.drongo.protocol.Sha256Hash a = com.sparrowwallet.drongo.protocol.Sha256Hash.wrap(String.format("%064x", 1));
+        com.sparrowwallet.drongo.protocol.Sha256Hash b = com.sparrowwallet.drongo.protocol.Sha256Hash.wrap(String.format("%064x", 2));
+        com.sparrowwallet.drongo.wallet.InscriptionCheck stored = new com.sparrowwallet.drongo.wallet.InscriptionCheck(a, 0,
+                com.sparrowwallet.drongo.ordinals.track.Verdict.CLEAN, com.sparrowwallet.drongo.wallet.InscriptionCheck.Source.BUILT_IN, false, List.of(), null, b, List.of());
+        List<CollectiblesClassifier.Txo> utxos = List.of(new CollectiblesClassifier.Txo(a + ":0", null, 5, a.toString()),
+                new CollectiblesClassifier.Txo(b + ":1", null, 5, b.toString()));
+        Map<String, com.sparrowwallet.drongo.wallet.InscriptionCheck> checks = CollectiblesManager.waitingChecks(utxos, Map.of(stored.outpoint(), stored),
+                com.sparrowwallet.drongo.Coin.DOGECOIN);
+        Assertions.assertSame(stored, checks.get(a + ":0"));
+        Assertions.assertEquals(com.sparrowwallet.drongo.ordinals.track.Verdict.UNCHECKED, checks.get(b + ":1").verdict());
+        Assertions.assertEquals("Waiting for a connection to the Dogecoin server", checks.get(b + ":1").reason());
+    }
+
+    /** Review I1: the confirming block of each wallet transaction, from the transaction or else the header at its height. */
+    @Test
+    public void confirmingBlocksFromHeaders() {
+        com.sparrowwallet.drongo.protocol.Sha256Hash a = com.sparrowwallet.drongo.protocol.Sha256Hash.wrap(String.format("%064x", 1));
+        com.sparrowwallet.drongo.protocol.Sha256Hash b = com.sparrowwallet.drongo.protocol.Sha256Hash.wrap(String.format("%064x", 2));
+        com.sparrowwallet.drongo.protocol.Sha256Hash c = com.sparrowwallet.drongo.protocol.Sha256Hash.wrap(String.format("%064x", 3));
+        com.sparrowwallet.drongo.protocol.Sha256Hash header = com.sparrowwallet.drongo.protocol.Sha256Hash.wrap(String.format("%064x", 99));
+        List<com.sparrowwallet.drongo.wallet.BlockTransaction> txs = List.of(
+                new com.sparrowwallet.drongo.wallet.BlockTransaction(a, 10, new Date(), 0L, null, null),
+                new com.sparrowwallet.drongo.wallet.BlockTransaction(b, 0, null, 0L, null, null),
+                new com.sparrowwallet.drongo.wallet.BlockTransaction(c, 11, new Date(), 0L, null, null));
+        Map<String, com.sparrowwallet.drongo.protocol.Sha256Hash> blocks = CollectiblesManager.confirmingBlocks(txs, height -> height == 10 ? header : null);
+        Assertions.assertEquals(Map.of(a.toString(), header), blocks);
+    }
+
+    /** Review I6: the public indexer's privacy warning shows once, also when Public is only the default. */
+    @Test
+    public void publicNoticeOnce() {
+        Assertions.assertTrue(CollectiblesManager.needsPublicNotice(com.sparrowwallet.drongo.wallet.InscriptionCheck.Source.PUBLIC, false));
+        Assertions.assertFalse(CollectiblesManager.needsPublicNotice(com.sparrowwallet.drongo.wallet.InscriptionCheck.Source.PUBLIC, true));
+        Assertions.assertFalse(CollectiblesManager.needsPublicNotice(com.sparrowwallet.drongo.wallet.InscriptionCheck.Source.YOUR_OWN, false));
+        Assertions.assertFalse(CollectiblesManager.needsPublicNotice(null, false));
+    }
+}

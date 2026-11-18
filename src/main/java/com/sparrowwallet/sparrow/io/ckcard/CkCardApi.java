@@ -190,8 +190,8 @@ public class CkCardApi extends CardApi {
     }
 
     void sign(Wallet wallet, PSBT psbt) throws CardException {
-        //The chain's signature hash, from the wallet that knows the chain and its tip, before anything is signed or refused (see Coin.getSigHashPrefix)
-        psbt.setSigHashPrefix(wallet.getSigHashPrefix());
+        //The chain's signature hash, from the wallet that knows the chain and its tip, before anything is signed; a PSBT of another coin is refused
+        wallet.stampSigHashPrefix(psbt);
         Keystore cardKeystore = getKeystore();
         KeyDerivation cardKeyDerivation = cardKeystore.getKeyDerivation();
 

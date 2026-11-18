@@ -577,6 +577,21 @@ public class OrdClientParseTest {
         Assertions.assertTrue(none.asked.isEmpty());
     }
 
+    /** ord-pepecoin has no /blockhash/0, but answers GET /block/0 with JSON naming the block's hash, as ord 0.20 does too. */
+    @Test
+    public void genesisFromBlockJsonWhenNoBlockhashEndpoint() throws IOException {
+        OrdStatus testnet = new OrdStatus("testnet", true, 2, null);
+        String pepTestnetGenesis = "f9f4ea4ae7f6ea4c55040ede2019ba0a53e262f46ec9bce3dcda2cb11f96fc52";
+        FixtureTransport pepecoin = new FixtureTransport();
+        pepecoin.answers.put(ORD_BASE + "/block/0", ("{\"hash\":\"" + pepTestnetGenesis + "\",\"height\":0,\"best_block\":true}").getBytes(StandardCharsets.UTF_8));
+        Assertions.assertDoesNotThrow(() -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), pepecoin, testnet, Network.TESTNET, Coin.PEPECOIN, null));
+
+        FixtureTransport other = new FixtureTransport();
+        other.answers.put(ORD_BASE + "/block/0", ("{\"hash\":\"" + DOGE_GENESIS + "\",\"height\":0}").getBytes(StandardCharsets.UTF_8));
+        IOException e = Assertions.assertThrows(IOException.class, () -> OrdClient.checkChain(new Ord020Dialect(ORD_BASE), other, testnet, Network.TESTNET, Coin.PEPECOIN, null));
+        Assertions.assertTrue(e.getMessage().contains("not a Pepecoin"), e.getMessage());
+    }
+
     /** The Settings test accepts an ord 0.5 server, checking it by height when the tip is known, and names runes only on coins that have them. */
     @Test
     public void settingsTestAcceptsLegacyServer() throws IOException {

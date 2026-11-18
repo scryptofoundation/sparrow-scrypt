@@ -237,8 +237,14 @@ public class DbPersistence implements Persistence {
             Coin previousCoin = Coin.beginScope(wallet.getCoin());
             try {
                 getJdbi(storage, password).useTransaction(handle -> {
-                    handle.attach(WalletDao.class).setSchema(getSchema(wallet));
-                    handle.attach(PendingMintDao.class).replace(wallet);
+                    WalletDao walletDao = handle.attach(WalletDao.class);
+                    try {
+                        walletDao.setSchema(getSchema(wallet));
+                        handle.attach(PendingMintDao.class).replace(wallet);
+                    } finally {
+                        //A pooled connection left on the wallet schema keeps the file open past close once a full save has dropped that schema
+                        walletDao.setSchema(DEFAULT_SCHEMA);
+                    }
                 });
             } finally {
                 Coin.endScope(previousCoin);
@@ -252,6 +258,37 @@ public class DbPersistence implements Persistence {
         } catch(InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new StorageException("Interrupted while saving the pending mint", e);
+        }
+    }
+
+    @Override
+    public void saveInscriptionChecks(Storage storage, Wallet wallet) throws StorageException {
+        String password = getDatasourcePassword();
+        Future<?> write = updateExecutor.submit(() -> {
+            Coin previousCoin = Coin.beginScope(wallet.getCoin());
+            try {
+                getJdbi(storage, password).useTransaction(handle -> {
+                    WalletDao walletDao = handle.attach(WalletDao.class);
+                    try {
+                        walletDao.setSchema(getSchema(wallet));
+                        handle.attach(InscriptionCheckDao.class).replace(wallet);
+                    } finally {
+                        //As for pending mints: a pooled connection left on the wallet schema keeps the file open past close
+                        walletDao.setSchema(DEFAULT_SCHEMA);
+                    }
+                });
+            } finally {
+                Coin.endScope(previousCoin);
+            }
+            return null;
+        });
+        try {
+            write.get();
+        } catch(ExecutionException e) {
+            throw new StorageException("Could not save the inscription checks: " + e.getCause().getMessage(), e.getCause());
+        } catch(InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StorageException("Interrupted while saving the inscription checks", e);
         }
     }
 

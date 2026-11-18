@@ -1,5 +1,10 @@
 package com.sparrowwallet.sparrow.wallet.collectibles;
 
+import com.sparrowwallet.drongo.Coin;
+import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.address.Address;
+import com.sparrowwallet.drongo.address.InvalidAddressException;
+import com.sparrowwallet.drongo.ordinals.DoginalsMint;
 import com.sparrowwallet.drongo.ordinals.Inscription;
 import com.sparrowwallet.drongo.ordinals.InscriptionMint;
 import com.sparrowwallet.drongo.wallet.PendingMint;
@@ -25,20 +30,61 @@ import java.util.Optional;
 /**
  * Mint Inscription: text or a file, its content type, the fee rate, and whether to sign the reveal now or later.
  * The commit is paid from the open wallet; the inscription lands in the seed's taproot wallet (see {@link MintFlow}).
+ * On Dogecoin, Pepecoin and Junkcoin the mint is a Doginals chain (see {@link DoginalsFlow}): no taproot wallet and no
+ * Sign later (each batch is signed when the user continues it), and the inscription lands on a chosen address.
  */
 public final class MintInscriptionDialog {
     private MintInscriptionDialog() {}
 
     record Content(String contentType, byte[] body) {}
 
+    /** What the dialog asks for; the destination is set only for a Doginals mint. */
+    record Answer(String contentType, byte[] body, double feeRate, boolean signNow, Address destination) {
+        MintFlow.Request request() {
+            return new MintFlow.Request(new Inscription(contentType, body, null), null, feeRate, signNow);
+        }
+    }
+
+    /** The largest body this coin's mint takes: a Doginals chain takes up to 2 MB, a reveal what fits its weight. */
+    static long maxBody(Coin coin, String contentType) {
+        return DoginalsFlow.usesDoginals(coin) ? DoginalsMint.MAX_BODY : Inscription.maxBodyBytes(contentType);
+    }
+
+    static String feeUnit(Coin coin) {
+        return coin.getSubunit() + "/vB";
+    }
+
+    /** An entered destination, refused unless it is an address of the wallet's coin and network. */
+    static Address destination(Wallet wallet, String entered) {
+        Coin coin = wallet.getCoin();
+        Coin previous = Coin.beginScope(coin);
+        try {
+            return Address.fromString(entered.trim());
+        } catch(InvalidAddressException e) {
+            throw new IllegalArgumentException("This is not a " + coin.getCapitalizedName() + " address on this network.");
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
     public static void start(Window owner, WalletForm walletForm) {
         Wallet open = walletForm.getWallet();
+        if(DoginalsFlow.usesDoginals(open.getCoin())) {
+            Optional<String> refusal = DoginalsFlow.refusal(open, CollectiblesManager.get().getSnapshot(DoginalsFlow.pendingHolder(open)), Coin.get());
+            if(refusal.isPresent()) {
+                AppServices.showErrorDialog("Cannot mint", refusal.get());
+                return;
+            }
+            ask(owner, open).ifPresent(answer -> DoginalsFlow.mint(owner, open, new DoginalsFlow.Request(answer.contentType(), answer.body(), answer.destination(),
+                    answer.feeRate()), message -> showDone(owner, message)));
+            return;
+        }
         Optional<String> refusal = MintFlow.refusal(MintFlow.fundingWallet(open));
         if(refusal.isPresent()) {
             AppServices.showErrorDialog("Cannot mint", refusal.get());
             return;
         }
-        TaprootWallets.ensure(walletForm, owner, taproot -> ask(owner).ifPresent(request -> {
+        TaprootWallets.ensure(walletForm, owner, taproot -> ask(owner, open).map(Answer::request).ifPresent(request -> {
             if(MintFlow.needsPegOut(open)) {
                 try {
                     InscriptionMint.Plan plan = MintFlow.plan(MintFlow.revealNode(taproot), request.inscription(), null, request.feeRate());
@@ -61,11 +107,13 @@ public final class MintInscriptionDialog {
         alert.showAndWait();
     }
 
-    private static Optional<MintFlow.Request> ask(Window owner) {
-        Dialog<MintFlow.Request> dialog = new Dialog<>();
+    private static Optional<Answer> ask(Window owner, Wallet open) {
+        Coin coin = open.getCoin();
+        boolean doginals = DoginalsFlow.usesDoginals(coin);
+        Dialog<Answer> dialog = new Dialog<>();
         dialog.initOwner(owner);
         dialog.setTitle("Mint Inscription");
-        dialog.setHeaderText("Mint an inscription into this seed's taproot wallet");
+        dialog.setHeaderText(doginals ? "Mint a " + coin.getCapitalizedName() + " inscription (Doginals)" : "Mint an inscription into this seed's taproot wallet");
 
         ToggleGroup kind = new ToggleGroup();
         RadioButton textChoice = new RadioButton("Text");
@@ -83,17 +131,27 @@ public final class MintInscriptionDialog {
         Label size = new Label();
         FeeRangeSlider feeRange = new FeeRangeSlider();
         feeRange.setFeeRate(AppServices.getDefaultFeeRate());
-        Label feeLabel = new Label(String.format("%.2f lit/vB", feeRange.getFeeRate()));
-        feeRange.valueProperty().addListener((o, a, b) -> feeLabel.setText(String.format("%.2f lit/vB", feeRange.getFeeRate())));
+        Label feeLabel = new Label(String.format("%.2f %s", feeRange.getFeeRate(), feeUnit(coin)));
+        feeRange.valueProperty().addListener((o, a, b) -> feeLabel.setText(String.format("%.2f %s", feeRange.getFeeRate(), feeUnit(coin))));
         ToggleGroup signing = new ToggleGroup();
         RadioButton signNow = new RadioButton("Sign now: broadcast the commit and the reveal together");
         RadioButton signLater = new RadioButton("Sign later: broadcast only the commit, finish from Pending mints");
         signNow.setToggleGroup(signing);
         signLater.setToggleGroup(signing);
         signNow.setSelected(true);
+        ToggleGroup destinationChoice = new ToggleGroup();
+        Address fresh = doginals ? freshDestination(open) : null;
+        RadioButton toWallet = new RadioButton(doginals ? "A new address of this wallet (" + printed(coin, fresh) + ")" : "");
+        RadioButton toOther = new RadioButton("Another " + coin.getCapitalizedName() + " address:");
+        toWallet.setToggleGroup(destinationChoice);
+        toOther.setToggleGroup(destinationChoice);
+        toWallet.setSelected(true);
+        TextField otherAddress = new TextField();
+        otherAddress.setPrefColumnCount(34);
+        Label destinationProblem = new Label();
 
         byte[][] fileBody = new byte[1][];
-        chooseFile.setOnAction(event -> chooseFile(owner).ifPresent(content -> {
+        chooseFile.setOnAction(event -> chooseFile(owner, coin).ifPresent(content -> {
             fileBody[0] = content.body();
             contentType.setText(content.contentType());
             fileLabel.setText(content.body().length + " bytes");
@@ -108,7 +166,11 @@ public final class MintInscriptionDialog {
         grid.addRow(3, new Label("Content type:"), contentType);
         grid.addRow(4, new Label("Size:"), size);
         grid.addRow(5, new Label("Fee rate:"), new VBox(4, feeRange, feeLabel));
-        grid.addRow(6, new Label("Reveal:"), new VBox(6, signNow, signLater));
+        if(doginals) {
+            grid.addRow(6, new Label("Lands at:"), new VBox(6, toWallet, new HBox(10, toOther, otherAddress), destinationProblem));
+        } else {
+            grid.addRow(6, new Label("Reveal:"), new VBox(6, signNow, signLater));
+        }
         VBox content = new VBox(10, grid);
         content.setPadding(new Insets(10));
         dialog.getDialogPane().setContent(content);
@@ -125,16 +187,29 @@ public final class MintInscriptionDialog {
             }
             byte[] body = isText ? text.getText().getBytes(StandardCharsets.UTF_8) : fileBody[0];
             String type = contentType.getText().trim();
-            int max = Inscription.maxBodyBytes(type.isEmpty() ? Inscription.TEXT : type);
+            long max = maxBody(coin, type.isEmpty() ? Inscription.TEXT : type);
             int length = body == null ? 0 : body.length;
             size.setText(String.format("%,d bytes (at most %,d)", length, max));
             size.setStyle(length > max ? "-fx-text-fill: -fx-accent;" : "");
-            ok.setDisable(length == 0 || length > max || type.isEmpty());
+            otherAddress.setDisable(!toOther.isSelected());
+            boolean destinationOk = true;
+            destinationProblem.setText("");
+            if(doginals && toOther.isSelected()) {
+                try {
+                    destination(open, otherAddress.getText());
+                } catch(IllegalArgumentException e) {
+                    destinationOk = false;
+                    destinationProblem.setText(otherAddress.getText().isBlank() ? "" : e.getMessage());
+                }
+            }
+            ok.setDisable(length == 0 || length > max || type.isEmpty() || !destinationOk);
         };
         kind.selectedToggleProperty().addListener((o, a, b) -> check.run());
         text.textProperty().addListener((o, a, b) -> check.run());
         contentType.textProperty().addListener((o, a, b) -> check.run());
         fileLabel.textProperty().addListener((o, a, b) -> check.run());
+        destinationChoice.selectedToggleProperty().addListener((o, a, b) -> check.run());
+        otherAddress.textProperty().addListener((o, a, b) -> check.run());
         check.run();
 
         dialog.setResultConverter(button -> {
@@ -142,13 +217,37 @@ public final class MintInscriptionDialog {
                 return null;
             }
             byte[] body = textChoice.isSelected() ? text.getText().getBytes(StandardCharsets.UTF_8) : fileBody[0];
-            return new MintFlow.Request(new Inscription(contentType.getText().trim(), body, null), null, feeRange.getFeeRate(), signNow.isSelected());
+            Address destination = !doginals ? null : toOther.isSelected() ? destination(open, otherAddress.getText()) : fresh;
+            return new Answer(contentType.getText().trim(), body, feeRange.getFeeRate(), !doginals && signNow.isSelected(), destination);
         });
         return dialog.showAndWait();
     }
 
+    private static String printed(Coin coin, Address address) {
+        Coin previous = Coin.beginScope(coin);
+        try {
+            return address.toString();
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    //A receive address after the one whose key signs the chain
+    private static Address freshDestination(Wallet wallet) {
+        Coin previous = Coin.beginScope(wallet.getCoin());
+        try {
+            return wallet.getFreshNode(KeyPurpose.RECEIVE, DoginalsFlow.keyNode(wallet)).getAddress();
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
     /** A file's bytes and content type, refusing one too large to inscribe before reading it. */
     static Optional<Content> chooseFile(Window owner) {
+        return chooseFile(owner, Coin.LITECOIN);
+    }
+
+    static Optional<Content> chooseFile(Window owner, Coin coin) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Choose the file to inscribe");
         File file = chooser.showOpenDialog(owner);
@@ -156,7 +255,7 @@ public final class MintInscriptionDialog {
             return Optional.empty();
         }
         String contentType = Inscription.contentTypeFor(file.getName());
-        int max = Inscription.maxBodyBytes(contentType);
+        long max = maxBody(coin, contentType);
         if(file.length() > max) {
             AppServices.showErrorDialog("File too large", String.format("%s is %,d bytes. At most %,d bytes fit in one inscription.", file.getName(), file.length(), max));
             return Optional.empty();

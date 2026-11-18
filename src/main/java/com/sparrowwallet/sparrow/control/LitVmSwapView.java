@@ -33,7 +33,7 @@ class LitVmSwapView extends VBox {
         swapPane = new LitVmSwapPane(context.walletForm, context.statusConsumer(), context::balancesChanged);
         networkCombo.valueProperty().addListener((obs, old, network) -> refresh());
 
-        getChildren().addAll(title, new HBox(10, new Label("Network"), networkCombo), swapPane);
+        getChildren().addAll(title, new HBox(10, LitVmContext.formLabel("Network"), networkCombo), swapPane);
         context.onBalancesChanged(this::refresh);
         refresh();
     }
@@ -55,7 +55,7 @@ class LitVmSwapView extends VBox {
         task.setOnFailed(e -> {
             if(network == networkCombo.getValue()) {
                 swapPane.setNetwork(context.client(network), List.of());
-                context.status("Could not reach " + network.getDisplayName() + ": " + LitVmContext.message(task.getException()));
+                context.status(LitVmWords.balancesUnread(network, task.getException()));
             }
         });
         LitVmContext.start(task);

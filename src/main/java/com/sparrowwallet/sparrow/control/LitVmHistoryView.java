@@ -60,12 +60,15 @@ class LitVmHistoryView extends VBox {
             return row;
         });
         VBox.setVgrow(table, Priority.ALWAYS);
-        source.setStyle("-fx-text-fill: -fx-mid-text-color;");
+        //Lighter than the rest in either theme (the mid text colour all but vanishes on the dark theme's background)
+        source.setStyle("-fx-opacity: 0.7;");
         source.setText("History from the " + URI.create(network.getExplorerUrl()).getHost() + " explorer (display only; balances come from the network). "
                 + "Double-click a row to open it there. Value moved inside contract calls is not listed.");
         source.setWrapText(true);
+        //Wrapped in full, not squeezed to one cut line when the window is at its least width
+        source.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
 
-        getChildren().addAll(title, new HBox(12, new Label("Balance"), balance, refresh), tokens, table, source);
+        getChildren().addAll(title, new HBox(12, LitVmContext.formLabel("Balance"), balance, refresh), tokens, table, source);
         context.onBalancesChanged(this::refresh);
         refresh();
     }
@@ -97,19 +100,34 @@ class LitVmHistoryView extends VBox {
         });
         balances.setOnFailed(e -> {
             balance.setText("Unavailable");
-            context.status("Could not reach " + network.getDisplayName() + ": " + LitVmContext.message(balances.getException()));
+            context.status(LitVmWords.balancesUnread(network, balances.getException()));
         });
         LitVmContext.start(balances);
 
         Task<List<BlockscoutClient.Entry>> history = new Task<>() {
             @Override
             protected List<BlockscoutClient.Entry> call() throws Exception {
-                return new BlockscoutClient(network).history(me);
+                return new BlockscoutClient(network, context.transport()).history(me);
             }
         };
         history.setOnSucceeded(e -> table.setItems(FXCollections.observableArrayList(history.getValue().stream().map(entry -> row(entry, me)).toList())));
-        history.setOnFailed(e -> table.setPlaceholder(new Label("History unavailable: " + LitVmContext.message(history.getException()))));
+        history.setOnFailed(e -> table.setPlaceholder(placeholder(table, historyFailed(history.getException()))));
         LitVmContext.start(history);
+    }
+
+    /** A line shown in place of the table's rows: wrapped within the table, never cut short at a narrow window. */
+    static Label placeholder(TableView<?> table, String text) {
+        Label label = new Label(text);
+        label.setWrapText(true);
+        label.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        label.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        label.maxWidthProperty().bind(javafx.beans.binding.Bindings.max(40, table.widthProperty().subtract(24)));
+        return label;
+    }
+
+    /** The table's line when the explorer gave no history. */
+    static String historyFailed(Throwable failure) {
+        return LitVmWords.failure("History unavailable.", failure, LitVmWords.EXPLORER);
     }
 
     private Row row(BlockscoutClient.Entry entry, EvmAddress me) {

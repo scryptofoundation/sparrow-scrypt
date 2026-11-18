@@ -65,11 +65,11 @@ class LitVmSendView extends VBox {
         GridPane grid = new GridPane();
         grid.setHgap(10);
         grid.setVgap(10);
-        grid.add(new Label("Pay to"), 0, 0);
+        grid.add(LitVmContext.formLabel("Pay to"), 0, 0);
         grid.add(toField, 1, 0);
-        grid.add(new Label("Asset"), 0, 1);
+        grid.add(LitVmContext.formLabel("Asset"), 0, 1);
         grid.add(new HBox(10, assetCombo, available), 1, 1);
-        grid.add(new Label("Amount"), 0, 2);
+        grid.add(LitVmContext.formLabel("Amount"), 0, 2);
         grid.add(new HBox(8, amountField, sendButton), 1, 2);
         Label note = new Label("Network: " + network.getDisplayName() + " (chain " + network.getChainId() + "). The fee is paid in " + network.getSymbol()
                 + "; the confirmation shows the most it can cost.");
@@ -100,7 +100,7 @@ class LitVmSendView extends VBox {
             assetCombo.setValue(assets.stream().filter(a -> selected != null && (a.isNative() ? selected.isNative()
                     : !selected.isNative() && a.token().contract().equals(selected.token().contract()))).findFirst().orElse(assets.getFirst()));
         });
-        task.setOnFailed(e -> context.status("Could not reach " + network.getDisplayName() + ": " + LitVmContext.message(task.getException())));
+        task.setOnFailed(e -> context.status(LitVmWords.balancesUnread(network, task.getException())));
         LitVmContext.start(task);
     }
 
@@ -122,7 +122,8 @@ class LitVmSendView extends VBox {
         try {
             amount = asset.isNative() ? Wei.parse(amountField.getText()) : asset.token().parse(amountField.getText());
         } catch(IllegalArgumentException e) {
-            context.status(e.getMessage());
+            //A token's own message names the token by the symbol its contract gave
+            context.status(asset.isNative() ? e.getMessage() : LitVmWords.tokenAmount(asset.token()));
             return;
         }
         if(amount.signum() == 0) {
@@ -137,6 +138,11 @@ class LitVmSendView extends VBox {
             context.status("Another LitVM transaction is still in progress; wait for it to finish.");
             return;
         }
+        //An earlier send from this account whose fate is not known: ask before taking the next nonce
+        if(!LitVmFlowPane.mayProceed(LitVmNotices.get(), link.getAddress(), List.of(network), earlier -> LitVmFlowPane.confirmAgain(context.window(), earlier, true))) {
+            context.status("Not sent.");
+            return;
+        }
         LitVmFlowPane.busy = true;
         sendButton.setDisable(true);
         context.status("Preparing transaction...");
@@ -144,21 +150,21 @@ class LitVmSendView extends VBox {
         Task<Eip1559Transaction> prepare = new Task<>() {
             @Override
             protected Eip1559Transaction call() throws Exception {
-                client.verifyChain();
+                LitVmContext.verifyChain(client);
                 Eip1559Transaction tx;
                 if(asset.isNative()) {
                     tx = client.prepareTransfer(link.getAddress(), to, amount);
                 } else {
                     BigInteger tokenBalance = client.getTokenBalance(asset.token(), link.getAddress());
                     if(tokenBalance.compareTo(amount) < 0) {
-                        throw new IllegalStateException("Only " + asset.token().format(tokenBalance) + " " + asset.token().symbol() + " available");
+                        throw new LitVmWords.Said("Only " + asset.token().format(tokenBalance) + " of this token is available.");
                     }
                     tx = client.prepareTokenTransfer(link.getAddress(), asset.token(), to, amount);
                 }
                 dataFee[0] = client.l1DataFee(tx);
                 BigInteger needed = tx.maxCost().add(dataFee[0]);
                 if(client.getBalance(link.getAddress()).compareTo(needed) < 0) {
-                    throw new IllegalStateException("Not enough " + network.getSymbol() + " for this transfer and its network fee (up to " + Wei.format(needed) + ")");
+                    throw new LitVmWords.Said("Not enough " + network.getSymbol() + " for this transfer and its network fee (up to " + Wei.format(needed) + ").");
                 }
                 return tx;
             }
@@ -166,7 +172,7 @@ class LitVmSendView extends VBox {
         prepare.setOnSucceeded(e -> confirmAndSend(client, link, asset, to, amount, prepare.getValue(), dataFee[0]));
         prepare.setOnFailed(e -> {
             release();
-            context.status("Could not prepare the transaction: " + LitVmContext.message(prepare.getException()));
+            context.status(prepareFailed(prepare.getException()));
         });
         LitVmContext.start(prepare);
     }
@@ -196,18 +202,13 @@ class LitVmSendView extends VBox {
 
     private void broadcast(LitVmRpcClient client, Eip1559Transaction.Signed signed) {
         context.status("Broadcasting " + signed.hashHex() + "...");
+        LitVmNotices notices = LitVmNotices.get();
         Task<String> broadcast = new Task<>() {
             @Override
             protected String call() throws Exception {
-                String hash = LitVmFlowPane.send(client, signed, "The transfer");
-                for(int i = 0; i < 30; i++) {
-                    Optional<LitVmRpcClient.Receipt> receipt = LitVmFlowPane.receipt(client, hash);
-                    if(receipt.isPresent()) {
-                        return receipt.get().success() ? "Confirmed in block " + receipt.get().blockNumber() + ": " + hash : "Failed on chain: " + hash;
-                    }
-                    Thread.sleep(2000);
-                }
-                return "Sent, still pending: " + hash;
+                //Its notice is kept from before the request until the receipt is seen to succeed
+                LitVmRpcClient.Receipt receipt = LitVmFlowPane.transact(notices, client, signed, "The transfer", false, null, 30, Thread::sleep, null);
+                return "Confirmed in block " + receipt.blockNumber() + ": " + signed.hashHex();
             }
         };
         broadcast.setOnSucceeded(e -> {
@@ -218,9 +219,24 @@ class LitVmSendView extends VBox {
         });
         broadcast.setOnFailed(e -> {
             release();
-            context.status("Not completed: " + LitVmContext.message(broadcast.getException()));
+            if(LitVmWords.uncertain(broadcast.getException()) != null) {
+                //It may be out, or is: the form is not left ready for a second click
+                amountField.clear();
+            }
+            LitVmFlowPane.watchAfter(notices, broadcast.getException(), signed.from(), client);
+            context.status(broadcastFailed(broadcast.getException()));
         });
         LitVmContext.start(broadcast);
+    }
+
+    /** The status line when the transfer could not be prepared: nothing was signed or sent yet. */
+    static String prepareFailed(Throwable failure) {
+        return LitVmWords.prepareFailed(failure);
+    }
+
+    /** The status line when the transfer's broadcast failed. */
+    static String broadcastFailed(Throwable failure) {
+        return LitVmWords.broadcastFailed(failure);
     }
 
     private void release() {

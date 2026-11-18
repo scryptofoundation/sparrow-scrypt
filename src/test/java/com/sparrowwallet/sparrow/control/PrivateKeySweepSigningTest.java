@@ -7,6 +7,9 @@ import com.sparrowwallet.drongo.crypto.ECKey;
 import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.protocol.*;
 import com.sparrowwallet.drongo.psbt.PSBT;
+import com.sparrowwallet.sparrow.AppServices;
+import com.sparrowwallet.sparrow.ChainTip;
+import com.sparrowwallet.sparrow.net.ElectrumServer;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +42,40 @@ public class PrivateKeySweepSigningTest {
             PSBT psbt = PrivateKeySweepDialog.signSweep(sweep.transaction(), sweep.funding().getOutputs(), KEY, ScriptType.P2PKH, Coin.LUCKYCOIN, Network.MAINNET, null);
             Assertions.assertEquals(Coin.LUCKYCOIN, psbt.getCoin());
             Assertions.assertArrayEquals(LUCKYCOIN_CHAIN_ID, psbt.getSigHashPrefix());
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    /**
+     * The lookup of the key's outputs captures the tip with the coin, so a sweep signs by the chain and tip it was looked up on, not by a tip
+     * announced since
+     */
+    @Test
+    public void addressLookupCapturesTheTipWithItsCoin() {
+        ChainTip previousTip = AppServices.getAnnouncedTip();
+        Coin previous = Coin.beginScope(Coin.LUCKYCOIN);
+        try {
+            AppServices.setAnnouncedTip(new ChainTip(276400, null));
+            ElectrumServer.AddressUtxosService service = new ElectrumServer.AddressUtxosService(ScriptType.P2PKH.getAddress(PolicyType.SINGLE_HD, KEY), null);
+            AppServices.setAnnouncedTip(new ChainTip(276600, null));
+            Assertions.assertEquals(Coin.LUCKYCOIN, service.getCoin());
+            Assertions.assertEquals(276400, service.getTipHeight());
+        } finally {
+            AppServices.setAnnouncedTip(previousTip);
+            Coin.endScope(previous);
+        }
+    }
+
+    /** A sweep looked up on one coin is not signed once the app has moved to another */
+    @Test
+    public void sweepIsRefusedWhenTheActiveCoinChanged() {
+        Coin previous = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            Sweep sweep = sweep();
+            IllegalStateException e = Assertions.assertThrows(IllegalStateException.class, () -> PrivateKeySweepDialog.signSweep(sweep.transaction(),
+                    sweep.funding().getOutputs(), KEY, ScriptType.P2PKH, Coin.LUCKYCOIN, Network.MAINNET, 276400));
+            Assertions.assertEquals(PrivateKeySweepDialog.SWEEP_COIN_CHANGED, e.getMessage());
         } finally {
             Coin.endScope(previous);
         }

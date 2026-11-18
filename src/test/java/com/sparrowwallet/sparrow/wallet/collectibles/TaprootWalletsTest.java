@@ -59,6 +59,24 @@ public class TaprootWalletsTest {
     }
 
     @Test
+    public void bellscoinTaprootIsATaprootWallet() throws Exception {
+        Wallet bells = wallet(ABANDON, ScriptType.P2TR, Coin.BELLSCOIN);
+        Assertions.assertSame(bells, TaprootWallets.find(bells, List.of(bells)).orElseThrow());
+        Wallet bellsSegwit = wallet(ABANDON, ScriptType.P2WPKH, Coin.BELLSCOIN);
+        Assertions.assertSame(bells, TaprootWallets.find(bellsSegwit, List.of(bellsSegwit, bells)).orElseThrow());
+        //A Litecoin wallet of the same seed never takes the Bellscoin taproot wallet, nor the reverse
+        Wallet ltcSegwit = wallet(ABANDON, ScriptType.P2WPKH, Coin.LITECOIN);
+        Assertions.assertEquals(Optional.empty(), TaprootWallets.find(ltcSegwit, List.of(ltcSegwit, bells)));
+        Wallet ltcTaproot = wallet(ABANDON, ScriptType.P2TR, Coin.LITECOIN);
+        Assertions.assertEquals(Optional.empty(), TaprootWallets.find(bellsSegwit, List.of(bellsSegwit, ltcTaproot)));
+
+        String text = TaprootWallets.createText(bellsSegwit);
+        Assertions.assertTrue(text.contains("m/86'/" + Coin.BELLSCOIN.getBip44CoinType() + "'/0'"), text);
+        Assertions.assertFalse(text.contains("m/86'/2'"), text);
+        Assertions.assertTrue(TaprootWallets.createText(ltcSegwit).contains("m/86'/2'/0'"));
+    }
+
+    @Test
     public void findIgnoresOtherSeedsAndOtherCoins() throws Exception {
         Wallet segwit = wallet(ABANDON, ScriptType.P2WPKH, Coin.LITECOIN);
         Wallet otherSeed = wallet(ZOO, ScriptType.P2TR, Coin.LITECOIN);

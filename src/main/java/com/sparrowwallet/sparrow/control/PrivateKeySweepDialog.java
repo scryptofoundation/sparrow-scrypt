@@ -415,7 +415,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
                     }
                 }
 
-                createTransaction(privateKey.getKey(), scriptType, utxos, payment);
+                createTransaction(privateKey.getKey(), scriptType, utxos, payment, addressUtxosService.getCoin(), addressUtxosService.getTipHeight());
             });
             addressUtxosService.setOnFailed(failedEvent -> {
                 Throwable rootCause = Throwables.getRootCause(failedEvent.getSource().getException());
@@ -440,7 +440,7 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
         return txOutputs.stream().filter(txOutput -> txOutput.getValue() > dustAttackThreshold).collect(Collectors.toList());
     }
 
-    private void createTransaction(ECKey privKey, ScriptType scriptType, List<TransactionOutput> txOutputs, Payment payment) {
+    private void createTransaction(ECKey privKey, ScriptType scriptType, List<TransactionOutput> txOutputs, Payment payment, Coin coin, Integer tipHeight) {
         Address destAddress = payment instanceof SilentPayment silentPayment ? computeSilentPaymentAddress(privKey, scriptType, txOutputs, silentPayment) : payment.getAddress();
         ECKey pubKey = ECKey.fromPublicOnly(privKey);
 
@@ -479,16 +479,17 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
 
         Transaction transaction = new Transaction();
         transaction.setVersion(2);
-        transaction.setLocktime(AppServices.getCurrentBlockHeight() == null ? 0 : AppServices.getCurrentBlockHeight());
+        transaction.setLocktime(tipHeight == null ? 0 : tipHeight);
         for(TransactionInput txInput : noFeeTransaction.getInputs()) {
             transaction.addInput(txInput);
         }
         transaction.addOutput(new TransactionOutput(transaction, total - fee, destAddress.getOutputScript()));
 
-        //The sweep spends on the chain the app is connected to, the focused coin's, whose tip the app knows
+        //The sweep spends on the chain its outputs were looked up on, the coin and tip the lookup captured, whose server the lookup checked it was
+        //connected to
         PSBT psbt;
         try {
-            psbt = signSweep(transaction, txOutputs, privKey, scriptType, Coin.get(), Network.get(), AppServices.getCurrentBlockHeight());
+            psbt = signSweep(transaction, txOutputs, privKey, scriptType, coin, Network.get(), tipHeight);
         } catch(IllegalStateException e) {
             AppServices.showErrorDialog("Failed to sign", e.getMessage());
             return;
@@ -505,9 +506,17 @@ public class PrivateKeySweepDialog extends Dialog<Transaction> {
      * Signs and finalizes a sweep of the given outputs with the private key, for the given chain at the given tip. The chain decides the signature
      * hash (see Coin.getSigHashPrefix), so the PSBT carries the coin and the prefix before anything is signed.
      *
-     * @throws IllegalStateException where an output cannot be signed for
+     * @throws IllegalStateException where an output cannot be signed for, or the active coin is no longer the given one (SWEEP_COIN_CHANGED)
      */
+    /** Why a sweep is not signed once the app has moved to another coin since its outputs were looked up */
+    static final String SWEEP_COIN_CHANGED = "The active coin changed after this key's outputs were looked up. Open Sweep Private Key again from the coin to sweep.";
+
     static PSBT signSweep(Transaction transaction, List<TransactionOutput> txOutputs, ECKey privKey, ScriptType scriptType, Coin coin, Network network, Integer tipHeight) {
+        //The destination, fee rate and dialog were all read under the active coin: a sweep looked up on another is not signed
+        if(Coin.get() != coin) {
+            throw new IllegalStateException(SWEEP_COIN_CHANGED);
+        }
+
         ECKey pubKey = ECKey.fromPublicOnly(privKey);
         PSBT psbt = new PSBT(transaction);
         psbt.setCoin(coin);

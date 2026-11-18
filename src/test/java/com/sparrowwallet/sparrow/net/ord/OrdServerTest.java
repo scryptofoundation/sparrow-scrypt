@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 public class OrdServerTest {
     @Test
     public void offResolvesToNull() {
-        Assertions.assertNull(OrdServer.resolveUrl(InscriptionServerMode.OFF, "http://127.0.0.1:8085", Network.MAINNET));
+        Assertions.assertNull(OrdServer.resolveUrl(InscriptionServerMode.BUILT_IN, "http://127.0.0.1:8085", Network.MAINNET));
     }
 
     @Test

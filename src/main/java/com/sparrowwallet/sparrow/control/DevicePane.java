@@ -873,8 +873,19 @@ public class DevicePane extends TitledDescriptionPane {
     }
 
     private void sign() {
-        //The chain's signature hash, from the wallet that knows the chain and its tip, before anything is signed or refused (see Coin.getSigHashPrefix)
-        psbt.setSigHashPrefix(wallet.getSigHashPrefix());
+        //The chain's signature hash, from the wallet that knows the chain and its tip, before anything is signed or refused (see Coin.getSigHashPrefix).
+        //A PSBT marked for another coin is refused here, for devices and cards alike
+        try {
+            if(device.isCard()) {
+                wallet.stampSigHashPrefix(psbt);
+            } else {
+                Hwi.checkForDevice(wallet, psbt);
+            }
+        } catch(IllegalStateException | SignTransactionException e) {
+            setError("Signing Error", e.getMessage());
+            signButton.setDisable(false);
+            return;
+        }
         if(device.isCard()) {
             try {
                 CardApi cardApi = CardApi.getCardApi(device.getModel(), pin.get());

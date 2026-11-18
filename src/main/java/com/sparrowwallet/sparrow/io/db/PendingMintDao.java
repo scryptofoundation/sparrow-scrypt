@@ -10,13 +10,14 @@ import org.jdbi.v3.sqlobject.statement.SqlUpdate;
 import java.util.List;
 
 public interface PendingMintDao {
-    @SqlQuery("select id, kind, keyPath, scriptHash, commitTxid, commitVout, commitValue, contentType, etching from pendingMint where wallet = ? order by id")
+    @SqlQuery("select id, kind, keyPath, scriptHash, commitTxid, commitVout, commitValue, contentType, etching, content, feeRate, destination, stepsBroadcast from pendingMint where wallet = ? order by id")
     @RegisterRowMapper(PendingMintMapper.class)
     List<PendingMint> getForWalletId(Long id);
 
-    @SqlUpdate("insert into pendingMint (kind, keyPath, scriptHash, commitTxid, commitVout, commitValue, contentType, etching, wallet) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    @SqlUpdate("insert into pendingMint (kind, keyPath, scriptHash, commitTxid, commitVout, commitValue, contentType, etching, content, feeRate, destination, stepsBroadcast, wallet) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     @GetGeneratedKeys("id")
-    long insert(int kind, String keyPath, byte[] scriptHash, byte[] commitTxid, int commitVout, long commitValue, String contentType, String etching, long wallet);
+    long insert(int kind, String keyPath, byte[] scriptHash, byte[] commitTxid, int commitVout, long commitValue, String contentType, String etching,
+                byte[] content, double feeRate, String destination, int stepsBroadcast, long wallet);
 
     @SqlUpdate("delete from pendingMint where wallet = ?")
     void deleteForWalletId(long wallet);
@@ -32,7 +33,8 @@ public interface PendingMintDao {
         deleteForWalletId(wallet.getId());
         for(PendingMint mint : wallet.getPendingMints()) {
             long id = insert(mint.getKind().ordinal(), mint.getKeyPath(), mint.getScriptHash(), mint.getCommitTxid().getBytes(), mint.getCommitVout(),
-                    mint.getCommitValue(), mint.getContentType(), PendingMint.encodeEtching(mint.getEtching()), wallet.getId());
+                    mint.getCommitValue(), mint.getContentType(), PendingMint.encodeEtching(mint.getEtching()), mint.getContent(), mint.getFeeRate(),
+                    mint.getDestination(), mint.getStepsBroadcast(), wallet.getId());
             mint.setId(id);
         }
     }

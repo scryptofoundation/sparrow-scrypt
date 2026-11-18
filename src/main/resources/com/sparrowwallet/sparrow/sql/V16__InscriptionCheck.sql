@@ -1,0 +1,2 @@
+create table inscriptionCheck (id identity not null, txid varbinary(32) not null, vout integer not null, verdict integer not null, source integer not null, runes boolean not null, found varchar(65535), reason varchar(1024), blockHash varbinary(32), openPieces varchar(1048576), wallet bigint not null);
+alter table inscriptionCheck add constraint inscriptionCheck_wallet foreign key (wallet) references wallet;

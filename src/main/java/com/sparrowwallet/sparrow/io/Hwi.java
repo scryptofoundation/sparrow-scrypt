@@ -8,6 +8,7 @@ import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.psbt.PSBT;
 import com.sparrowwallet.drongo.silentpayments.SilentPaymentScanAddress;
 import com.sparrowwallet.drongo.wallet.StandardAccount;
+import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletModel;
 import com.sparrowwallet.lark.DeviceException;
 import com.sparrowwallet.lark.Lark;
@@ -253,6 +254,20 @@ public class Hwi {
         }
     }
 
+    /**
+     * What happens before a PSBT goes to a USB device: the signing wallet puts its chain on it, refusing a PSBT marked for another coin, and a chain
+     * whose signature hash the device does not make (Luckycoin from height 276500) is refused
+     */
+    public static void checkForDevice(Wallet wallet, PSBT psbt) throws SignTransactionException {
+        try {
+            wallet.stampSigHashPrefix(psbt);
+        } catch(IllegalStateException e) {
+            throw new SignTransactionException(e.getMessage());
+        }
+        if(psbt.getSigHashPrefix().length > 0) {
+            throw new SignTransactionException(LUCKYCOIN_HARDWARE_SIGNING_REFUSED);
+        }
+    }
     public PSBT signPSBT(Device device, String passphrase, PSBT psbt,
                          OutputDescriptor walletDescriptor, String walletName, byte[] walletRegistration) throws SignTransactionException {
         //A hardware wallet works out the signature hash on the device, by Bitcoin's rule. A chain with its own rule (Luckycoin, see

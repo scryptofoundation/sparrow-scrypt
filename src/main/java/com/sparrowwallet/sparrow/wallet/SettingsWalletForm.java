@@ -4,7 +4,10 @@ import com.sparrowwallet.drongo.policy.Policy;
 import com.sparrowwallet.drongo.wallet.DeterministicSeed;
 import com.sparrowwallet.drongo.wallet.Keystore;
 import com.sparrowwallet.drongo.wallet.LitVmLink;
+import com.sparrowwallet.drongo.wallet.MakerHistoryEntry;
 import com.sparrowwallet.drongo.wallet.MasterPrivateExtendedKey;
+import com.sparrowwallet.drongo.wallet.PendingMint;
+import com.sparrowwallet.drongo.wallet.SwapEntry;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.EventManager;
@@ -88,6 +91,7 @@ public class SettingsWalletForm extends WalletForm {
             Wallet masterWallet = wallet.isMasterWallet() ? null : wallet.getMasterWallet();
             Integer childIndex = wallet.isMasterWallet() ? null : wallet.getMasterWallet().getChildWallets().indexOf(wallet);
             List<Wallet> childWallets = wallet.getChildWallets();
+            Wallet liveWallet = wallet;
 
             //Replace the SettingsWalletForm wallet reference - note that this reference is only shared with the WalletForm wallet with WalletAddressesChangedEvent below
             wallet = walletCopy.copy();
@@ -99,6 +103,13 @@ public class SettingsWalletForm extends WalletForm {
             } else if(masterWallet != null && childIndex != null) {
                 wallet.setMasterWallet(masterWallet);
                 masterWallet.getChildWallets().set(childIndex, wallet);
+            }
+
+            //The copy was taken when Settings opened, so take swaps and pending mints from the live wallets, which kept changing since
+            carryLiveState(liveWallet, wallet);
+            for(Wallet childWallet : wallet.getChildWallets()) {
+                childWallets.stream().filter(liveChild -> liveChild.getName().equals(childWallet.getName())).findFirst()
+                        .ifPresent(liveChild -> carryLiveState(liveChild, childWallet));
             }
 
             save();
@@ -144,6 +155,24 @@ public class SettingsWalletForm extends WalletForm {
                 EventManager.get().post(new WalletPasswordChangedEvent(wallet, pastWallet, getWalletId()));
             }
         }
+    }
+
+    private static void carryLiveState(Wallet live, Wallet target) {
+        if(live == target) {
+            return;
+        }
+
+        List<SwapEntry> swapEntries = live.getSwapEntries().stream().map(SwapEntry::copy).toList();
+        target.getSwapEntries().clear();
+        target.getSwapEntries().addAll(swapEntries);
+
+        List<MakerHistoryEntry> makerHistory = live.getMakerHistory().stream().map(MakerHistoryEntry::copy).toList();
+        target.getMakerHistory().clear();
+        target.getMakerHistory().addAll(makerHistory);
+
+        List<PendingMint> pendingMints = live.getPendingMints().stream().map(PendingMint::copy).toList();
+        target.getPendingMints().clear();
+        target.getPendingMints().addAll(pendingMints);
     }
 
     //Returns true for any change, other than a keystore label change, to trigger a full wallet refresh

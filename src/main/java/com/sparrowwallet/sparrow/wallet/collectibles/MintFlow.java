@@ -3,6 +3,8 @@ package com.sparrowwallet.sparrow.wallet.collectibles;
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
 import com.sparrowwallet.drongo.SecureString;
+import com.sparrowwallet.drongo.address.Address;
+import com.sparrowwallet.drongo.address.InvalidAddressException;
 import com.sparrowwallet.drongo.crypto.ECKey;
 import com.sparrowwallet.drongo.ordinals.CollectibleTransactions;
 import com.sparrowwallet.drongo.ordinals.Inscription;
@@ -54,7 +56,11 @@ public final class MintFlow {
     private MintFlow() {}
 
     /** What a mint dialog asks for. An etch is never signed now. */
-    public record Request(Inscription inscription, Runestone.Etching etching, double feeRate, boolean signNow) {
+    public record Request(Inscription inscription, Runestone.Etching etching, double feeRate, boolean signNow, Address destination) {
+        public Request(Inscription inscription, Runestone.Etching etching, double feeRate, boolean signNow) {
+            this(inscription, etching, feeRate, signNow, null);
+        }
+
         public Request {
             if(etching != null && signNow) {
                 throw new IllegalArgumentException("An etch is revealed only once its commit is " + InscriptionMint.COMMIT_CONFIRMATIONS + " blocks deep");
@@ -69,9 +75,18 @@ public final class MintFlow {
 
     /** Why this wallet cannot mint, if it cannot. */
     public static Optional<String> refusal(Wallet wallet) {
-        if(wallet.getCoin() != Coin.LITECOIN) {
-            return Optional.of("Inscriptions and runes are minted from Litecoin wallets only.");
+        Coin coin = wallet.getCoin();
+        if(DoginalsFlow.usesDoginals(coin)) {
+            return Optional.of(coin.getCapitalizedName() + " inscriptions are minted as Doginals, not by commit and reveal.");
         }
+        if(coin != Coin.LITECOIN && coin != Coin.BELLSCOIN) {
+            return Optional.of("Inscriptions are not minted on " + coin.getCapitalizedName() + ".");
+        }
+        return keyRefusal(wallet);
+    }
+
+    /** Why this wallet cannot sign a mint in this app, if it cannot: minting needs a single-signature wallet with its seed here. */
+    static Optional<String> keyRefusal(Wallet wallet) {
         if(wallet.getPolicyType() != PolicyType.SINGLE_HD) {
             return Optional.of("Minting works from single-signature wallets only.");
         }
@@ -90,11 +105,16 @@ public final class MintFlow {
 
     /** The plan for a reveal to this taproot node: its untweaked key goes in the envelope, its address receives the postage. */
     public static InscriptionMint.Plan plan(WalletNode node, Inscription inscription, Runestone.Etching etching, double revealFeeRate) {
+        return plan(node, inscription, etching, revealFeeRate, null);
+    }
+
+    /** As above, but the reveal lands on the destination; a null destination is the node's own address. */
+    public static InscriptionMint.Plan plan(WalletNode node, Inscription inscription, Runestone.Etching etching, double revealFeeRate, Address destination) {
         Runestone.Etching checked = etching;
         if(checked != null && !Arrays.equals(inscription.runeCommitment(), checked.name().commitment())) {
             throw new IllegalArgumentException("The envelope does not commit to the rune being etched");
         }
-        return new InscriptionMint.Plan(inscription, node.getPubKey(), node.getAddress(), checked, revealFeeRate);
+        return new InscriptionMint.Plan(inscription, node.getPubKey(), destination == null ? node.getAddress() : destination, checked, revealFeeRate, node.getWallet().getCoin());
     }
 
     /** An etch's envelope: the given content, or by default the spaced rune name as text; with the rune's commitment. */
@@ -107,8 +127,10 @@ public final class MintFlow {
 
     public static PendingMint pendingRecord(InscriptionMint.Plan plan, WalletNode node, Transaction commit, Runestone.Etching etching) {
         TransactionOutput commitOutput = commit.getOutputs().getFirst();
+        //Only a destination other than the node's own address is kept: a record without one reveals to the node
+        String destination = plan.destination().equals(node.getAddress()) ? null : plan.destination().toString();
         return new PendingMint(etching == null ? PendingMint.Kind.INSCRIPTION : PendingMint.Kind.ETCH, node.getDerivationPath(), plan.scriptHash(),
-                commit.getTxId(), 0, commitOutput.getValue(), plan.inscription().contentType(), etching);
+                commit.getTxId(), 0, commitOutput.getValue(), plan.inscription().contentType(), etching, null, 0, destination, 0);
     }
 
     /**
@@ -127,7 +149,18 @@ public final class MintFlow {
             }
             inscription = new Inscription(mint.getContentType(), content, null);
         }
-        InscriptionMint.Plan plan = plan(node, inscription, mint.getEtching(), 0);
+        Address destination = null;
+        if(mint.getDestination() != null) {
+            Coin previous = Coin.beginScope(taproot.getCoin());
+            try {
+                destination = Address.fromString(mint.getDestination());
+            } catch(InvalidAddressException e) {
+                throw new IllegalArgumentException("This pending mint's destination " + mint.getDestination() + " is not a " + taproot.getCoin().getCapitalizedName() + " address");
+            } finally {
+                Coin.endScope(previous);
+            }
+        }
+        InscriptionMint.Plan plan = plan(node, inscription, mint.getEtching(), 0, destination);
         if(!Arrays.equals(plan.scriptHash(), mint.getScriptHash())) {
             throw new IllegalArgumentException("This is not the content this mint was started with. Choose exactly the same file or text"
                     + (mint.getKind() == PendingMint.Kind.ETCH ? " that was inscribed with the etching." : "."));
@@ -137,7 +170,7 @@ public final class MintFlow {
 
     /** Refuses a commit output that no longer pays the mint's address (the commit was replaced). */
     public static void checkCommit(PendingMint mint, InscriptionMint.Plan plan, TransactionOutput commitOutput) {
-        if(commitOutput == null || !commitOutput.getScript().equals(plan.commitAddress().getOutputScript()) || commitOutput.getValue() < CollectibleTransactions.POSTAGE) {
+        if(commitOutput == null || !commitOutput.getScript().equals(plan.commitAddress().getOutputScript()) || commitOutput.getValue() < plan.postage()) {
             throw new IllegalArgumentException("The commit " + mint.getCommitTxid() + " was replaced or changed: its output " + mint.getCommitVout()
                     + " no longer pays this mint's address. Nothing can be revealed from it.");
         }
@@ -224,6 +257,33 @@ public final class MintFlow {
         return 0;
     }
 
+    /** The minimum relay fee rate of a mint: Litecoin keeps the app's rate as before; another coin never takes a rate from a different coin's server. */
+    public static double minRelayFeeRate(Coin coin, Coin serverCoin, Double appRate) {
+        return coin == Coin.LITECOIN ? appRate : CollectibleSend.minRelayFeeRate(coin, serverCoin, appRate);
+    }
+
+    /** The commit, built under the funding wallet's coin (dust rules and addresses are per coin) and never below that coin's floor. */
+    public static WalletTransaction buildCommit(Wallet funding, InscriptionMint.Plan plan, List<CollectibleTransactions.Pinned> feeCandidates, double feeRate,
+                                                double minRelayFeeRate) throws InsufficientFundsException {
+        Coin coin = funding.getCoin();
+        Coin previous = Coin.beginScope(coin);
+        try {
+            return InscriptionMint.commit(funding, plan, feeCandidates, coin == Coin.LITECOIN ? feeRate : Math.max(feeRate, minRelayFeeRate), minRelayFeeRate);
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
+    /** Starts a server call under the coin's scope: the service reads the focused coin when it starts. */
+    private static void startScoped(Coin coin, javafx.concurrent.Service<?> service) {
+        Coin previous = Coin.beginScope(coin);
+        try {
+            service.start();
+        } finally {
+            Coin.endScope(previous);
+        }
+    }
+
     //The sign, save and broadcast sequence
 
     /**
@@ -232,6 +292,9 @@ public final class MintFlow {
      */
     public static void mint(Window owner, Wallet funding, Wallet taproot, Request request, Consumer<String> confirmText) {
         Optional<String> refusal = refusal(funding).or(() -> refusal(taproot));
+        if(refusal.isEmpty() && funding.getCoin() != Coin.LITECOIN) {
+            refusal = CollectibleSend.focusProblem(Coin.get(), funding);
+        }
         if(refusal.isPresent()) {
             AppServices.showErrorDialog("Cannot mint", refusal.get());
             return;
@@ -240,13 +303,14 @@ public final class MintFlow {
         InscriptionMint.Plan plan;
         WalletTransaction commit;
         try {
-            plan = plan(node, request.inscription(), request.etching(), request.feeRate());
+            plan = plan(node, request.inscription(), request.etching(), request.feeRate(), request.destination());
             Wallet master = funding.isNested() ? funding.getMasterWallet() : funding;
             CollectiblesManager.Snapshot snapshot = CollectiblesManager.get().getSnapshot(master);
             if(snapshot == null || !snapshot.enabled()) {
                 throw new IllegalStateException("This wallet's outputs have not been checked for inscriptions yet, so no output can safely pay for the mint.");
             }
-            commit = InscriptionMint.commit(funding, plan, CollectibleSend.feeCandidates(funding, snapshot), request.feeRate(), AppServices.getMinimumRelayFeeRate());
+            double minRelayFeeRate = minRelayFeeRate(funding.getCoin(), ElectrumServer.getConnectedCoin(), AppServices.getMinimumRelayFeeRate());
+            commit = buildCommit(funding, plan, CollectibleSend.feeCandidates(funding, snapshot), request.feeRate(), minRelayFeeRate);
         } catch(Exception e) {
             AppServices.showErrorDialog("Cannot mint", e.getMessage());
             return;
@@ -286,6 +350,7 @@ public final class MintFlow {
             return;
         }
         ElectrumServer.TransactionReferenceService lookup = new ElectrumServer.TransactionReferenceService(Set.of(mint.getCommitTxid()));
+        Coin coin = taproot.getCoin();
         lookup.setOnSucceeded(event -> {
             BlockTransaction commit = lookup.getValue().get(mint.getCommitTxid());
             if(commit == null) {
@@ -322,17 +387,21 @@ public final class MintFlow {
             });
         });
         lookup.setOnFailed(event -> AppServices.showErrorDialog("Cannot finish the mint", "Could not fetch the commit: " + lookup.getException().getMessage()));
-        lookup.start();
+        startScoped(coin, lookup);
     }
 
     /** Removes a pending mint after the user agrees that its commit output is given up. */
     public static void forget(Wallet taproot, PendingMint mint) {
-        Optional<ButtonType> answer = AppServices.showWarningDialog("Forget pending mint?", "The commit output (" + mint.getCommitValue()
-                + " litoshis) can only be spent by revealing this exact content. Forgetting the mint removes what is needed to rebuild it; "
-                + "the content alone is then not enough, since the reveal key's path is lost too.\n\nForget it anyway?", ButtonType.CANCEL, ButtonType.OK);
+        Optional<ButtonType> answer = AppServices.showWarningDialog("Forget pending mint?", forgetText(taproot, mint), ButtonType.CANCEL, ButtonType.OK);
         if(answer.isPresent() && answer.get() == ButtonType.OK) {
             removePending(pendingHolder(taproot), mint);
         }
+    }
+
+    static String forgetText(Wallet taproot, PendingMint mint) {
+        return "The commit output (" + mint.getCommitValue() + " " + taproot.getCoin().getSubunit() + ") can only be spent by revealing this exact content. "
+                + "Forgetting the mint removes what is needed to rebuild it; the content alone is then not enough, since the reveal key's path is lost too."
+                + "\n\nForget it anyway?";
     }
 
     private static Wallet master(Wallet wallet) {
@@ -351,7 +420,7 @@ public final class MintFlow {
         return copy;
     }
 
-    private static Transaction signCommit(Wallet decryptedFunding, WalletTransaction commit) throws Exception {
+    static Transaction signCommit(Wallet decryptedFunding, WalletTransaction commit) throws Exception {
         PSBT psbt = commit.createPSBT();
         decryptedFunding.sign(psbt);
         decryptedFunding.finalise(psbt);
@@ -367,7 +436,7 @@ public final class MintFlow {
      * Hands decrypted copies of the wallets (keyed by the open wallet) to then, asking once for each encrypted wallet
      * file's password. then clears them.
      */
-    private static void withDecrypted(Window owner, List<Wallet> wallets, Consumer<Map<Wallet, Wallet>> then) {
+    static void withDecrypted(Window owner, List<Wallet> wallets, Consumer<Map<Wallet, Wallet>> then) {
         Map<Wallet, Wallet> decrypted = new IdentityHashMap<>();
         wallets.stream().filter(wallet -> !wallet.isEncrypted()).forEach(wallet -> decrypted.put(wallet, wallet.copy()));
         decryptFiles(owner, wallets.stream().filter(Wallet::isEncrypted).toList(), decrypted, then);
@@ -446,7 +515,7 @@ public final class MintFlow {
             }
         };
         ElectrumServer.BroadcastTransactionService commitBroadcast = new ElectrumServer.BroadcastTransactionService(commitTx, commitFee);
-        save.setOnSucceeded(event -> commitBroadcast.start());
+        save.setOnSucceeded(event -> startScoped(holder.getCoin(), commitBroadcast));
         save.setOnFailed(event -> {
             log.error("Error saving pending mint", save.getException());
             removePending(holder, mint);
@@ -487,7 +556,7 @@ public final class MintFlow {
             AppServices.showErrorDialog("Could not broadcast the reveal", "The commit is on its way, the reveal is not: " + revealBroadcast.getException().getMessage()
                     + "\n\nFinish it later from Pending mints with the same content.");
         });
-        revealBroadcast.start();
+        startScoped(holder.getCoin(), revealBroadcast);
     }
 
     private static void addPending(Wallet holder, PendingMint mint) {
@@ -507,6 +576,21 @@ public final class MintFlow {
     }
 
     private static boolean confirm(Window owner, Wallet funding, Wallet taproot, Request request, InscriptionMint.Plan plan, WalletTransaction commit) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "", ButtonType.CANCEL, ButtonType.OK);
+        alert.initOwner(owner);
+        alert.setTitle("Confirm");
+        alert.setHeaderText(request.etching() != null ? "Etch rune?" : "Mint inscription?");
+        javafx.scene.control.TextArea area = new javafx.scene.control.TextArea(confirmText(funding, taproot, request, plan, commit));
+        area.setEditable(false);
+        area.setWrapText(true);
+        area.setPrefRowCount(12);
+        alert.getDialogPane().setContent(area);
+        Optional<ButtonType> answer = alert.showAndWait();
+        return answer.isPresent() && answer.get() == ButtonType.OK;
+    }
+
+    static String confirmText(Wallet funding, Wallet taproot, Request request, InscriptionMint.Plan plan, WalletTransaction commit) {
+        String unit = funding.getCoin().getSubunit();
         StringBuilder text = new StringBuilder();
         Inscription inscription = request.inscription();
         if(request.etching() != null) {
@@ -525,11 +609,16 @@ public final class MintFlow {
         }
         text.append("Inscription: ").append(inscription.body().length).append(" bytes of ").append(inscription.contentType()).append(".\n");
         text.append("Lands at: ").append(plan.destination()).append(" in ").append(taproot.getFullDisplayName()).append(".\n\n");
-        text.append("Commit (paid from ").append(funding.getFullDisplayName()).append("): fee ").append(commit.getFee()).append(" litoshis.\n");
+        text.append("Commit (paid from ").append(funding.getFullDisplayName()).append("): fee ").append(commit.getFee()).append(' ').append(unit).append(".\n");
         long postage = plan.commitValue() - plan.revealFee();
-        text.append("Reveal: fee ").append(plan.revealFee()).append(" litoshis, postage ").append(postage).append(" litoshis")
-                .append(postage > CollectibleTransactions.POSTAGE ? " (for the inscription and the premine).\n" : ".\n");
-        text.append("Total: ").append(commit.getFee() + plan.commitValue()).append(" litoshis.\n\n");
+        text.append("Reveal: fee ").append(plan.revealFee()).append(' ').append(unit).append(", postage ").append(postage).append(' ').append(unit)
+                .append(postage > plan.postage() ? " (for the inscription and the premine).\n" : ".\n");
+        long total = commit.getFee() + plan.commitValue();
+        text.append("Total: ").append(total).append(' ').append(unit);
+        if(funding.getCoin() != Coin.LITECOIN) {
+            text.append(" (").append(String.format("%.8f", total / 100_000_000d)).append(' ').append(funding.getCoin().getTicker()).append(')');
+        }
+        text.append(".\n\n");
         if(request.etching() != null) {
             text.append("The reveal can be signed once the commit is ").append(InscriptionMint.COMMIT_CONFIRMATIONS)
                     .append(" blocks deep (about 15 minutes). Until the reveal confirms, someone else can etch the same name first.\n");
@@ -538,16 +627,6 @@ public final class MintFlow {
         } else {
             text.append("Only the commit is broadcast now. To finish, choose exactly the same content again from Pending mints.\n");
         }
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "", ButtonType.CANCEL, ButtonType.OK);
-        alert.initOwner(owner);
-        alert.setTitle("Confirm");
-        alert.setHeaderText(request.etching() != null ? "Etch rune?" : "Mint inscription?");
-        javafx.scene.control.TextArea area = new javafx.scene.control.TextArea(text.toString());
-        area.setEditable(false);
-        area.setWrapText(true);
-        area.setPrefRowCount(12);
-        alert.getDialogPane().setContent(area);
-        Optional<ButtonType> answer = alert.showAndWait();
-        return answer.isPresent() && answer.get() == ButtonType.OK;
+        return text.toString();
     }
 }

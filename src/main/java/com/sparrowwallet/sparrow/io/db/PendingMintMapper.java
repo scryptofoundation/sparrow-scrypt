@@ -13,7 +13,8 @@ public class PendingMintMapper implements RowMapper<PendingMint> {
     public PendingMint map(ResultSet rs, StatementContext ctx) throws SQLException {
         PendingMint mint = new PendingMint(PendingMint.Kind.values()[rs.getInt("kind")], rs.getString("keyPath"), rs.getBytes("scriptHash"),
                 Sha256Hash.wrap(rs.getBytes("commitTxid")), rs.getInt("commitVout"), rs.getLong("commitValue"), rs.getString("contentType"),
-                PendingMint.decodeEtching(rs.getString("etching")));
+                PendingMint.decodeEtching(rs.getString("etching")), rs.getBytes("content"), rs.getDouble("feeRate"), rs.getString("destination"),
+                rs.getInt("stepsBroadcast"));
         mint.setId(rs.getLong("id"));
         return mint;
     }

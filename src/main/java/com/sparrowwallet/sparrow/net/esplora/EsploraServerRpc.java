@@ -422,4 +422,59 @@ public class EsploraServerRpc implements ElectrumServerRpc {
     public Map<Integer, BlockHeaders> getBlockHeadersChunks(Transport transport, Map<Integer, Integer> startHeightCounts) {
         throw new UnsupportedMethodException("blockchain.block.headers", null);
     }
+
+    /** The hash of the block at a height on the server's best chain. */
+    public String getBlockHash(int height) throws EsploraException {
+        return client.getBlockHash(height);
+    }
+
+    /** One page of a block's transactions, starting at an index. */
+    public interface BlockPages {
+        List<EsploraClient.EsploraTransaction> page(int startIndex) throws EsploraException;
+    }
+
+    /**
+     * The fees of a block's non-coinbase transactions in block order, or null when the server has no block routes
+     * (peppool.space answers them 404).
+     */
+    public List<com.sparrowwallet.drongo.ordinals.track.BlockFee> getBlockFees(String blockHash) throws EsploraException {
+        int count;
+        try {
+            count = client.getBlockTxCount(blockHash);
+        } catch(EsploraException e) {
+            if(e.getStatus() == 404) {
+                return null;
+            }
+            throw e;
+        }
+        return blockFees(count, start -> client.getBlockTxs(blockHash, start));
+    }
+
+    /**
+     * Reads pages of 25 from index 0 while the start is below the block's count, and lists every transaction after the
+     * coinbase with its fee. A page short of the count, or a transaction without a fee, refuses the whole block: a
+     * partial list would misplace the fee units that follow.
+     */
+    public static List<com.sparrowwallet.drongo.ordinals.track.BlockFee> blockFees(int txCount, BlockPages pages) throws EsploraException {
+        List<EsploraClient.EsploraTransaction> all = new ArrayList<>();
+        for(int start = 0; start < txCount; start += 25) {
+            List<EsploraClient.EsploraTransaction> page = pages.page(start);
+            if(page == null || page.isEmpty()) {
+                break;
+            }
+            all.addAll(page);
+        }
+        if(all.size() != txCount) {
+            throw new EsploraException("The server listed " + all.size() + " of the block's " + txCount + " transactions");
+        }
+        List<com.sparrowwallet.drongo.ordinals.track.BlockFee> fees = new ArrayList<>();
+        for(int i = 1; i < all.size(); i++) {
+            EsploraClient.EsploraTransaction tx = all.get(i);
+            if(tx.fee() == null || tx.fee() < 0 || tx.txid() == null) {
+                throw new EsploraException("The server gave no fee for block transaction " + i);
+            }
+            fees.add(new com.sparrowwallet.drongo.ordinals.track.BlockFee(Sha256Hash.wrap(tx.txid()), tx.fee()));
+        }
+        return fees;
+    }
 }

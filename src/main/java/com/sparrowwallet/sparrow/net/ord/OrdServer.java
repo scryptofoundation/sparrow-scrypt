@@ -39,9 +39,9 @@ public final class OrdServer {
         return resolveUrl(mode, customUrl, Coin.get(), network);
     }
 
-    /** The server URL for a setting, without a trailing slash, or null when checks are off or no server fits. */
+    /** The server URL for a setting, without a trailing slash, or null for Built-in or when no server fits. */
     public static String resolveUrl(InscriptionServerMode mode, String customUrl, Coin coin, Network network) {
-        if(mode == null || mode == InscriptionServerMode.OFF) {
+        if(mode == null || mode == InscriptionServerMode.BUILT_IN) {
             return null;
         }
         if(mode == InscriptionServerMode.PUBLIC) {

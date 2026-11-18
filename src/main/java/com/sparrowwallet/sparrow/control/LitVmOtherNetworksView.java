@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * Other EVM networks where the same account works (Ethereum Sepolia, Base Sepolia): pick one, then its own
- * Transactions, Send, Receive and Tokens, the same views the LitVM wallet uses.
+ * Transactions, Send, Receive, Tokens and Collectibles, the same views the LitVM wallet uses.
  */
 class LitVmOtherNetworksView extends BorderPane {
     private final LitVmContext context;
@@ -28,7 +28,12 @@ class LitVmOtherNetworksView extends BorderPane {
         networkCombo.valueProperty().addListener((obs, old, network) -> show(network));
         Label warning = new Label("Test networks only. Test coins and tokens on them have no value.");
         warning.setStyle("-fx-font-weight: bold;");
-        HBox top = new HBox(12, new Label("Network"), networkCombo, warning);
+        //On a line of its own and wrapped: beside the network it was the first thing cut at the least window width
+        warning.setWrapText(true);
+        warning.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        HBox choice = new HBox(12, LitVmContext.formLabel("Network"), networkCombo);
+        choice.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        javafx.scene.layout.VBox top = new javafx.scene.layout.VBox(8, choice, warning);
         top.setPadding(new Insets(20, 25, 0, 25));
         setTop(top);
         networkCombo.getSelectionModel().selectFirst();
@@ -56,8 +61,13 @@ class LitVmOtherNetworksView extends BorderPane {
         setCenter(views.computeIfAbsent(network, n -> {
             TabPane tabs = new TabPane();
             tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+            //A tab pane keeps every tab's content in the scene, so the collectibles read only while their tab is selected
+            LitVmCollectiblesView collectibles = new LitVmCollectiblesView(context, n);
+            Tab collectiblesTab = tab(CollectiblesPresenter.SECTION, collectibles);
+            collectibles.setActive(false);
+            collectiblesTab.selectedProperty().addListener((obs, old, selected) -> collectibles.setActive(selected));
             tabs.getTabs().addAll(tab("Transactions", new LitVmHistoryView(context, n)), tab("Send", new LitVmSendView(context, n)),
-                    tab("Receive", new LitVmReceiveView(context, n)), tab("Tokens", new LitVmTokensView(context, n)));
+                    tab("Receive", new LitVmReceiveView(context, n)), tab("Tokens", new LitVmTokensView(context, n)), collectiblesTab);
             return tabs;
         }));
     }

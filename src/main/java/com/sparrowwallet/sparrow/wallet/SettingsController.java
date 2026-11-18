@@ -1276,6 +1276,18 @@ public class SettingsController extends WalletFormController implements Initiali
                 }
             }
 
+            //Swap records written by a build with the swap tab are sealed to the file's key, and this build cannot seal them again.
+            //Returning false re-encrypts the wallet with the existing key
+            if(requirement == WalletPasswordDialog.PasswordRequirement.UPDATE_CHANGE) {
+                Optional<String> refusal = Storage.passwordChangeRefusal(walletForm.getWallet());
+                if(refusal.isPresent()) {
+                    AppServices.showErrorDialog("Wallet Password", refusal.get());
+                    revert.setDisable(false);
+                    apply.setDisable(false);
+                    return false;
+                }
+            }
+
             if(password.get().length() == 0 && requirement != WalletPasswordDialog.PasswordRequirement.UPDATE_SET) {
                 try {
                     walletForm.getStorage().setEncryptionPubKey(Storage.NO_PASSWORD_KEY);

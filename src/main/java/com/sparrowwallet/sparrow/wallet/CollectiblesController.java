@@ -27,6 +27,7 @@ import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSend;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectibleSendDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager;
 import com.sparrowwallet.sparrow.wallet.collectibles.InscriptionPreview;
+import com.sparrowwallet.sparrow.wallet.collectibles.DoginalsFlow;
 import com.sparrowwallet.sparrow.wallet.collectibles.MintFlow;
 import com.sparrowwallet.sparrow.wallet.collectibles.EtchRuneDialog;
 import com.sparrowwallet.sparrow.wallet.collectibles.MintInscriptionDialog;
@@ -129,7 +130,19 @@ public class CollectiblesController extends WalletFormController implements Init
     private record Holding(Wallet wallet, BlockTransactionHashIndex utxo, OrdOutput output, String serverUrl) {
     }
 
-    private record Details(OrdInscription inscription, byte[] content, String error) {
+    //minted: "Minted in block N (date)" for an inscription the built-in tracker found, which has no number; else null
+    private record Details(OrdInscription inscription, byte[] content, String error, String minted) {
+        Details(OrdInscription inscription, byte[] content, String error) {
+            this(inscription, content, error, null);
+        }
+    }
+
+    static final String TOKEN_NOTICE = "Token balances need the Public or Your own indexer";
+
+    /** Where an inscription without a number is shown: its mint block and the block's date (UTC). */
+    static String mintedLabel(int height, long time) {
+        return String.format(java.util.Locale.ROOT, "Minted in block %,d (%s)", height,
+                java.time.LocalDate.ofInstant(java.time.Instant.ofEpochSecond(time), java.time.ZoneOffset.UTC));
     }
 
     public record RuneRow(String name, String symbol, String balance, List<String> outpoints) {
@@ -150,7 +163,7 @@ public class CollectiblesController extends WalletFormController implements Init
             settingsDialog.showAndWait();
         });
         refreshButton.setOnAction(event -> holdingWallets().forEach(CollectiblesManager.get()::refresh));
-        //Runes, minting and moving in from an ord-litecoin wallet are Litecoin's; the other coins show and send inscriptions only
+        //Runes and moving in from an ord-litecoin wallet are Litecoin's; the other coins show, send and mint inscriptions
         Coin coin = getWalletForm().getWallet().getCoin();
         moveInButton.managedProperty().bind(moveInButton.visibleProperty());
         moveInButton.setVisible(CollectibleCoins.hasRunes(coin));
@@ -173,7 +186,11 @@ public class CollectiblesController extends WalletFormController implements Init
         });
         MenuItem etchRune = new MenuItem("Etch rune...");
         etchRune.setOnAction(event -> EtchRuneDialog.start(mintButton.getScene().getWindow(), getWalletForm()));
-        mintButton.getItems().setAll(mintInscription, mintRune, etchRune);
+        if(CollectibleCoins.hasRunes(coin)) {
+            mintButton.getItems().setAll(mintInscription, mintRune, etchRune);
+        } else {
+            mintButton.getItems().setAll(mintInscription);
+        }
         initializePending();
 
         TableColumn<RuneRow, String> name = new TableColumn<>("Rune");
@@ -276,7 +293,11 @@ public class CollectiblesController extends WalletFormController implements Init
 
     private void initializePending() {
         TableColumn<PendingMint, String> kind = new TableColumn<>("Kind");
-        kind.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().getKind() == PendingMint.Kind.ETCH ? "Etch" : "Inscription"));
+        kind.setCellValueFactory(row -> new ReadOnlyStringWrapper(switch(row.getValue().getKind()) {
+            case ETCH -> "Etch";
+            case INSCRIPTION -> "Inscription";
+            case DOGINAL -> "Doginal";
+        }));
         TableColumn<PendingMint, String> what = new TableColumn<>("Content");
         what.setCellValueFactory(row -> new ReadOnlyStringWrapper(row.getValue().getEtching() != null ? row.getValue().getEtching().name().toString() : row.getValue().getContentType()));
         TableColumn<PendingMint, String> commit = new TableColumn<>("Commit");
@@ -288,12 +309,28 @@ public class CollectiblesController extends WalletFormController implements Init
         pendingTable.setPlaceholder(new Label("No pending mints"));
         finishButton.disableProperty().bind(pendingTable.getSelectionModel().selectedItemProperty().isNull());
         forgetButton.disableProperty().bind(pendingTable.getSelectionModel().selectedItemProperty().isNull());
-        finishButton.setOnAction(event -> finishSelected());
-        forgetButton.setOnAction(event -> taprootWallet().ifPresent(taproot -> MintFlow.forget(taproot, pendingTable.getSelectionModel().getSelectedItem())));
+        if(doginals()) {
+            //A Doginals mint is finished batch by batch, or ended, never forgotten: its chain holds the wallet's coins
+            finishButton.setText("Continue mint...");
+            forgetButton.setText("End mint...");
+            finishButton.setOnAction(event -> DoginalsFlow.continueMint(finishButton.getScene().getWindow(), getWalletForm().getWallet(),
+                    pendingTable.getSelectionModel().getSelectedItem(), message -> MintInscriptionDialog.showDone(finishButton.getScene().getWindow(), message)));
+            forgetButton.setOnAction(event -> DoginalsFlow.end(forgetButton.getScene().getWindow(), getWalletForm().getWallet(), pendingTable.getSelectionModel().getSelectedItem()));
+        } else {
+            finishButton.setOnAction(event -> finishSelected());
+            forgetButton.setOnAction(event -> taprootWallet().ifPresent(taproot -> MintFlow.forget(taproot, pendingTable.getSelectionModel().getSelectedItem())));
+        }
         refreshPending();
     }
 
+    private boolean doginals() {
+        return DoginalsFlow.usesDoginals(getWalletForm().getWallet().getCoin());
+    }
+
     private String pendingStatus(PendingMint mint) {
+        if(mint.getKind() == PendingMint.Kind.DOGINAL) {
+            return DoginalsFlow.status(mint, DoginalsFlow.pendingHolder(getWalletForm().getWallet()));
+        }
         int confirmations = MintFlow.confirmations(holdingWallets(), mint.getCommitTxid());
         if(mint.getKind() == PendingMint.Kind.ETCH) {
             return confirmations >= InscriptionMint.COMMIT_CONFIRMATIONS ? "Ready to reveal"
@@ -303,7 +340,9 @@ public class CollectiblesController extends WalletFormController implements Init
     }
 
     private void refreshPending() {
-        List<PendingMint> pending = taprootWallet().map(MintFlow::pendingHolder).map(Wallet::getPendingMints).map(List::copyOf).orElse(List.of());
+        List<PendingMint> pending = doginals()
+                ? DoginalsFlow.pendingHolder(getWalletForm().getWallet()).getPendingMints().stream().filter(mint -> mint.getKind() == PendingMint.Kind.DOGINAL).toList()
+                : taprootWallet().map(MintFlow::pendingHolder).map(Wallet::getPendingMints).map(List::copyOf).orElse(List.of());
         pendingTable.getItems().setAll(pending);
         pendingTable.refresh();
         for(PendingMint mint : pending) {
@@ -356,6 +395,7 @@ public class CollectiblesController extends WalletFormController implements Init
         //One line per server, with its latest check
         Map<String, java.time.Instant> checked = new LinkedHashMap<>();
         boolean noRuneIndex = false;
+        boolean builtIn = false;
         Set<String> lagNotices = new LinkedHashSet<>();
         Map<String, Holding> inscriptions = new LinkedHashMap<>();
         Map<String, RuneBalance> runeTotals = new TreeMap<>();
@@ -364,9 +404,13 @@ public class CollectiblesController extends WalletFormController implements Init
         for(Wallet wallet : wallets) {
             String url = CollectiblesManager.serverUrl(wallet);
             CollectiblesManager.Snapshot snapshot = CollectiblesManager.get().getSnapshot(wallet);
-            if(url == null) {
+            boolean tracked = com.sparrowwallet.drongo.ordinals.track.ChainRules.covers(wallet.getCoin());
+            if(url == null && !tracked) {
                 off.add(wallet.getFullDisplayName());
                 continue;
+            }
+            if(url == null) {
+                builtIn = true;
             }
             if(snapshot == null || !snapshot.enabled()) {
                 continue;
@@ -379,10 +423,13 @@ public class CollectiblesController extends WalletFormController implements Init
             } else if(snapshot.error() != null) {
                 errors.add("Could not reach " + snapshot.serverHost() + ": " + snapshot.error() + ". Outputs not yet checked count as unknown.");
             } else {
-                checked.merge(snapshot.serverHost(), snapshot.checkedAt(), (a, b) -> a.isAfter(b) ? a : b);
+                checked.merge(snapshot.serverHost() == null ? "the built-in tracker" : snapshot.serverHost(), snapshot.checkedAt(), (a, b) -> a.isAfter(b) ? a : b);
                 if(snapshot.lagNotice() != null) {
                     lagNotices.add(snapshot.lagNotice());
                 }
+            }
+            if(snapshot.indexerNotice() != null) {
+                lagNotices.add(snapshot.indexerNotice() + ".");
             }
             for(BlockTransactionHashIndex utxo : wallet.getWalletUtxos().keySet()) {
                 OrdOutput output = snapshot.answers().get(utxo.toString());
@@ -426,6 +473,7 @@ public class CollectiblesController extends WalletFormController implements Init
             rows.add(new RuneRow(rune.getKey(), rune.getValue().symbol(), rune.getValue().format(), runeOutputs.get(rune.getKey())));
         }
         runesTable.getItems().setAll(rows);
+        runesTable.setPlaceholder(builtIn ? new Label(TOKEN_NOTICE) : null);
 
         boolean nothing = inscriptions.isEmpty() && rows.isEmpty() && off.isEmpty();
         emptyLabel.setVisible(nothing);
@@ -457,7 +505,7 @@ public class CollectiblesController extends WalletFormController implements Init
         load(id, holding, loaded -> {
             tile.getChildren().set(0, preview(loaded, TILE_SIZE));
             if(loaded.inscription() != null) {
-                number.setText("#" + loaded.inscription().number());
+                number.setText(loaded.minted() != null ? loaded.minted() : "#" + loaded.inscription().number());
             }
         });
         return tile;
@@ -483,7 +531,11 @@ public class CollectiblesController extends WalletFormController implements Init
             OrdInscription inscription = loaded.inscription();
             addDetail("Inscription", id);
             if(inscription != null) {
-                addDetail("Number", String.valueOf(inscription.number()));
+                if(loaded.minted() != null) {
+                    addDetail("Minted", loaded.minted());
+                } else {
+                    addDetail("Number", String.valueOf(inscription.number()));
+                }
                 addDetail("Content type", inscription.contentType() == null ? "None" : inscription.contentType());
                 addDetail("Size", inscription.contentLength() < 0 ? "Unknown" : inscription.contentLength() + " bytes");
                 if(inscription.satpoint() != null) {
@@ -496,10 +548,12 @@ public class CollectiblesController extends WalletFormController implements Init
                 addDetail("Note", loaded.error());
             }
 
-            Hyperlink explorer = new Hyperlink("Open in explorer");
-            explorer.setOnAction(event -> AppServices.get().getApplication().getHostServices().showDocument(new OrdClient(holding.serverUrl()).explorerUrl(id)));
-            detailPane.getChildren().add(explorer);
-            if(inscription != null && inscription.satpoint() != null) {
+            if(holding.serverUrl() != null) {
+                Hyperlink explorer = new Hyperlink("Open in explorer");
+                explorer.setOnAction(event -> AppServices.get().getApplication().getHostServices().showDocument(new OrdClient(holding.serverUrl()).explorerUrl(id)));
+                detailPane.getChildren().add(explorer);
+            }
+            if((inscription != null && inscription.satpoint() != null) || holding.serverUrl() == null) {
                 Button send = new Button("Send...");
                 send.setOnAction(event -> sendFresh(send, id, holding));
                 detailPane.getChildren().add(send);
@@ -524,9 +578,16 @@ public class CollectiblesController extends WalletFormController implements Init
     private static void sendFresh(Button send, String id, Holding holding) {
         javafx.stage.Window owner = send.getScene().getWindow();
         Wallet wallet = holding.wallet();
-        if(CollectiblesManager.serverUrl(wallet) == null) {
-            AppServices.showErrorDialog("Cannot send inscription", "Inscription checks are off, so where the inscription is now cannot be checked. "
-                    + "Turn the inscriptions server on in Preferences > Server > Inscriptions, then send again.");
+        if(holding.serverUrl() == null) {
+            //Found by the built-in tracker: the coin's check says where the inscription sits in it
+            com.sparrowwallet.drongo.wallet.InscriptionCheck check = check(holding);
+            com.sparrowwallet.drongo.ordinals.track.Found found = check == null ? null : found(check, id);
+            if(found == null || found.offset() < 0) {
+                AppServices.showErrorDialog("Cannot send inscription", "Inscription offset unknown; use Check deeper");
+                return;
+            }
+            CollectibleSendDialog.sendInscription(owner, wallet, id, holding.utxo() + ":" + found.offset(),
+                    com.sparrowwallet.sparrow.wallet.collectibles.track.CheckPolicy.asAnswer(check, null, holding.utxo().getValue()));
             return;
         }
         javafx.concurrent.Task<Located> lookup = new javafx.concurrent.Task<>() {
@@ -584,7 +645,66 @@ public class CollectiblesController extends WalletFormController implements Init
     }
 
     /** Details and content for an inscription, from the cache or fetched in the background, handed back on the FX thread. */
+    private static com.sparrowwallet.drongo.wallet.InscriptionCheck check(Holding holding) {
+        Wallet master = holding.wallet().isNested() ? holding.wallet().getMasterWallet() : holding.wallet();
+        CollectiblesManager.Snapshot snapshot = CollectiblesManager.get().getSnapshot(master);
+        return snapshot == null ? null : snapshot.checks().get(holding.utxo().toString());
+    }
+
+    private static com.sparrowwallet.drongo.ordinals.track.Found found(com.sparrowwallet.drongo.wallet.InscriptionCheck check, String id) {
+        return check.found().stream().filter(f -> f.inscriptionId().equals(id)).findFirst().orElse(null);
+    }
+
+    /** Details for an inscription the built-in tracker found: content read from its transactions over the coin's server. */
+    private static void loadFromChain(String id, Holding holding, java.util.function.Consumer<Details> consumer) {
+        Coin coin = holding.wallet().getCoin();
+        com.sparrowwallet.drongo.wallet.InscriptionCheck check = check(holding);
+        com.sparrowwallet.drongo.ordinals.track.Found found = check == null ? null : found(check, id);
+        Map<com.sparrowwallet.drongo.protocol.Sha256Hash, com.sparrowwallet.drongo.wallet.BlockTransaction> walletTxs = new HashMap<>(holding.wallet().getWalletTransactions());
+        fetcher.submit(() -> {
+            Details loaded;
+            Coin previous = Coin.beginScope(coin);
+            try {
+                String minted = found == null ? null : found.mintHeight() > 0 ? mintedLabel(found.mintHeight(), found.mintTime()) : "Minted, not yet confirmed";
+                String satpoint = found == null || found.offset() < 0 ? null : holding.utxo() + ":" + found.offset();
+                if(!com.sparrowwallet.sparrow.net.ElectrumServer.isConnectedTo(coin)) {
+                    loaded = new Details(new OrdInscription(id, -1, null, -1, satpoint, holding.utxo().getValue()), null,
+                            "Connect to the " + coin.getCapitalizedName() + " server to load it", minted);
+                } else {
+                    com.sparrowwallet.drongo.ordinals.track.InscriptionContent content = com.sparrowwallet.drongo.ordinals.track.InscriptionContent.fromChain(id,
+                            found == null ? null : found.mintTxid(),
+                            com.sparrowwallet.sparrow.wallet.collectibles.track.ServerChainSource.of(walletTxs, new com.sparrowwallet.sparrow.net.ElectrumServer()));
+                    OrdInscription inscription = new OrdInscription(id, -1, content == null ? null : content.contentType(), content == null ? -1 : content.body().length,
+                            satpoint, holding.utxo().getValue());
+                    if(content == null) {
+                        loaded = new Details(inscription, null, "Could not read it from the chain", minted);
+                    } else if(content.body().length > OrdClient.MAX_CONTENT_BYTES) {
+                        loaded = new Details(inscription, null, "Too large to preview", minted);
+                    } else {
+                        loaded = new Details(inscription, content.body(), null, minted);
+                        details.put("chain|" + id, loaded);
+                    }
+                }
+            } catch(Exception e) {
+                loaded = new Details(null, null, "Could not load: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                Coin.endScope(previous);
+            }
+            Details result = loaded;
+            Platform.runLater(() -> consumer.accept(result));
+        });
+    }
+
     private static void load(String id, Holding holding, java.util.function.Consumer<Details> consumer) {
+        if(holding.serverUrl() == null) {
+            Details cached = details.get("chain|" + id);
+            if(cached != null) {
+                consumer.accept(cached);
+            } else {
+                loadFromChain(id, holding, consumer);
+            }
+            return;
+        }
         String key = holding.serverUrl() + "|" + id;
         Details cached = details.get(key);
         if(cached != null) {

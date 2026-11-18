@@ -224,6 +224,14 @@ public class UtxosController extends WalletFormController implements Initializab
     }
 
     @Subscribe
+    public void collectiblesUpdated(CollectiblesUpdatedEvent event) {
+        //The Inscriptions column reads the latest check
+        if(utxosTable != null && utxosTable.getRoot() != null && event.getWallet() != null) {
+            utxosTable.refresh();
+        }
+    }
+
+    @Subscribe
     public void walletNodesChanged(WalletNodesChangedEvent event) {
         if(event.getWallet().equals(walletForm.getWallet())) {
             WalletUtxosEntry walletUtxosEntry = getWalletForm().getWalletUtxosEntry();

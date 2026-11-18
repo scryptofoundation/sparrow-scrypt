@@ -1421,11 +1421,32 @@ public class HeadersController extends TransactionFormController implements Init
         });
     }
 
-    private void finalizePSBT() {
+    /**
+     * Finalizes a signed PSBT with the wallet it is shown with, where it is not yet finalized
+     *
+     * @return null, or why a PSBT marked for another coin than the wallet's is refused (Wallet.PSBT_COIN_MISMATCH), which leaves it as it was
+     */
+    static String finalise(Wallet signingWallet, PSBT psbt) {
+        try {
+            if(!psbt.isFinalized()) {
+                signingWallet.finalise(psbt);
+            }
+            return null;
+        } catch(IllegalStateException e) {
+            return e.getMessage();
+        }
+    }
+
+    /**
+     * @return whether the PSBT is finalized (or not yet fully signed), so the caller goes on to offer broadcasting it
+     */
+    private boolean finalizePSBT() {
         if(headersForm.getPsbt() != null && headersForm.getPsbt().isSigned()) {
             try {
-                if(!headersForm.getPsbt().isFinalized()) {
-                    headersForm.getSigningWallet().finalise(headersForm.getPsbt());
+                String refusal = finalise(headersForm.getSigningWallet(), headersForm.getPsbt());
+                if(refusal != null) {
+                    AppServices.showErrorDialog("Cannot finalize PSBT", refusal);
+                    return false;
                 }
                 EventManager.get().post(new PSBTFinalizedEvent(headersForm.getPsbt()));
             } catch(IllegalArgumentException e) {
@@ -1433,6 +1454,8 @@ public class HeadersController extends TransactionFormController implements Init
                 throw e;
             }
         }
+
+        return true;
     }
 
     public void extractTransaction(ActionEvent event) {
@@ -1885,8 +1908,9 @@ public class HeadersController extends TransactionFormController implements Init
                     signButton.setDisable(false);
 
                     if(headersForm.getPsbt().isSigned()) {
-                        finalizePSBT();
-                        broadcastButtonBox.setVisible(true);
+                        if(finalizePSBT()) {
+                            broadcastButtonBox.setVisible(true);
+                        }
                     } else {
                         signButtonBox.setVisible(true);
                     }
@@ -1910,8 +1934,9 @@ public class HeadersController extends TransactionFormController implements Init
                     }
 
                     //Finalize this PSBT if necessary as fully signed PSBTs are automatically finalized on once the signature threshold has been reached
-                    finalizePSBT();
-                    broadcastButtonBox.setVisible(true);
+                    if(finalizePSBT()) {
+                        broadcastButtonBox.setVisible(true);
+                    }
                 } else {
                     noWalletsWarning.setVisible(true);
                     signingWallet.setVisible(false);
@@ -1959,8 +1984,9 @@ public class HeadersController extends TransactionFormController implements Init
             } else if(headersForm.getPsbt().isSigned()) {
                 Wallet signedWallet = new FinalizingPSBTWallet(headersForm.getPsbt(), headersForm.getWallet());
                 headersForm.setSigningWallet(signedWallet);
-                finalizePSBT();
-                EventManager.get().post(new FinalizeTransactionEvent(headersForm.getPsbt(), signedWallet));
+                if(finalizePSBT()) {
+                    EventManager.get().post(new FinalizeTransactionEvent(headersForm.getPsbt(), signedWallet));
+                }
             }
         }
     }

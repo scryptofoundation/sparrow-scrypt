@@ -381,6 +381,11 @@ public class SimpleElectrumServerRpc implements ElectrumServerRpc {
     }
 
     @Override
+    public String getTransactionIdFromPosition(Transport transport, int height, int position) {
+        return ElectrumServerRpc.transactionIdFromPosition(new JsonRpcClient(transport), idCounter.incrementAndGet(), height, position);
+    }
+
+    @Override
     public Map<Integer, BlockHeaders> getBlockHeadersChunks(Transport transport, Map<Integer, Integer> startHeightCounts) {
         Map<Integer, BlockHeaders> result = new LinkedHashMap<>();
         for(Map.Entry<Integer, Integer> startHeightCount : startHeightCounts.entrySet()) {

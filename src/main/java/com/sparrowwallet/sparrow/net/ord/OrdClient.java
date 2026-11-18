@@ -35,6 +35,7 @@ public class OrdClient {
     public static final int MAX_CONTENT_BYTES = 2_000_000;
     /** The dialect name of ord 0.5 servers such as ord-junkcoin, whose status carries no chain; see dialect(). */
     public static final String LEGACY_DIALECT = LegacyOrdDialect.NAME;
+    public static final String DOGECOIN_HTML_DIALECT = OrdDogecoinHtmlDialect.NAME;
     private static final long MAX_HEIGHT_DIFFERENCE = 3;
     private static final int TIMEOUT_SECONDS = 30;
     static final Pattern INSCRIPTION_ID = Pattern.compile("[0-9a-f]{64}i\\d{1,10}");
@@ -93,6 +94,16 @@ public class OrdClient {
         return new OrdClient(baseUrl, AppServices.getHttpClientService());
     }
 
+    /** The transport this client uses, so other index clients (tokens) share its proxy rules and size caps. */
+    public Transport transport() {
+        return transport;
+    }
+
+    /** Whether the text is a well-formed inscription id (the same rule as every id this client accepts). */
+    public static boolean isInscriptionId(String id) {
+        return id != null && INSCRIPTION_ID.matcher(id).matches();
+    }
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -114,7 +125,17 @@ public class OrdClient {
             synchronized(this) {
                 known = dialect;
                 if(known == null) {
-                    known = detect(baseUrl, json(baseUrl + "/status", null));
+                    String status = json(baseUrl + "/status", null);
+                    //A bare OK is ord 0.5; ord-dogecoin, which serves HTML only, tells itself apart on its home page
+                    String home = null;
+                    if(status != null && status.trim().equals("OK")) {
+                        try {
+                            home = json(baseUrl + "/", null);
+                        } catch(IOException e) {
+                            home = null;
+                        }
+                    }
+                    known = detect(baseUrl, status, home);
                     dialect = known;
                 }
             }
@@ -127,11 +148,19 @@ public class OrdClient {
      * a chain is ord 0.20 (ordinalslite and ord-litecoin), a bare OK is ord 0.5 (ord-junkcoin).
      */
     static OrdDialect detect(String url, String statusBody) throws IOException {
+        return detect(url, statusBody, null);
+    }
+
+    /** As above; homeBody is the server's home page, asked only when the status is a bare OK, which tells ord-dogecoin apart. */
+    static OrdDialect detect(String url, String statusBody, String homeBody) throws IOException {
         if(OrdServer.isNintondo(url)) {
             return new NintondoDialect(url);
         }
         String body = statusBody == null ? "" : statusBody.trim();
         if(body.equals("OK")) {
+            if(homeBody != null && homeBody.toLowerCase(java.util.Locale.ROOT).contains("shibescription")) {
+                return new OrdDogecoinHtmlDialect(url);
+            }
             return new LegacyOrdDialect(url);
         }
         if(body.startsWith("{")) {
@@ -221,7 +250,7 @@ public class OrdClient {
      */
     static String testServer(OrdDialect dialect, Transport t, OrdStatus status, Network network, com.sparrowwallet.drongo.Coin coin, Integer tip, boolean runes) throws IOException {
         if(LegacyOrdDialect.UNKNOWN_CHAIN.equals(status.chain())) {
-            String connected = "Connected: " + LegacyOrdDialect.NAME + " server, indexed to height " + status.height();
+            String connected = "Connected: " + dialect.name() + " server, indexed to height " + status.height();
             if(tip == null) {
                 return connected + ". Connect to " + coin.getCapitalizedName() + " to check its chain (an ord 0.5 server is checked by block height).";
             }

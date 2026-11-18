@@ -27,3 +27,15 @@
 .inscription-detail .detail-name {
     -fx-font-weight: bold;
 }
+
+/* LitVM Collectibles: muted by opacity, so it reads in the light and the dark theme alike */
+.collectible-muted {
+    -fx-opacity: 0.7;
+}
+
+.collectible-box {
+    -fx-border-color: -fx-box-border;
+    -fx-border-width: 0 0 0 3;
+    -fx-padding: 6 0 6 12;
+    -fx-opacity: 0.9;
+}

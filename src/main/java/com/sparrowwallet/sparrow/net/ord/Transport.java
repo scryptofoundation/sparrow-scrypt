@@ -6,7 +6,7 @@ import java.io.IOException;
  * How a dialect reaches an inscriptions server. It takes absolute URLs because Nintondo's indexer answers on three
  * hosts; the client behind it applies the app's proxy rules and the size caps to every one of them.
  */
-interface Transport {
+public interface Transport {
     /** A JSON answer as text, at most OrdClient.MAX_JSON_CHARS; a non-2xx status is an OrdClient.HttpStatusException. */
     String json(String url, String postBody) throws IOException;
 

@@ -2,6 +2,7 @@ package com.sparrowwallet.sparrow.wallet.collectibles;
 
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.crypto.Argon2KeyDeriver;
 import com.sparrowwallet.drongo.crypto.Key;
 import com.sparrowwallet.drongo.ordinals.*;
@@ -141,9 +142,88 @@ public class MintFlowTest {
         String watch = MintFlow.refusal(wallet("watch", ScriptType.P2WPKH, KeystoreSource.SW_WATCH)).orElseThrow();
         Assertions.assertTrue(watch.contains("watch-only"), watch);
 
+        //Dogecoin mints as Doginals, not by commit and reveal; Bellscoin mints here
         Wallet dogecoin = wallet("doge", ScriptType.P2PKH, KeystoreSource.SW_SEED);
         dogecoin.setCoin(Coin.DOGECOIN);
-        Assertions.assertTrue(MintFlow.refusal(dogecoin).orElseThrow().contains("Litecoin"));
+        String doge = MintFlow.refusal(dogecoin).orElseThrow();
+        Assertions.assertTrue(doge.contains("Doginals"), doge);
+        Assertions.assertFalse(doge.contains("Litecoin"), doge);
+        Wallet bells = wallet("bells", ScriptType.P2TR, KeystoreSource.SW_SEED);
+        bells.setCoin(Coin.BELLSCOIN);
+        Assertions.assertTrue(MintFlow.refusal(bells).isEmpty());
+        Wallet bellsHardware = wallet("bells hw", ScriptType.P2TR, KeystoreSource.HW_USB);
+        bellsHardware.setCoin(Coin.BELLSCOIN);
+        Assertions.assertTrue(MintFlow.refusal(bellsHardware).orElseThrow().contains("hardware wallet"));
+        Wallet lucky = wallet("lucky", ScriptType.P2PKH, KeystoreSource.SW_SEED);
+        lucky.setCoin(Coin.LUCKYCOIN);
+        Assertions.assertTrue(MintFlow.refusal(lucky).isPresent());
+    }
+
+    private Wallet bellscoinTaproot() throws Exception {
+        Wallet bells = wallet("bells", ScriptType.P2TR, KeystoreSource.SW_SEED);
+        bells.setCoin(Coin.BELLSCOIN);
+        return bells;
+    }
+
+    private List<CollectibleTransactions.Pinned> fund(Wallet wallet, long value) {
+        WalletNode node = wallet.getNode(KeyPurpose.CHANGE).getChildren().stream().reduce((a, b) -> b).orElseThrow();
+        Transaction tx = new Transaction();
+        tx.addInput(Sha256Hash.ZERO_HASH, 9, new Script(new byte[] {9}));
+        tx.addOutput(value, node.getAddress());
+        Sha256Hash hash = tx.getTxId();
+        wallet.updateTransactions(Map.of(hash, new BlockTransaction(hash, 100, new Date(), 0L, tx)));
+        BlockTransactionHashIndex utxo = new BlockTransactionHashIndex(hash, 100, new Date(), 0L, 0, value);
+        node.getTransactionOutputs().add(utxo);
+        return List.of(new CollectibleTransactions.Pinned(utxo, node));
+    }
+
+    @Test
+    public void bellscoinMintScopesToItsCoin() throws Exception {
+        //The Litecoin tab's scope is the focused one; the Bellscoin wallet's mint still follows Bellscoin
+        Assertions.assertEquals(Coin.LITECOIN, Coin.get());
+        Wallet bells = bellscoinTaproot();
+        WalletNode node = MintFlow.revealNode(bells);
+        InscriptionMint.Plan plan = MintFlow.plan(node, Inscription.text("hello bellscoin"), null, 2.0);
+        Assertions.assertEquals(1_000, plan.postage());
+        Assertions.assertEquals(Coin.BELLSCOIN, plan.coin());
+        //A rate the Litecoin server reported never floors a Bellscoin fee; Litecoin keeps the app's rate
+        Assertions.assertEquals(Coin.BELLSCOIN.getMinRelayFeeRate(), MintFlow.minRelayFeeRate(Coin.BELLSCOIN, Coin.LITECOIN, 5.0));
+        Assertions.assertEquals(5.0, MintFlow.minRelayFeeRate(Coin.BELLSCOIN, Coin.BELLSCOIN, 5.0));
+        Assertions.assertEquals(5.0, MintFlow.minRelayFeeRate(Coin.LITECOIN, Coin.BELLSCOIN, 5.0));
+
+        double floor = Coin.BELLSCOIN.getMinRelayFeeRate();
+        WalletTransaction commit = MintFlow.buildCommit(bells, plan, fund(bells, 500_000), floor / 4, floor);
+        Transaction tx = commit.getTransaction();
+        Assertions.assertTrue(commit.getFee() >= Math.ceil(tx.getVirtualSize() * floor), "fee " + commit.getFee());
+        Assertions.assertEquals(plan.commitAddress().getOutputScript(), tx.getOutputs().getFirst().getScript());
+        for(TransactionInput input : tx.getInputs()) {
+            Assertions.assertEquals(0xffffffffL, input.getSequenceNumber());
+        }
+        Assertions.assertEquals(Coin.LITECOIN, Coin.get());
+
+        //Postage is checked against the plan's coin
+        Assertions.assertDoesNotThrow(() -> MintFlow.checkCommit(new PendingMint(PendingMint.Kind.INSCRIPTION, node.getDerivationPath(), plan.scriptHash(),
+                tx.getTxId(), 0, plan.commitValue(), Inscription.TEXT, null), plan, tx.getOutputs().getFirst()));
+    }
+
+    @Test
+    public void bellscoinTextHasNoLitecoin() throws Exception {
+        Wallet bells = bellscoinTaproot();
+        WalletNode node = MintFlow.revealNode(bells);
+        InscriptionMint.Plan plan = MintFlow.plan(node, Inscription.text("hello bellscoin"), null, 2.0);
+        WalletTransaction commit = MintFlow.buildCommit(bells, plan, fund(bells, 500_000), 2.0, 1.0);
+        MintFlow.Request request = new MintFlow.Request(plan.inscription(), null, 2.0, true);
+        PendingMint pending = new PendingMint(PendingMint.Kind.INSCRIPTION, node.getDerivationPath(), plan.scriptHash(), commit.getTransaction().getTxId(), 0,
+                plan.commitValue(), Inscription.TEXT, null);
+        for(String text : List.of(MintFlow.confirmText(bells, bells, request, plan, commit), MintFlow.forgetText(bells, pending))) {
+            Assertions.assertFalse(text.toLowerCase(Locale.ROOT).contains("lit"), text);
+            Assertions.assertFalse(text.contains("LTC"), text);
+            Assertions.assertTrue(text.contains("sats"), text);
+            Assertions.assertFalse(text.contains("—"), text);
+        }
+        Assertions.assertTrue(MintFlow.confirmText(bells, bells, request, plan, commit).contains("BELLS"));
+        //Litecoin keeps its words
+        Assertions.assertTrue(MintFlow.forgetText(taproot, pending).contains("lits"));
     }
 
     @Test
@@ -216,5 +296,35 @@ public class MintFlowTest {
         Inscription withImage = MintFlow.etchInscription(etching, "image/png", image);
         Assertions.assertEquals("image/png", withImage.contentType());
         Assertions.assertArrayEquals(image, withImage.body());
+    }
+
+    @Test
+    public void revealGoesToAChosenDestinationAndSurvivesAResume() throws Exception {
+        Wallet segwit = wallet("segwit", ScriptType.P2WPKH, KeystoreSource.SW_SEED);
+        Address destination = segwit.getFreshNode(KeyPurpose.RECEIVE).getAddress();
+        WalletNode node = taproot.getFreshNode(KeyPurpose.RECEIVE);
+        byte[] content = "token".getBytes(StandardCharsets.UTF_8);
+        InscriptionMint.Plan plan = MintFlow.plan(node, new Inscription(Inscription.TEXT, content, null), null, 2.0, destination);
+        Assertions.assertEquals(destination, plan.destination());
+        Transaction commit = commit(plan);
+        Transaction reveal = InscriptionMint.reveal(plan, commit.getOutputs().getFirst(), taproot.getKeystores().getFirst().getKey(node));
+        Assertions.assertEquals(destination.getOutputScript(), reveal.getOutputs().getFirst().getScript());
+
+        PendingMint mint = MintFlow.pendingRecord(plan, node, commit, null);
+        Assertions.assertEquals(destination.toString(), mint.getDestination());
+        InscriptionMint.Plan rebuilt = MintFlow.rebuild(mint, taproot, content);
+        Assertions.assertEquals(destination, rebuilt.destination());
+        Assertions.assertEquals(ScriptType.P2WPKH, rebuilt.destination().getScriptType());
+        Assertions.assertEquals(plan.commitAddress(), rebuilt.commitAddress());
+
+        //No destination, or the node's own address: nothing stored, rebuilds to the node's taproot address
+        InscriptionMint.Plan own = MintFlow.plan(node, new Inscription(Inscription.TEXT, content, null), null, 2.0, null);
+        Assertions.assertEquals(node.getAddress(), own.destination());
+        PendingMint ownMint = MintFlow.pendingRecord(own, node, commit(own), null);
+        Assertions.assertNull(ownMint.getDestination());
+        Assertions.assertEquals(node.getAddress(), MintFlow.rebuild(ownMint, taproot, content).destination());
+        PendingMint explicitOwn = MintFlow.pendingRecord(MintFlow.plan(node, new Inscription(Inscription.TEXT, content, null), null, 2.0, node.getAddress()),
+                node, commit(own), null);
+        Assertions.assertNull(explicitOwn.getDestination());
     }
 }

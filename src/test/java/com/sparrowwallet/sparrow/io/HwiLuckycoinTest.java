@@ -73,19 +73,33 @@ public class HwiLuckycoinTest {
         Assertions.assertInstanceOf(NullPointerException.class, failure, String.valueOf(failure));
     }
 
+    /**
+     * The path DevicePane takes before a USB device signs (Hwi.checkForDevice), with no stamping by hand: the signing wallet puts its chain on the
+     * PSBT, so an unmarked Luckycoin PSBT from another app is refused for a Luckycoin wallet; a PSBT marked for another coin is refused with the
+     * coin mismatch; a Junkcoin wallet's own PSBT goes on to the device.
+     */
     @Test
-    public void walletStampsItsChainBeforeTheRefusalIsDecided() throws Exception {
-        //An unmarked PSBT, as another app makes, says nothing of its chain until the signing wallet stamps it, as DevicePane and the card signers do
+    public void devicePathStampsTheSigningWalletsChain() throws Exception {
         PSBT luckycoin = psbt(Coin.LUCKYCOIN);
         PSBT unmarked = new PSBT(luckycoin.serialize(), false);
         unmarked.getGlobalProprietary().remove(PSBT.COIN_MARK_KEY);
         Assertions.assertEquals(0, unmarked.getSigHashPrefix().length);
-        Wallet wallet = new Wallet("Luckycoin");
-        wallet.setCoin(Coin.LUCKYCOIN);
-        unmarked.setSigHashPrefix(wallet.getSigHashPrefix());
-        Assertions.assertThrows(SignTransactionException.class, () -> new Hwi().signPSBT(null, null, unmarked, null, null, null));
+        SignTransactionException refused = Assertions.assertThrows(SignTransactionException.class, () -> Hwi.checkForDevice(wallet(Coin.LUCKYCOIN), unmarked));
+        Assertions.assertEquals(Hwi.LUCKYCOIN_HARDWARE_SIGNING_REFUSED, refused.getMessage());
+
+        PSBT junkcoin = psbt(Coin.JUNKCOIN);
+        SignTransactionException mismatch = Assertions.assertThrows(SignTransactionException.class, () -> Hwi.checkForDevice(wallet(Coin.LUCKYCOIN), junkcoin));
+        Assertions.assertEquals(String.format(Wallet.PSBT_COIN_MISMATCH, "Junkcoin", "Luckycoin"), mismatch.getMessage());
+        SignTransactionException reverse = Assertions.assertThrows(SignTransactionException.class, () -> Hwi.checkForDevice(wallet(Coin.JUNKCOIN), new PSBT(luckycoin.serialize(), false)));
+        Assertions.assertEquals(String.format(Wallet.PSBT_COIN_MISMATCH, "Luckycoin", "Junkcoin"), reverse.getMessage());
+        Assertions.assertDoesNotThrow(() -> Hwi.checkForDevice(wallet(Coin.JUNKCOIN), junkcoin));
     }
 
+    private static Wallet wallet(Coin coin) {
+        Wallet wallet = new Wallet(coin.getName());
+        wallet.setCoin(coin);
+        return wallet;
+    }
     private static PSBT psbt(Coin coin) throws Exception {
         return psbt(coin, HEIGHT + 6);
     }

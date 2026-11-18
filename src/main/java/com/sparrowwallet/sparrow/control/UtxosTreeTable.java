@@ -75,6 +75,29 @@ public class UtxosTreeTable extends CoinTreeTable {
         labelCol.setSortable(true);
         getColumns().add(labelCol);
 
+        com.sparrowwallet.drongo.wallet.Wallet master = rootEntry.getWallet().isNested() ? rootEntry.getWallet().getMasterWallet() : rootEntry.getWallet();
+        if(com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.applies(master) && com.sparrowwallet.drongo.ordinals.track.ChainRules.covers(master.getCoin())) {
+            TreeTableColumn<Entry, String> inscriptionsCol = new TreeTableColumn<>("Inscriptions");
+            inscriptionsCol.setCellValueFactory((TreeTableColumn.CellDataFeatures<Entry, String> param) ->
+                    new ReadOnlyObjectWrapper<>(com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.columnText(inscriptionCheck(master, param.getValue().getValue()))));
+            inscriptionsCol.setCellFactory(p -> new javafx.scene.control.TreeTableCell<>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    Entry entry = getTableRow() == null ? null : getTableRow().getItem();
+                    if(empty || item == null || entry == null) {
+                        setText(null);
+                        setTooltip(null);
+                        return;
+                    }
+                    setText(item);
+                    setTooltip(new javafx.scene.control.Tooltip(com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.columnTooltip(inscriptionCheck(master, entry))));
+                }
+            });
+            inscriptionsCol.setSortable(true);
+            getColumns().add(inscriptionsCol);
+        }
+
         TreeTableColumn<Entry, Number> amountCol = new TreeTableColumn<>("Value");
         amountCol.setCellValueFactory((TreeTableColumn.CellDataFeatures<Entry, Number> param) -> {
             return new ReadOnlyObjectWrapper<>(param.getValue().getValue().getValue());
@@ -110,6 +133,15 @@ public class UtxosTreeTable extends CoinTreeTable {
             sort();
             resetSortColumn();
         }
+    }
+
+    /** The coin's inscription check from the latest collectibles snapshot of the master wallet, or null. */
+    static com.sparrowwallet.drongo.wallet.InscriptionCheck inscriptionCheck(com.sparrowwallet.drongo.wallet.Wallet master, Entry entry) {
+        if(!(entry instanceof UtxoEntry utxoEntry)) {
+            return null;
+        }
+        com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.Snapshot snapshot = com.sparrowwallet.sparrow.wallet.collectibles.CollectiblesManager.get().getSnapshot(master);
+        return snapshot == null ? null : snapshot.checks().get(utxoEntry.getHashIndex().toString());
     }
 
     public void updateLabel(Entry entry) {

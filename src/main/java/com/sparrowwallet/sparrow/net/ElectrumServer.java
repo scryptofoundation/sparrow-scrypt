@@ -220,6 +220,8 @@ public class ElectrumServer {
 
     private static final Set<Sha256Hash> unsignedWarnedTxids = ConcurrentHashMap.newKeySet();
 
+    private static final Set<Sha256Hash> uncheckedWarnedTxids = ConcurrentHashMap.newKeySet();
+
     private static synchronized CloseableTransport getTransport() throws ServerException {
         //The coin of the task asking: its scope, or the focused coin on the FX thread; null leaves the coin unchecked
         com.sparrowwallet.drongo.Coin taskCoin = com.sparrowwallet.drongo.Coin.getScoped();
@@ -343,6 +345,7 @@ public class ElectrumServer {
         proofWarnedPairs.clear();
         proofsShownFalseWarnedPairs.clear();
         unsignedWarnedTxids.clear();
+        uncheckedWarnedTxids.clear();
         walletSyncLocks.values().forEach(syncLock -> {
             syncLock.scriptHashesInitialized = false;
             syncLock.storedProofsChecked = false;
@@ -1386,14 +1389,20 @@ public class ElectrumServer {
 
     /**
      * As above, for transactions reported at the given heights (absent, zero or below for unconfirmed). Each is judged by its chain's signature hash at
-     * that height. One reported as mined is left out only on a definite finding that an input of this wallet's is not validly signed: where the check
-     * cannot be made (a spent transaction unknown, a signature drongo cannot read, an exception) it is kept, since the server's report is all there is
-     * against it. An unconfirmed one is left out whenever it is not shown to be signed, as upstream does.
+     * that height (Wallet.getSigHashPrefix(Transaction, Integer)). A height no header proves is only the server's word, so a spend reported as mined is
+     * judged as strictly as an unconfirmed one: it is left out whenever it is not shown to be signed. Two exceptions keep a mined spend. One is a Taproot
+     * spend whose only gap is the transaction of another party's input (a payjoin, a coinjoin) the server did not serve: it cannot be checked at all, and
+     * hiding it could hide a real spend, so it is kept, with its own warning (UncheckedTransactionsEvent) since a server could make up such an input to
+     * keep a forgery (isUncheckableForAForeignInput); unconfirmed it is left out. Signatures are read as consensus reads them,
+     * so a real spend mined before strict DER still shows as signed. The other is DuplicateKeystoreKeysException: a fault of the wallet, the same for
+     * every transaction, which the server cannot cause and which would otherwise hide every mined spend of a misconfigured wallet. Any other exception
+     * leaves the spend out.
      */
     Set<Sha256Hash> getUnsignedTransactions(Wallet wallet, Map<Sha256Hash, Transaction> unconfirmed, Map<Sha256Hash, Integer> heights,
                                             Function<Sha256Hash, Transaction> inputTransactions) throws ServerException {
         Set<Sha256Hash> unsigned = unsignedThisPass.computeIfAbsent(wallet, w -> new LinkedHashSet<>());
         Set<Sha256Hash> found = new LinkedHashSet<>();
+        Set<Sha256Hash> unchecked = new LinkedHashSet<>();
 
         Map<Sha256Hash, Transaction> unjudged = new LinkedHashMap<>(unconfirmed);
         unjudged.keySet().removeAll(unsigned);
@@ -1410,18 +1419,26 @@ public class ElectrumServer {
             for(Map.Entry<Sha256Hash, Transaction> entry : unjudged.entrySet()) {
                 int height = heights.getOrDefault(entry.getKey(), 0);
                 try {
-                    Set<TransactionInput> notSigned = height > 0 ? wallet.getInvalidlySignedInputs(entry.getValue(), lookup, walletOutputScripts, height)
-                            : wallet.getUnsignedInputs(entry.getValue(), lookup, walletOutputScripts, null);
-                    if(!notSigned.isEmpty()) {
-                        found.add(entry.getKey());
+                    Set<TransactionInput> unsignedInputs = wallet.getUnsignedInputs(entry.getValue(), lookup, walletOutputScripts, height > 0 ? height : null);
+                    if(!unsignedInputs.isEmpty()) {
+                        if(height > 0 && isUncheckableForAForeignInput(wallet, entry.getValue(), unsignedInputs, lookup, walletOutputScripts)) {
+                            log.info("Kept " + entry.getKey() + ", reported at height " + height + ", unchecked: its Taproot signatures commit to the output of "
+                                    + "another party's input whose transaction the server did not serve");
+                            unchecked.add(entry.getKey());
+                        } else {
+                            found.add(entry.getKey());
+                        }
                     }
-                } catch(Exception e) {
+                } catch(DuplicateKeystoreKeysException e) {
                     if(height > 0) {
-                        log.warn("Could not verify the signatures of " + entry.getKey() + ", reported at height " + height + ", so it is kept", e);
+                        log.warn("Could not verify the signatures of " + entry.getKey() + ", reported at height " + height + ", as the wallet's keystores repeat a key, so it is kept", e);
                     } else {
                         log.warn("Could not verify the signatures of " + entry.getKey(), e);
                         found.add(entry.getKey());
                     }
+                } catch(Exception e) {
+                    log.warn("Could not verify the signatures of " + entry.getKey(), e);
+                    found.add(entry.getKey());
                 }
             }
         }
@@ -1447,7 +1464,40 @@ public class ElectrumServer {
             }
         }
 
+        unchecked.removeAll(unsigned);
+        Set<Sha256Hash> uncheckedUnwarned = unchecked.stream().filter(uncheckedWarnedTxids::add).collect(Collectors.toCollection(LinkedHashSet::new));
+        if(!uncheckedUnwarned.isEmpty()) {
+            EventManager.get().post(new UncheckedTransactionsEvent(wallet, uncheckedUnwarned));
+        }
+
         return new LinkedHashSet<>(unsigned);
+    }
+
+    /**
+     * Whether a spend's inputs left unsigned are all Taproot inputs of the wallet that could not be checked only because the transaction spent by an
+     * input that is not the wallet's is unknown: the server did not serve it (a payjoin or coinjoin input). A Taproot signature commits to every output
+     * the transaction spends, so nothing in such a spend can be checked. A transaction the wallet holds, or one served without the output, is no such gap.
+     */
+    private static boolean isUncheckableForAForeignInput(Wallet wallet, Transaction transaction, Set<TransactionInput> unsignedInputs,
+                                                         Function<Sha256Hash, Transaction> lookup, Map<Script, WalletNode> walletOutputScripts) {
+        boolean foreignGap = false;
+        for(TransactionInput input : transaction.getInputs()) {
+            Sha256Hash spentTxid = input.getOutpoint().getHash();
+            Transaction spent = lookup.apply(spentTxid);
+            if(spent == null || spent.getOutputs().size() <= input.getOutpoint().getIndex()) {
+                if(spent != null || wallet.getWalletTransaction(spentTxid) != null) {
+                    return false;
+                }
+                foreignGap = true;
+            }
+        }
+
+        if(!foreignGap) {
+            return false;
+        }
+
+        Map<TransactionInput, WalletNode> signingNodes = wallet.getSigningNodes(transaction, lookup, walletOutputScripts);
+        return unsignedInputs.stream().allMatch(input -> signingNodes.containsKey(input) && signingNodes.get(input).getWallet().getScriptType() == ScriptType.P2TR);
     }
 
     private void fetchSpentTransactions(Wallet wallet, Collection<Transaction> transactions, Function<Sha256Hash, Transaction> inputTransactions,
@@ -2533,6 +2583,48 @@ public class ElectrumServer {
         } catch(RuntimeException e) {
             log.error("Could not retrieve referenced transactions", e);
             throw new ServerException("Could not retrieve referenced transactions", e);
+        }
+    }
+
+    /** The fees of a block's non-coinbase transactions in block order, when the server lists them (Esplora with block routes). */
+    public Optional<List<com.sparrowwallet.drongo.ordinals.track.BlockFee>> getBlockFees(int height, Sha256Hash blockHash) throws ServerException {
+        if(!(electrumServerRpc instanceof EsploraServerRpc esploraServerRpc) || blockHash == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(esploraServerRpc.getBlockFees(blockHash.toString()));
+        } catch(com.sparrowwallet.sparrow.net.esplora.EsploraException e) {
+            throw new ServerException("Could not list the fees of block " + height, e);
+        }
+    }
+
+    /** The hash of the block at a height from the headers the app has fetched, or null. */
+    public static Sha256Hash getRetrievedBlockHash(int height) {
+        BlockHeader header = retrievedBlockHeaders.get(height);
+        return header == null ? null : header.getHash();
+    }
+
+    /** The hash of the block at a height: from an Esplora server, else from the headers the app has fetched. */
+    public Optional<Sha256Hash> getBlockHashAt(int height) throws ServerException {
+        if(electrumServerRpc instanceof EsploraServerRpc esploraServerRpc) {
+            try {
+                return Optional.of(Sha256Hash.wrap(esploraServerRpc.getBlockHash(height)));
+            } catch(com.sparrowwallet.sparrow.net.esplora.EsploraException | IllegalArgumentException e) {
+                throw new ServerException("Could not read the hash of block " + height, e);
+            }
+        }
+        return Optional.ofNullable(getRetrievedBlockHash(height));
+    }
+
+    /** The txid at a position of the block at a height, empty past its end or where the server cannot say (Esplora, no id_from_pos). */
+    public Optional<Sha256Hash> getTransactionIdAt(int height, int position) throws ServerException {
+        try {
+            String txid = electrumServerRpc.getTransactionIdFromPosition(getTransport(), height, position);
+            return txid == null ? Optional.empty() : Optional.of(Sha256Hash.wrap(txid));
+        } catch(UnsupportedMethodException e) {
+            return Optional.empty();
+        } catch(ElectrumServerRpcException e) {
+            throw new ServerException("Could not read position " + position + " of block " + height, e);
         }
     }
 
@@ -4885,6 +4977,7 @@ public class ElectrumServer {
         private final Address address;
         private final Date since;
         private final com.sparrowwallet.drongo.Coin coin;
+        private final Integer tipHeight;
 
         public AddressUtxosService(Address address, Date since) {
             this.address = address;
@@ -4892,6 +4985,18 @@ public class ElectrumServer {
             //No wallet here (private key sweep) - capture the coin the address was parsed under, as Address
             //holds only hash bytes and re-resolves its version byte from the active coin when stringified.
             this.coin = com.sparrowwallet.drongo.Coin.get();
+            //With it the tip of that coin's server, which decides the signature hash (Coin.getSigHashPrefix) and the locktime of the sweep
+            this.tipHeight = AppServices.getCurrentBlockHeight();
+        }
+
+        /** The coin whose chain the outputs were looked up on, and so the one a sweep of them signs for */
+        public com.sparrowwallet.drongo.Coin getCoin() {
+            return coin;
+        }
+
+        /** The tip of the chain the outputs were looked up on, captured with the coin */
+        public Integer getTipHeight() {
+            return tipHeight;
         }
 
         @Override

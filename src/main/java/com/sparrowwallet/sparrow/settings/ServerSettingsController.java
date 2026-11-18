@@ -180,7 +180,7 @@ public class ServerSettingsController extends SettingsDetailController {
     private ToggleGroup inscriptionsToggleGroup;
 
     @FXML
-    private ToggleButton inscriptionsOff;
+    private ToggleButton inscriptionsBuiltIn;
 
     @FXML
     private ToggleButton inscriptionsPublic;
@@ -780,7 +780,8 @@ public class ServerSettingsController extends SettingsDetailController {
     }
 
     //Inscription checks are per coin. Public is the coin's public indexer where one exists (ordinalslite.com for
-    //Litecoin mainnet, Nintondo for Bellscoin, Dogecoin and Pepecoin); otherwise Off and Custom (the user's own indexer).
+    //Litecoin mainnet, Nintondo for Bellscoin, Dogecoin and Pepecoin), Your own the user's indexer, Built-in the app's
+    //on-chain tracker alone (it also checks the others).
     private void initializeInscriptions(Config config) {
         inscriptionsForm.managedProperty().bind(inscriptionsForm.visibleProperty());
         inscriptionsForm.setVisible(true);
@@ -788,7 +789,7 @@ public class ServerSettingsController extends SettingsDetailController {
         String publicUrl = OrdServer.publicUrl(Coin.get(), Network.get());
         inscriptionsPublicField.managedProperty().bind(inscriptionsPublicField.visibleProperty());
         inscriptionsUrlField.managedProperty().bind(inscriptionsUrlField.visibleProperty());
-        inscriptionsOff.setUserData(InscriptionServerMode.OFF);
+        inscriptionsBuiltIn.setUserData(InscriptionServerMode.BUILT_IN);
         inscriptionsPublic.setUserData(InscriptionServerMode.PUBLIC);
         inscriptionsCustom.setUserData(InscriptionServerMode.CUSTOM);
         if(publicUrl == null) {
@@ -800,11 +801,11 @@ public class ServerSettingsController extends SettingsDetailController {
 
         InscriptionServerMode mode = config.getInscriptionServerMode();
         if(mode == InscriptionServerMode.PUBLIC && publicUrl == null) {
-            mode = InscriptionServerMode.OFF;
+            mode = InscriptionServerMode.BUILT_IN;
         }
         inscriptionsUrl.setText(config.getInscriptionCustomUrl() == null ? "" : config.getInscriptionCustomUrl());
         InscriptionServerMode initial = mode;
-        inscriptionsToggleGroup.selectToggle(inscriptionsToggleGroup.getToggles().stream().filter(t -> t.getUserData() == initial).findFirst().orElse(inscriptionsOff));
+        inscriptionsToggleGroup.selectToggle(inscriptionsToggleGroup.getToggles().stream().filter(t -> t.getUserData() == initial).findFirst().orElse(inscriptionsBuiltIn));
         showInscriptionFields(initial);
 
         inscriptionsToggleGroup.selectedToggleProperty().addListener((observable, oldValue, newValue) -> {
@@ -815,7 +816,7 @@ public class ServerSettingsController extends SettingsDetailController {
             InscriptionServerMode selected = (InscriptionServerMode)newValue.getUserData();
             if(selected == InscriptionServerMode.PUBLIC && !config.isInscriptionPublicWarningShown()) {
                 AppServices.showWarningDialog("Public inscriptions server", inscriptionsPublicHost.getText() + " will see the outputs of every " +
-                        Coin.get().getCapitalizedName() + " wallet you open, which can link them together. Run your own indexer and choose Custom to avoid this.");
+                        Coin.get().getCapitalizedName() + " wallet you open, which can link them together. Run your own indexer and choose Your own, or choose Built-in, to avoid this.");
                 config.setInscriptionPublicWarningShown();
             }
             showInscriptionFields(selected);
@@ -833,7 +834,7 @@ public class ServerSettingsController extends SettingsDetailController {
     private void showInscriptionFields(InscriptionServerMode mode) {
         inscriptionsPublicField.setVisible(mode == InscriptionServerMode.PUBLIC);
         inscriptionsUrlField.setVisible(mode == InscriptionServerMode.CUSTOM);
-        inscriptionsTest.setDisable(mode == InscriptionServerMode.OFF);
+        inscriptionsTest.setDisable(mode == InscriptionServerMode.BUILT_IN);
         inscriptionsTestResult.setText("");
     }
 

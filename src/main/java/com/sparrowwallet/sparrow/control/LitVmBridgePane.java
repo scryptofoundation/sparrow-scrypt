@@ -49,7 +49,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
     private static final String BASE_DEPOSIT = "base-deposit";
 
     private final LitVmRpcClient l2;
-    private final LitVmRpcClient l1 = new LitVmRpcClient(ZkLtcBridge.L1);
+    private final LitVmRpcClient l1;
 
     private final VBox jkcRows = new VBox(6);
     private final VBox zkRows = new VBox(6);
@@ -69,6 +69,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
 
     public LitVmBridgePane(WalletForm walletForm, LitVmRpcClient l2, Consumer<String> status, Runnable onBalancesChanged) {
         super(walletForm, status, onBalancesChanged);
+        this.l1 = new LitVmRpcClient(ZkLtcBridge.L1, LitVmContext.transportFor(getMasterWallet()));
         this.l2 = l2;
 
         //A deposit is sent from the Junkcoin wallet's Send tab, so it only shows here once that wallet syncs it. Listen
@@ -88,6 +89,8 @@ public class LitVmBridgePane extends LitVmFlowPane {
         Label jkcWarning = new Label(JunkcoinBridge.TRUST_WARNING);
         jkcWarning.setWrapText(true);
         jkcWarning.setMaxWidth(560);
+        //A warning is read whole: wrapped in full at the least window width, never cut short
+        jkcWarning.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         Button depositJkc = new Button("Deposit JKC...");
         depositJkc.setOnAction(e -> depositJkc());
         Button withdrawJkc = new Button("Withdraw " + JunkcoinBridge.WJKC.symbol() + "...");
@@ -100,6 +103,8 @@ public class LitVmBridgePane extends LitVmFlowPane {
         Label zkNote = new Label(ZkLtcBridge.TRUST_WARNING + " There is no Litecoin to zkLTC bridge yet; this is the Ethereum leg of LitVM's planned route.");
         zkNote.setWrapText(true);
         zkNote.setMaxWidth(560);
+        //A warning is read whole: wrapped in full at the least window width, never cut short
+        zkNote.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         Button depositZk = new Button("Deposit from Sepolia...");
         depositZk.setOnAction(e -> depositZk());
         Button withdrawZk = new Button("Withdraw to Sepolia...");
@@ -107,14 +112,16 @@ public class LitVmBridgePane extends LitVmFlowPane {
         Button trackWithdrawal = new Button("Track Withdrawal...");
         trackWithdrawal.setOnAction(e -> trackWithdrawal());
 
-        getChildren().addAll(jkcTitle, jkcWarning, new HBox(8, depositJkc, withdrawJkc, checkDeposit), jkcRows,
-                new Separator(), zkTitle, zkNote, new HBox(10, new Label("Sepolia account:"), sepoliaBalance), new HBox(8, depositZk, withdrawZk, trackWithdrawal), zkRows);
+        getChildren().addAll(jkcTitle, jkcWarning, buttons(depositJkc, withdrawJkc, checkDeposit), jkcRows,
+                new Separator(), zkTitle, zkNote, new HBox(10, LitVmContext.formLabel("Sepolia account:"), sepoliaBalance), buttons(depositZk, withdrawZk, trackWithdrawal), zkRows);
 
         Label baseTitle = new Label("Base bridge (Sepolia ETH to Base Sepolia)");
         baseTitle.setStyle("-fx-font-weight: bold;");
         Label baseNote = new Label(BaseBridge.NOTE);
         baseNote.setWrapText(true);
         baseNote.setMaxWidth(560);
+        //A warning is read whole: wrapped in full at the least window width, never cut short
+        baseNote.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         Button depositBase = new Button("Move Sepolia ETH to Base...");
         depositBase.setOnAction(e -> depositBase());
         getChildren().addAll(new Separator(), baseTitle, baseNote, depositBase, baseRows);
@@ -135,12 +142,26 @@ public class LitVmBridgePane extends LitVmFlowPane {
     }
 
     private void record(String kind, String hash) {
+        record(address(), kind, hash);
+    }
+
+    /** Keeps a bridge transaction of an account, once. */
+    static void record(EvmAddress account, String kind, String hash) {
         List<String> history = Config.get().getLitVmBridgeHistory();
-        String item = kind + "|" + hash.toLowerCase(Locale.ROOT) + "|" + address();
+        String item = kind + "|" + hash.toLowerCase(Locale.ROOT) + "|" + account;
         if(!history.contains(item)) {
             history.add(item);
             Config.get().setLitVmBridgeHistory(history);
         }
+    }
+
+
+    /** A row of buttons that goes onto a second line when the window is narrow, each button keeping its whole name. */
+    private static javafx.scene.layout.FlowPane buttons(Button... buttons) {
+        for(Button button : buttons) {
+            button.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        }
+        return new javafx.scene.layout.FlowPane(8, 8, buttons);
     }
 
     // ---- refresh ----
@@ -173,10 +194,10 @@ public class LitVmBridgePane extends LitVmFlowPane {
                 String sepolia;
                 List<Row> zk = new ArrayList<>();
                 try {
-                    l1.verifyChain();
+                    verifyChain(l1);
                     sepolia = Wei.format(l1.getBalance(address)) + " ETH, " + ZkLtcBridge.ZKLTC_L1.format(l1.getTokenBalance(ZkLtcBridge.ZKLTC_L1, address)) + " zkLTC";
                 } catch(Exception e) {
-                    sepolia = "Unavailable: " + message(e);
+                    sepolia = sepoliaUnavailable(e);
                 }
                 for(Entry entry : zkDeposits) {
                     zk.add(zkDepositRow(entry.hash()));
@@ -203,7 +224,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
                             zk.add(new Row("Withdrawal of " + amount + " (" + shortHash(entry.hash()) + "): ready to claim", () -> claimZk(ready, sendCount), "Claim on Sepolia"));
                         }
                     } catch(Exception e) {
-                        zk.add(new Row("Withdrawal " + shortHash(entry.hash()) + ": " + message(e), null, null));
+                        zk.add(new Row(unread("Withdrawal " + shortHash(entry.hash()), e), null, null));
                     }
                 }
                 List<Row> base = new ArrayList<>();
@@ -214,8 +235,33 @@ public class LitVmBridgePane extends LitVmFlowPane {
             }
         };
         task.setOnSucceeded(e -> show(task.getValue()));
-        task.setOnFailed(e -> status.accept("Could not read bridge status: " + message(task.getException())));
+        task.setOnFailed(e -> status.accept(statusFailed(task.getException())));
         start(task);
+    }
+
+    /** A row whose state could not be read: the app's name for it (its own record of the hash), then the fixed words. */
+    static String unread(String what, Throwable failure) {
+        return LitVmWords.failure(what + ": could not be read.", failure);
+    }
+
+    /** The Sepolia balance line when it could not be read. */
+    static String sepoliaUnavailable(Throwable failure) {
+        return LitVmWords.failure("Unavailable.", failure);
+    }
+
+    /** The status line when the bridges' state could not be read. */
+    static String statusFailed(Throwable failure) {
+        return LitVmWords.failure("Could not read bridge status.", failure);
+    }
+
+    /** The status line when the Junkcoin bridge did not pass its check before a deposit. */
+    static String verifyFailed(Throwable failure) {
+        return LitVmWords.failure("The Junkcoin bridge could not be verified, so no deposit was started.", failure);
+    }
+
+    /** The status line when a withdrawal to track could not be read. */
+    static String withdrawalFailed(Throwable failure) {
+        return LitVmWords.failure("Could not read the withdrawal.", failure);
     }
 
     private Row jkcDepositRow(EvmAddress address, String txid) {
@@ -237,7 +283,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
                 }
             };
         } catch(Exception e) {
-            return new Row("Deposit " + shortHash(txid) + ": " + message(e), null, null);
+            return new Row(unread("Deposit " + shortHash(txid), e), null, null);
         }
     }
 
@@ -247,7 +293,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
             String text = receipt.isEmpty() ? "pending on Sepolia" : (receipt.get().success() ? "sent; credited on LiteForge within about 15 minutes" : "failed on Sepolia");
             return new Row("Deposit " + shortHash(hash) + ": " + text, null, null);
         } catch(Exception e) {
-            return new Row("Deposit " + shortHash(hash) + ": " + message(e), null, null);
+            return new Row(unread("Deposit " + shortHash(hash), e), null, null);
         }
     }
 
@@ -257,7 +303,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
             String text = receipt.isEmpty() ? "pending on Sepolia" : (receipt.get().success() ? "sent; credited on Base Sepolia in about 5 minutes" : "failed on Sepolia");
             return new Row("Deposit to Base " + shortHash(hash) + ": " + text, null, null);
         } catch(Exception e) {
-            return new Row("Deposit to Base " + shortHash(hash) + ": " + message(e), null, null);
+            return new Row(unread("Deposit to Base " + shortHash(hash), e), null, null);
         }
     }
 
@@ -396,7 +442,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         try {
             custody = custodyAddress();
         } catch(InvalidAddressException e) {
-            status.accept("Could not read the custody address: " + e.getMessage());
+            status.accept("Could not read the custody address, so no deposit was started.");
             return;
         }
         EvmAddress address = address();
@@ -408,7 +454,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         Task<Integer> check = new Task<>() {
             @Override
             protected Integer call() throws Exception {
-                l2.verifyChain();
+                verifyChain(l2);
                 JunkcoinBridge.verifyBridge(l2);
                 return JunkcoinBridge.feeBps(l2);
             }
@@ -421,7 +467,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
             }
             confirmJkcDeposit(sendingWallet, custody, address, depositSats, feeBps);
         });
-        check.setOnFailed(e -> status.accept("The Junkcoin bridge could not be verified, so no deposit was started: " + message(check.getException())));
+        check.setOnFailed(e -> status.accept(verifyFailed(check.getException())));
         start(check);
     }
 
@@ -462,7 +508,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
     private void claimJkc(String txid, JunkcoinBridge.PendingClaim claim) {
         EvmAddress address = address();
         prepare(() -> {
-            l2.verifyChain();
+            verifyChain(l2);
             JunkcoinBridge.verifyBridge(l2);
             Eip1559Transaction tx = l2.prepareCall(address, JunkcoinBridge.BRIDGE, BigInteger.ZERO, JunkcoinBridge.claimCall(txid));
             requireBalance(l2, address, tx.maxCost());
@@ -498,9 +544,9 @@ public class LitVmBridgePane extends LitVmFlowPane {
         GridPane grid = new GridPane();
         grid.setHgap(10);
         grid.setVgap(10);
-        grid.add(new Label("Amount (" + JunkcoinBridge.WJKC.symbol() + ")"), 0, 0);
+        grid.add(LitVmContext.formLabel("Amount (" + JunkcoinBridge.WJKC.symbol() + ")"), 0, 0);
         grid.add(amountField, 1, 0);
-        grid.add(new Label("To Junkcoin address"), 0, 1);
+        grid.add(LitVmContext.formLabel("To Junkcoin address"), 0, 1);
         grid.add(destination, 1, 1);
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.initOwner(getScene().getWindow());
@@ -537,15 +583,15 @@ public class LitVmBridgePane extends LitVmFlowPane {
 
         EvmAddress address = address();
         prepare(() -> {
-            l2.verifyChain();
+            verifyChain(l2);
             JunkcoinBridge.verifyBridge(l2);
             int feeBps = JunkcoinBridge.feeBps(l2);
             if(feeBps > JunkcoinBridge.MAX_FEE_BPS) {
-                throw new IllegalStateException("The bridge fee is now " + feeBps / 100.0 + "%, above the 1% this wallet accepts");
+                throw new LitVmWords.Said("The bridge fee is now " + feeBps / 100.0 + "%, above the 1% this wallet accepts.");
             }
             BigInteger balance = l2.getTokenBalance(JunkcoinBridge.WJKC, address);
             if(balance.compareTo(amount) < 0) {
-                throw new IllegalStateException("Only " + JunkcoinBridge.WJKC.format(balance) + " " + JunkcoinBridge.WJKC.symbol() + " available");
+                throw new LitVmWords.Said("Only " + JunkcoinBridge.WJKC.format(balance) + " " + JunkcoinBridge.WJKC.symbol() + " available.");
             }
             byte[] withdraw = JunkcoinBridge.withdrawCall(amount, jkcAddress, JunkcoinBridge.MAX_FEE_BPS);
             List<Step> steps = new ArrayList<>();
@@ -565,7 +611,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         hashes -> {
             record(JKC_WITHDRAW, hashes.getLast());
             status.accept("Withdrawal submitted in " + hashes.getLast() + ". The bridge pays the JKC out to " + jkcAddress + ".");
-        });
+        }, () -> LitVmNotices.BRIDGE_TAG + JKC_WITHDRAW);
     }
 
     // ---- zkLTC bridge ----
@@ -589,11 +635,11 @@ public class LitVmBridgePane extends LitVmFlowPane {
 
         EvmAddress address = address();
         prepare(() -> {
-            l1.verifyChain();
+            verifyChain(l1);
             ZkLtcBridge.verifyBridge(l1);
             BigInteger balance = l1.getTokenBalance(ZkLtcBridge.ZKLTC_L1, address);
             if(balance.compareTo(amount) < 0) {
-                throw new IllegalStateException("Only " + ZkLtcBridge.ZKLTC_L1.format(balance) + " zkLTC on Sepolia");
+                throw new LitVmWords.Said("Only " + ZkLtcBridge.ZKLTC_L1.format(balance) + " zkLTC on Sepolia.");
             }
             List<Step> steps = new ArrayList<>();
             if(ZkLtcBridge.depositAllowance(l1, address).compareTo(amount) < 0) {
@@ -611,7 +657,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         hashes -> {
             record(ZK_DEPOSIT, hashes.getLast());
             status.accept("Deposit sent in " + hashes.getLast() + ". It is credited on LiteForge within about 15 minutes.");
-        });
+        }, () -> LitVmNotices.BRIDGE_TAG + ZK_DEPOSIT);
     }
 
     private void withdrawZk() {
@@ -633,7 +679,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
 
         EvmAddress address = address();
         prepare(() -> {
-            l2.verifyChain();
+            verifyChain(l2);
             Eip1559Transaction tx = l2.prepareCall(address, ZkLtcBridge.ARB_SYS, amount, ZkLtcBridge.withdrawCall(address));
             requireBalance(l2, address, tx.maxCost());
             return List.of(new Step(l2, tx, "withdrawEth to " + address + " on Sepolia"));
@@ -643,7 +689,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         hashes -> {
             record(ZK_WITHDRAW, hashes.getLast());
             status.accept("Withdrawal sent in " + hashes.getLast() + ". Claim it on Sepolia once the rollup confirms it.");
-        });
+        }, () -> LitVmNotices.BRIDGE_TAG + ZK_WITHDRAW);
     }
 
     private void trackWithdrawal() {
@@ -660,7 +706,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
         Task<ZkLtcBridge.Withdrawal> task = new Task<>() {
             @Override
             protected ZkLtcBridge.Withdrawal call() throws Exception {
-                l2.verifyChain();
+                verifyChain(l2);
                 return ZkLtcBridge.findWithdrawal(l2, hash);
             }
         };
@@ -675,7 +721,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
                 refresh();
             }
         });
-        task.setOnFailed(e -> status.accept("Could not read the withdrawal: " + message(task.getException())));
+        task.setOnFailed(e -> status.accept(withdrawalFailed(task.getException())));
         start(task);
     }
 
@@ -700,7 +746,7 @@ public class LitVmBridgePane extends LitVmFlowPane {
 
         EvmAddress address = address();
         prepare(() -> {
-            l1.verifyChain();
+            verifyChain(l1);
             BaseBridge.verify(l1);
             Eip1559Transaction tx = l1.prepareCall(address, BaseBridge.PORTAL, amount, BaseBridge.depositCall(address, amount));
             List<Step> steps = List.of(new Step(l1, tx, "depositTransaction on the Base portal"));
@@ -711,14 +757,14 @@ public class LitVmBridgePane extends LitVmFlowPane {
         hashes -> {
             record(BASE_DEPOSIT, hashes.getLast());
             status.accept("Deposit sent in " + hashes.getLast() + ". It is credited on Base Sepolia in about 5 minutes.");
-        });
+        }, () -> LitVmNotices.BRIDGE_TAG + BASE_DEPOSIT);
     }
 
     private void claimZk(ZkLtcBridge.Withdrawal withdrawal, BigInteger sendCount) {
         EvmAddress address = address();
         prepare(() -> {
-            l1.verifyChain();
-            l2.verifyChain();
+            verifyChain(l1);
+            verifyChain(l2);
             byte[] data = ZkLtcBridge.claimCall(l2, withdrawal, sendCount);
             Eip1559Transaction tx = l1.prepareCall(address, ZkLtcBridge.OUTBOX, BigInteger.ZERO, data);
             requireBalance(l1, address, tx.maxCost());

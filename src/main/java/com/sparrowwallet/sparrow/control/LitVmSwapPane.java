@@ -82,13 +82,13 @@ public class LitVmSwapPane extends LitVmFlowPane {
 
         form.setHgap(10);
         form.setVgap(10);
-        form.add(new Label("From"), 0, 0);
+        form.add(LitVmContext.formLabel("From"), 0, 0);
         form.add(new HBox(8, fromCombo, flip), 1, 0);
-        form.add(new Label("To"), 0, 1);
+        form.add(LitVmContext.formLabel("To"), 0, 1);
         form.add(toCombo, 1, 1);
-        form.add(new Label("Amount"), 0, 2);
+        form.add(LitVmContext.formLabel("Amount"), 0, 2);
         form.add(amountField, 1, 2);
-        form.add(new Label("Slippage %"), 0, 3);
+        form.add(LitVmContext.formLabel("Slippage %"), 0, 3);
         form.add(new HBox(8, slippageField, quoteButton, swapButton), 1, 3);
         getChildren().addAll(title, note, form, quoteLabel);
     }
@@ -165,7 +165,13 @@ public class LitVmSwapPane extends LitVmFlowPane {
         if(from.token() == null ? to.token() == null : (to.token() != null && from.token().contract().equals(to.token().contract()))) {
             throw new IllegalArgumentException("Choose two different assets.");
         }
-        BigInteger amount = from.parse(amountField.getText());
+        BigInteger amount;
+        try {
+            amount = from.parse(amountField.getText());
+        } catch(IllegalArgumentException e) {
+            //A token's own message names the token by the symbol its contract gave
+            throw new IllegalArgumentException(from.token() == null ? e.getMessage() : LitVmWords.tokenAmount(from.token()));
+        }
         if(amount.signum() == 0) {
             throw new IllegalArgumentException("Enter an amount greater than zero.");
         }
@@ -199,14 +205,19 @@ public class LitVmSwapPane extends LitVmFlowPane {
         Task<SwapVenue.Quote> task = new Task<>() {
             @Override
             protected SwapVenue.Quote call() throws Exception {
-                quoteClient.verifyChain();
+                verifyChain(quoteClient);
                 quoteVenue.verify(quoteClient);
                 return quoteVenue.quote(quoteClient, inputs.from().token(), inputs.to().token(), inputs.amount());
             }
         };
         task.setOnSucceeded(e -> quoteLabel.setText(describe(inputs, task.getValue())));
-        task.setOnFailed(e -> quoteLabel.setText("No quote: " + message(task.getException())));
+        task.setOnFailed(e -> quoteLabel.setText(quoteFailed(task.getException())));
         start(task);
+    }
+
+    /** The quote line when no quote could be had. */
+    static String quoteFailed(Throwable failure) {
+        return LitVmWords.failure("No quote.", failure);
     }
 
     private void swap() {
@@ -222,7 +233,7 @@ public class LitVmSwapPane extends LitVmFlowPane {
         EvmAddress address = address();
         SwapVenue.Quote[] quoted = new SwapVenue.Quote[1];
         prepare(() -> {
-            swapClient.verifyChain();
+            verifyChain(swapClient);
             swapVenue.verify(swapClient);
             SwapVenue.Quote quote = swapVenue.quote(swapClient, inputs.from().token(), inputs.to().token(), inputs.amount());
             quoted[0] = quote;
@@ -236,7 +247,7 @@ public class LitVmSwapPane extends LitVmFlowPane {
             if(sold != null) {
                 BigInteger balance = swapClient.getTokenBalance(sold, address);
                 if(balance.compareTo(inputs.amount()) < 0) {
-                    throw new IllegalStateException("Only " + sold.format(balance) + " " + sold.symbol() + " available");
+                    throw new LitVmWords.Said("Only " + sold.format(balance) + " of the token you pay with is available.");
                 }
             }
             if(sold != null && allowance(swapClient, sold, address, swapVenue.spender()).compareTo(inputs.amount()) < 0) {

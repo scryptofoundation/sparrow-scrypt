@@ -126,6 +126,51 @@ public class PendingMintPersistenceTest extends IoTest {
         Assertions.assertEquals(COMMIT, loaded.getFirst().getCommitTxid());
     }
 
+    private static final byte[] DOGINAL_CONTENT = "such inscription, very wow".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+    private static PendingMint doginal() {
+        return PendingMint.doginal("m/44'/3'/0'/0/5", Sha256Hash.hash(new byte[] {6}), COMMIT, 4_321_000L, "text/plain", DOGINAL_CONTENT, 1000.5,
+                "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").withStepsBroadcast(9);
+    }
+
+    private static void assertDoginal(PendingMint loaded) {
+        Assertions.assertEquals(PendingMint.Kind.DOGINAL, loaded.getKind());
+        Assertions.assertEquals("m/44'/3'/0'/0/5", loaded.getKeyPath());
+        Assertions.assertEquals(COMMIT, loaded.getCommitTxid());
+        Assertions.assertEquals(4_321_000L, loaded.getCommitValue());
+        Assertions.assertArrayEquals(DOGINAL_CONTENT, loaded.getContent());
+        Assertions.assertEquals(1000.5, loaded.getFeeRate());
+        Assertions.assertEquals("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L", loaded.getDestination());
+        Assertions.assertEquals(9, loaded.getStepsBroadcast());
+    }
+
+    @Test
+    public void doginalPendingMintRoundTrips() throws IOException, MnemonicException, StorageException {
+        System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, "true");
+        Storage storage = new Storage(getFile("sparrow-single-seed-wallet"));
+        Wallet wallet = storage.loadEncryptedWallet("pass").getWallet();
+        wallet.getPendingMints().addAll(List.of(inscription(), doginal()));
+
+        //Through the file the first save writes
+        Storage saved = save(storage, wallet);
+        Storage open = new Storage(saved.getWalletFile());
+        Wallet opened = open.loadEncryptedWallet("pass").getWallet();
+        assertDoginal(opened.getPendingMints().stream().filter(m -> m.getKind() == PendingMint.Kind.DOGINAL).findFirst().orElseThrow());
+        Assertions.assertNull(opened.getPendingMints().stream().filter(m -> m.getKind() == PendingMint.Kind.INSCRIPTION).findFirst().orElseThrow().getContent());
+
+        //And through the database the app writes after loading
+        opened.getPendingMints().replaceAll(m -> m.getKind() == PendingMint.Kind.DOGINAL ? m.withStepsBroadcast(9) : m);
+        open.savePendingMints(opened);
+        open.closeAndWait();
+        List<PendingMint> loaded = new Storage(open.getWalletFile()).loadEncryptedWallet("pass").getWallet().getPendingMints();
+        Assertions.assertEquals(2, loaded.size());
+        assertDoginal(loaded.stream().filter(m -> m.getKind() == PendingMint.Kind.DOGINAL).findFirst().orElseThrow());
+        PendingMint inscription = loaded.stream().filter(m -> m.getKind() == PendingMint.Kind.INSCRIPTION).findFirst().orElseThrow();
+        Assertions.assertNull(inscription.getContent());
+        Assertions.assertNull(inscription.getDestination());
+        Assertions.assertEquals(0, inscription.getStepsBroadcast());
+    }
+
     @AfterEach
     void tearDown() {
         System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, "false");

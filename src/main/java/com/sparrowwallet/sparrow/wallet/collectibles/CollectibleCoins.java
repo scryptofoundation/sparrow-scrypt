@@ -7,7 +7,8 @@ import com.sparrowwallet.drongo.wallet.Wallet;
 
 /**
  * Which coins have a Collectibles tab and what it offers on each. Litecoin has inscriptions, runes and minting;
- * Dogecoin, Pepecoin, Bellscoin and Junkcoin show and send inscriptions only.
+ * Dogecoin, Pepecoin, Bellscoin and Junkcoin show, send and mint inscriptions (Bellscoin by commit and reveal like
+ * Litecoin, the others as Doginals), without runes.
  */
 public final class CollectibleCoins {
     private CollectibleCoins() {}
@@ -24,7 +25,10 @@ public final class CollectibleCoins {
     }
 
     public static boolean canMint(Coin coin) {
-        return coin == Coin.LITECOIN;
+        return switch(coin) {
+            case LITECOIN, DOGECOIN, PEPECOIN, BELLSCOIN, JUNKCOIN -> true;
+            case LUCKYCOIN, DINGOCOIN -> false;
+        };
     }
 
     /** Whether the wallet's outputs are shown in Collectibles: any Litecoin wallet but MWEB, single-sig wallets on the other coins. */
