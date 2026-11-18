@@ -1183,10 +1183,13 @@ public class ElectrumServer {
                 return blockTransaction == null ? null : blockTransaction.getTransaction();
             };
 
+            //Every unconfirmed reference is judged, as upstream does. A confirmed one is judged too where its height is not proven, since a height the
+            //server merely reports proves nothing, but only when it is new to the wallet this pass, so what is already held is not judged again
             Map<Sha256Hash, Transaction> unconfirmed = new HashMap<>();
             for(Set<BlockTransactionHash> nodeReferences : nodeTransactionMap.values()) {
                 for(BlockTransactionHash reference : nodeReferences) {
-                    Transaction transaction = reference.getHeight() <= 0 ? inputTransactions.apply(reference.getHash()) : null;
+                    boolean judged = reference.getHeight() <= 0 || (isUnprovenHeight(reference, proven) && fetched.containsKey(reference.getHash()));
+                    Transaction transaction = judged ? inputTransactions.apply(reference.getHash()) : null;
                     if(transaction != null) {
                         unconfirmed.put(reference.getHash(), transaction);
                     }
@@ -1352,6 +1355,15 @@ public class ElectrumServer {
                 demotedScriptHashes.add(getScriptHash(entry.getKey()));
             }
         }
+    }
+
+    /**
+     * Whether a reference claims a height that has not been proven to the wallet this pass. Where verification is on, a height that could not be
+     * proven has already been demoted to unconfirmed, so a confirmed reference not proven here is one no proof was asked for, which is every one
+     * where no header can be verified (as on every chain this app supports today).
+     */
+    private static boolean isUnprovenHeight(BlockTransactionHash reference, Map<BlockTransactionHash, BlockHeader> proven) {
+        return reference.getHeight() > 0 && !proven.containsKey(reference);
     }
 
     private static boolean isVerifyingSignatures() {
@@ -3133,7 +3145,9 @@ public class ElectrumServer {
                         BlockTransaction blockTransaction = fetched.containsKey(txid) ? fetched.get(txid) : wallet.getWalletTransaction(txid);
                         return blockTransaction == null ? null : blockTransaction.getTransaction();
                     };
-                    Map<Sha256Hash, Transaction> unconfirmed = fetched.values().stream().filter(blkTx -> blkTx.getHeight() <= 0 && blkTx.getTransaction() != null)
+                    //Judged as in getReferencedTransactions: unconfirmed, or at a height not proven this pass
+                    Map<Sha256Hash, Transaction> unconfirmed = fetched.values().stream().filter(blkTx -> blkTx.getTransaction() != null
+                                    && (blkTx.getHeight() <= 0 || isUnprovenHeight(blkTx, proven)))
                             .collect(Collectors.toMap(BlockTransaction::getHash, BlockTransaction::getTransaction));
                     fetched.keySet().removeAll(getUnsignedTransactions(wallet, unconfirmed, inputTransactions));
                 }

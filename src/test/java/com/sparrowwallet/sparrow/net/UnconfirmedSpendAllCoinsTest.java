@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.net;
 
 import com.github.arteam.simplejsonrpc.client.Transport;
+import com.google.common.eventbus.Subscribe;
 import com.google.common.net.HostAndPort;
 import com.sparrowwallet.drongo.Coin;
 import com.sparrowwallet.drongo.KeyPurpose;
@@ -15,14 +16,22 @@ import com.sparrowwallet.drongo.protocol.Sha256Hash;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.psbt.PSBT;
 import com.sparrowwallet.drongo.wallet.*;
+import com.sparrowwallet.sparrow.EventManager;
 import com.sparrowwallet.sparrow.SparrowWallet;
+import com.sparrowwallet.sparrow.event.UnsignedTransactionsEvent;
 import com.sparrowwallet.sparrow.io.Config;
+import com.sparrowwallet.sparrow.net.esplora.EsploraServerRpc;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * The history path that keeps forged spends of a wallet's coins out of it (ElectrumServer.getReferencedTransactions), run for every coin and script
@@ -166,17 +175,23 @@ public class UnconfirmedSpendAllCoinsTest {
         }
     }
 
+
     /**
-     * Known gap, pinned: no coin here verifies block headers (Network.supportsHeaderVerification), so a height the server reports is taken as given,
-     * and only references at height 0 or below are checked (ElectrumServer.getReferencedTransactions). A forged spend the server first reports as
-     * mined is fetched and enters the wallet as confirmed without its signatures being looked at. It cannot be bumped (fee bump, cancel and CPFP are
-     * offered only below height 1), but it shows the coins as spent and hides the real spend. Once the server reports it unconfirmed it is checked and
-     * left out. Checking unproven confirmed references too would close this, and flip this test.
+     * No coin here verifies block headers (Network.supportsHeaderVerification), so a height the server reports proves nothing. A spend first seen at
+     * such a height is judged as an unconfirmed one is: a forged one is left out and warned about, an honest one kept at its height.
      */
     @Test
-    public void knownGapForgedSpendReportedAsMinedIsNotChecked() throws Exception {
+    public void forgedSpendReportedAsMinedIsLeftOut() throws Exception {
         for(Coin coin : Coin.values()) {
             Coin scope = Coin.beginScope(coin);
+            List<Set<Sha256Hash>> warnings = new ArrayList<>();
+            Object listener = new Object() {
+                @Subscribe
+                public void unsignedTransactions(UnsignedTransactionsEvent event) {
+                    warnings.add(event.getTxids());
+                }
+            };
+            EventManager.get().register(listener);
             try {
                 Assertions.assertFalse(Network.get().supportsHeaderVerification(), coin.getName());
 
@@ -188,26 +203,72 @@ public class UnconfirmedSpendAllCoinsTest {
                 server.serve(forged);
                 ElectrumServer.electrumServerRpc = server;
 
-                //First seen at a height: fetched from the server and kept
-                WalletNode node = wallet.getNode(KeyPurpose.RECEIVE).getChildren().iterator().next();
-                Map<WalletNode, Set<BlockTransactionHash>> mined = new LinkedHashMap<>();
-                mined.put(node, new TreeSet<>(List.of(new BlockTransaction(funding.getTxId(), FUNDING_HEIGHT, new Date(), 0L, null),
-                        new BlockTransaction(forged.getTxId(), FUNDING_HEIGHT + 1, null, null, null))));
+                Map<WalletNode, Set<BlockTransactionHash>> mined = minedHistory(wallet, funding, forged);
                 new ElectrumServer().getReferencedTransactions(wallet, mined);
                 Assertions.assertEquals(Set.of(forged.getTxId().toString()), server.requested, coin.getName() + " forged spend fetched");
-                Assertions.assertTrue(holds(mined, forged), coin.getName() + " forged spend at a reported height is kept");
-                Assertions.assertTrue(wallet.getTransactions().containsKey(forged.getTxId()), coin.getName() + " forged spend in the wallet");
-
-                //Then reported unconfirmed: checked and left out
-                Map<WalletNode, Set<BlockTransactionHash>> unconfirmed = new LinkedHashMap<>();
-                unconfirmed.put(node, new TreeSet<>(List.of(new BlockTransaction(funding.getTxId(), FUNDING_HEIGHT, new Date(), 0L, null),
-                        new BlockTransaction(forged.getTxId(), 0, null, 1000L, null))));
-                new ElectrumServer().getReferencedTransactions(wallet, unconfirmed);
-                Assertions.assertFalse(holds(unconfirmed, forged), coin.getName() + " the same spend reported unconfirmed is left out");
+                Assertions.assertFalse(holds(mined, forged), coin.getName() + " forged spend at a reported height is left out");
+                Assertions.assertFalse(wallet.getTransactions().containsKey(forged.getTxId()), coin.getName() + " forged spend not in the wallet");
+                Assertions.assertTrue(holds(mined, funding), coin.getName() + " funding kept");
+                Assertions.assertEquals(List.of(Set.of(forged.getTxId())), warnings, coin.getName() + " warned");
             } finally {
+                EventManager.get().unregister(listener);
                 ElectrumServer.electrumServerRpc = new NoServer();
                 Coin.endScope(scope);
             }
+        }
+    }
+
+    @TestFactory
+    public List<DynamicTest> keepsAnHonestSpendReportedAsMinedOnEveryCoin() {
+        List<DynamicTest> tests = new ArrayList<>();
+        for(Coin coin : Coin.values()) {
+            for(PolicyType policyType : List.of(PolicyType.SINGLE_HD, PolicyType.MULTI_HD)) {
+                for(ScriptType scriptType : scriptTypes(coin, policyType)) {
+                    tests.add(DynamicTest.dynamicTest(coin.getName() + " " + policyType.getName() + " " + scriptType.getName(), () -> {
+                        Coin scope = Coin.beginScope(coin);
+                        try {
+                            ElectrumServer.clearPreviousServerState();
+                            Wallet wallet = wallet(coin, policyType, scriptType);
+                            Transaction funding = fund(wallet);
+                            Transaction spend = signedSpend(wallet);
+                            ServingServer server = new ServingServer();
+                            server.serve(spend);
+                            ElectrumServer.electrumServerRpc = server;
+
+                            Map<WalletNode, Set<BlockTransactionHash>> mined = minedHistory(wallet, funding, spend);
+                            new ElectrumServer().getReferencedTransactions(wallet, mined);
+                            Assertions.assertTrue(holds(mined, spend), "honest spend kept");
+                            Assertions.assertEquals(FUNDING_HEIGHT + 1, wallet.getTransactions().get(spend.getTxId()).getHeight(), "at its height");
+                        } finally {
+                            ElectrumServer.electrumServerRpc = new NoServer();
+                            Coin.endScope(scope);
+                        }
+                    }));
+                }
+            }
+        }
+
+        Assertions.assertEquals(24, tests.size());
+        return tests;
+    }
+
+    /**
+     * Only what is new to the wallet this pass is judged at a reported height: a confirmed spend already held is not judged again, so a pass over a
+     * wallet that has not changed fetches nothing for it
+     */
+    @Test
+    public void confirmedSpendAlreadyHeldIsNotJudgedAgain() throws Exception {
+        Coin scope = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            Wallet wallet = wallet(Coin.DOGECOIN, PolicyType.SINGLE_HD, ScriptType.P2PKH);
+            Transaction funding = fund(wallet);
+            Transaction forged = alterOutputs(signedSpend(wallet));
+            //Held from before this check existed, at the height it is reported at
+            Map<WalletNode, Set<BlockTransactionHash>> history = history(wallet, funding, forged, FUNDING_HEIGHT + 1);
+            new ElectrumServer().getReferencedTransactions(wallet, history);
+            Assertions.assertTrue(holds(history, forged));
+        } finally {
+            Coin.endScope(scope);
         }
     }
 
@@ -254,31 +315,81 @@ public class UnconfirmedSpendAllCoinsTest {
 
     /**
      * A Taproot spend commits to every output its transaction spends, so where one of them is not the wallet's it is fetched. Bellscoin, the one coin
-     * besides Litecoin with Taproot, is served by Esplora instances, whose EsploraServerRpc.getTransactions throws where the instance does not return a
-     * transaction, rather than answering with the error marker an Electrum server gives. The whole history pass then fails, instead of only that spend
-     * being left out as on Electrum (UnconfirmedSpendTest.fetchesTheTransactionsATaprootSpendCommitsTo).
+     * besides Litecoin with Taproot, is served by Esplora instances. One that has no such transaction answers 404, which now leaves out only the spend
+     * that needed it, as on an Electrum server, whether the spend is unconfirmed or at a reported height, rather than failing the whole pass. An
+     * instance that fails otherwise still fails the pass, as a lost connection must.
      */
     @Test
-    public void bellscoinTaprootSpendWithAnInputTheEsploraServerWillNotReturnFailsThePass() throws Exception {
+    public void bellscoinTaprootSpendWithAnInputTheEsploraServerWillNotReturnIsLeftOut() throws Exception {
         Coin scope = Coin.beginScope(Coin.BELLSCOIN);
+        Set<String> asked = ConcurrentHashMap.newKeySet();
+        AtomicInteger status = new AtomicInteger(404);
+        HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/", exchange -> {
+            asked.add(exchange.getRequestURI().getPath());
+            byte[] body = "Transaction not found".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status.get(), body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        http.start();
         try {
+            EsploraServerRpc esplora = new EsploraServerRpc("http://127.0.0.1:" + http.getAddress().getPort()) {
+                @Override
+                public Map<Integer, String> getBlockHeaders(Transport transport, Wallet wallet, Set<Integer> blockHeights) {
+                    return blockHeights.stream().collect(Collectors.toMap(height -> height, height -> "01000000" + "00".repeat(76)));
+                }
+            };
+            ElectrumServer.electrumServerRpc = esplora;
+
+            for(int height : List.of(0, FUNDING_HEIGHT + 1)) {
+                ElectrumServer.clearPreviousServerState();
+                asked.clear();
+                Wallet wallet = wallet(Coin.BELLSCOIN, PolicyType.SINGLE_HD, ScriptType.P2TR);
+                Transaction funding = fund(wallet);
+                Sha256Hash foreign = Sha256Hash.of(new byte[] {9});
+                Transaction withForeignInput = new Transaction(signedSpend(wallet).bitcoinSerialize());
+                withForeignInput.addInput(foreign, 0, new Script(new byte[0]));
+                withForeignInput = new Transaction(withForeignInput.bitcoinSerialize());
+
+                //Held unconfirmed from an earlier pass, and now reported at the given height
+                Map<WalletNode, Set<BlockTransactionHash>> history = history(wallet, funding, withForeignInput, 0);
+                if(height > 0) {
+                    history.values().iterator().next().removeIf(reference -> reference.getHeight() <= 0);
+                    history.values().iterator().next().add(new BlockTransaction(withForeignInput.getTxId(), height, null, 1000L, null));
+                }
+                new ElectrumServer().getReferencedTransactions(wallet, history);
+                Assertions.assertTrue(asked.contains("/tx/" + foreign + "/hex"), "height " + height + " spent transaction asked for");
+                Assertions.assertFalse(holds(history, withForeignInput), "height " + height + " spend left out");
+                Assertions.assertTrue(holds(history, funding), "height " + height + " funding kept");
+            }
+
+            //Any other failure is not an answer about the transaction, and fails the pass
+            status.set(500);
+            ElectrumServer.clearPreviousServerState();
             Wallet wallet = wallet(Coin.BELLSCOIN, PolicyType.SINGLE_HD, ScriptType.P2TR);
             Transaction funding = fund(wallet);
             Transaction withForeignInput = new Transaction(signedSpend(wallet).bitcoinSerialize());
             withForeignInput.addInput(Sha256Hash.of(new byte[] {9}), 0, new Script(new byte[0]));
             withForeignInput = new Transaction(withForeignInput.bitcoinSerialize());
             Map<WalletNode, Set<BlockTransactionHash>> history = history(wallet, funding, withForeignInput, 0);
-            ElectrumServer.electrumServerRpc = new SimpleElectrumServerRpc() {
-                @Override
-                public Map<String, String> getTransactions(Transport transport, Wallet wallet, Set<String> txids) {
-                    throw new ElectrumServerRpcException("Failed to retrieve transaction " + txids.iterator().next(), new RuntimeException("HTTP 404"));
-                }
-            };
             Assertions.assertThrows(ServerException.class, () -> new ElectrumServer().getReferencedTransactions(wallet, history));
         } finally {
+            http.stop(0);
             ElectrumServer.electrumServerRpc = new NoServer();
             Coin.endScope(scope);
         }
+    }
+
+    /**
+     * The history the server reports for the funded address with the spend first seen at a height, so it is fetched this pass
+     */
+    private static Map<WalletNode, Set<BlockTransactionHash>> minedHistory(Wallet wallet, Transaction funding, Transaction spend) {
+        WalletNode node = wallet.getNode(KeyPurpose.RECEIVE).getChildren().iterator().next();
+        Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = new LinkedHashMap<>();
+        nodeTransactionMap.put(node, new TreeSet<>(List.of(new BlockTransaction(funding.getTxId(), FUNDING_HEIGHT, new Date(), 0L, null),
+                new BlockTransaction(spend.getTxId(), FUNDING_HEIGHT + 1, null, null, null))));
+        return nodeTransactionMap;
     }
 
     private static Transaction body(Wallet wallet, Sha256Hash txid) {
@@ -390,7 +501,8 @@ public class UnconfirmedSpendAllCoinsTest {
 
         @Override
         public Map<Integer, String> getBlockHeaders(Transport transport, Wallet wallet, Set<Integer> blockHeights) {
-            return Collections.emptyMap();
+            //Any header will do: no coin here verifies them
+            return blockHeights.stream().collect(Collectors.toMap(height -> height, height -> "01000000" + "00".repeat(76)));
         }
     }
 

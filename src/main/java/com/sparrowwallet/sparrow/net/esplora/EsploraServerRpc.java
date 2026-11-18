@@ -271,7 +271,15 @@ public class EsploraServerRpc implements ElectrumServerRpc {
             try {
                 result.put(txid, client.getTransactionHex(txid));
             } catch(EsploraException e) {
-                throw new ElectrumServerRpcException("Failed to retrieve transaction " + txid, e);
+                //An instance that answers but has no such transaction (Esplora answers 404, or 400 for a txid it will not look up) is answered as an
+                //Electrum server answers one it cannot return, with the error marker, so the caller leaves out only what needed that transaction.
+                //Anything else, a failed connection above all, still fails the request
+                if(e.getStatus() == 404 || e.getStatus() == 400) {
+                    log.warn("Server has no transaction " + txid + " (HTTP " + e.getStatus() + ")");
+                    result.put(txid, Sha256Hash.ZERO_HASH.toString());
+                } else {
+                    throw new ElectrumServerRpcException("Failed to retrieve transaction " + txid, e);
+                }
             }
         }
         return result;
