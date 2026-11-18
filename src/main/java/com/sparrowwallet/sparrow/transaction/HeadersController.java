@@ -951,7 +951,7 @@ public class HeadersController extends TransactionFormController implements Init
                 && headersForm.getWalletTransaction().getWallet().getDefaultPolicy().getNumSignaturesRequired() < headersForm.getWalletTransaction().getWallet().getKeystores().size()) {
             signedByField.setVisible(true);
             Wallet wallet = headersForm.getWalletTransaction().getWallet();
-            Map<TransactionInput, Map<TransactionSignature, Keystore>> signedKeystores = wallet.getSignedKeystores(blockTransaction.getTransaction());
+            Map<TransactionInput, Map<TransactionSignature, Keystore>> signedKeystores = wallet.getSignedKeystores(blockTransaction.getTransaction(), blockTransaction.getHeight());
             StringJoiner joiner = new StringJoiner(", ");
             signedKeystores.values().stream().flatMap(map -> map.values().stream()).distinct().forEach(keystore -> joiner.add(keystore.getLabel()));
             signedBy.setText(joiner.toString());
@@ -1411,7 +1411,9 @@ public class HeadersController extends TransactionFormController implements Init
     }
 
     private void updateSignedKeystores(Wallet signingWallet) {
-        Map<?, Map<TransactionSignature, Keystore>> signedKeystoresMap = headersForm.getPsbt() == null ? signingWallet.getSignedKeystores(headersForm.getTransaction()) : signingWallet.getSignedKeystores(headersForm.getPsbt());
+        //A mined transaction is hashed by its chain's rule at the height of its block
+        Integer blockHeight = headersForm.getBlockTransaction() == null ? null : headersForm.getBlockTransaction().getHeight();
+        Map<?, Map<TransactionSignature, Keystore>> signedKeystoresMap = headersForm.getPsbt() == null ? signingWallet.getSignedKeystores(headersForm.getTransaction(), blockHeight) : signingWallet.getSignedKeystores(headersForm.getPsbt());
         Optional<Map<TransactionSignature, Keystore>> optSignedKeystores = signedKeystoresMap.values().stream().filter(map -> !map.isEmpty()).min(Comparator.comparingInt(Map::size));
         optSignedKeystores.ifPresent(signedKeystores -> {
             headersForm.getSignatureKeystoreMap().keySet().retainAll(signedKeystores.keySet());
@@ -1903,7 +1905,7 @@ public class HeadersController extends TransactionFormController implements Init
                 if(headersForm.getPsbt().isSigned()) {
                     if(headersForm.getSigningWallet() == null) {
                         //As no signing wallet is available, but we want to show the PSBT has been signed and automatically finalize it, construct a special wallet with default named keystores
-                        Wallet signedWallet = new FinalizingPSBTWallet(headersForm.getPsbt());
+                        Wallet signedWallet = new FinalizingPSBTWallet(headersForm.getPsbt(), headersForm.getWallet());
                         headersForm.setSigningWallet(signedWallet);
                     }
 
@@ -1955,7 +1957,7 @@ public class HeadersController extends TransactionFormController implements Init
             if(headersForm.getSigningWallet() != null) {
                 updateSignedKeystores(headersForm.getSigningWallet());
             } else if(headersForm.getPsbt().isSigned()) {
-                Wallet signedWallet = new FinalizingPSBTWallet(headersForm.getPsbt());
+                Wallet signedWallet = new FinalizingPSBTWallet(headersForm.getPsbt(), headersForm.getWallet());
                 headersForm.setSigningWallet(signedWallet);
                 finalizePSBT();
                 EventManager.get().post(new FinalizeTransactionEvent(headersForm.getPsbt(), signedWallet));

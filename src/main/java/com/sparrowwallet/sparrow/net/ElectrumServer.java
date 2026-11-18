@@ -1186,17 +1186,20 @@ public class ElectrumServer {
             //Every unconfirmed reference is judged, as upstream does. A confirmed one is judged too where its height is not proven, since a height the
             //server merely reports proves nothing, but only when it is new to the wallet this pass, so what is already held is not judged again
             Map<Sha256Hash, Transaction> unconfirmed = new HashMap<>();
+            Map<Sha256Hash, Integer> heights = new HashMap<>();
             for(Set<BlockTransactionHash> nodeReferences : nodeTransactionMap.values()) {
                 for(BlockTransactionHash reference : nodeReferences) {
                     boolean judged = reference.getHeight() <= 0 || (isUnprovenHeight(reference, proven) && fetched.containsKey(reference.getHash()));
                     Transaction transaction = judged ? inputTransactions.apply(reference.getHash()) : null;
                     if(transaction != null) {
                         unconfirmed.put(reference.getHash(), transaction);
+                        //Reported at more than one height, it is judged by the lowest, unconfirmed where it is reported so anywhere
+                        heights.merge(reference.getHash(), Math.max(reference.getHeight(), 0), Math::min);
                     }
                 }
             }
 
-            Set<Sha256Hash> unsigned = getUnsignedTransactions(wallet, unconfirmed, inputTransactions);
+            Set<Sha256Hash> unsigned = getUnsignedTransactions(wallet, unconfirmed, heights, inputTransactions);
             if(!unsigned.isEmpty()) {
                 transactionMap.keySet().removeAll(unsigned);
                 removeReferences(nodeTransactionMap, unsigned);
@@ -1378,6 +1381,17 @@ public class ElectrumServer {
      * Everything judged unsigned this pass is returned again by each later call.
      */
     Set<Sha256Hash> getUnsignedTransactions(Wallet wallet, Map<Sha256Hash, Transaction> unconfirmed, Function<Sha256Hash, Transaction> inputTransactions) throws ServerException {
+        return getUnsignedTransactions(wallet, unconfirmed, Collections.emptyMap(), inputTransactions);
+    }
+
+    /**
+     * As above, for transactions reported at the given heights (absent, zero or below for unconfirmed). Each is judged by its chain's signature hash at
+     * that height. One reported as mined is left out only on a definite finding that an input of this wallet's is not validly signed: where the check
+     * cannot be made (a spent transaction unknown, a signature drongo cannot read, an exception) it is kept, since the server's report is all there is
+     * against it. An unconfirmed one is left out whenever it is not shown to be signed, as upstream does.
+     */
+    Set<Sha256Hash> getUnsignedTransactions(Wallet wallet, Map<Sha256Hash, Transaction> unconfirmed, Map<Sha256Hash, Integer> heights,
+                                            Function<Sha256Hash, Transaction> inputTransactions) throws ServerException {
         Set<Sha256Hash> unsigned = unsignedThisPass.computeIfAbsent(wallet, w -> new LinkedHashSet<>());
         Set<Sha256Hash> found = new LinkedHashSet<>();
 
@@ -1394,13 +1408,20 @@ public class ElectrumServer {
             };
 
             for(Map.Entry<Sha256Hash, Transaction> entry : unjudged.entrySet()) {
+                int height = heights.getOrDefault(entry.getKey(), 0);
                 try {
-                    if(!wallet.getUnsignedInputs(entry.getValue(), lookup, walletOutputScripts).isEmpty()) {
+                    Set<TransactionInput> notSigned = height > 0 ? wallet.getInvalidlySignedInputs(entry.getValue(), lookup, walletOutputScripts, height)
+                            : wallet.getUnsignedInputs(entry.getValue(), lookup, walletOutputScripts, null);
+                    if(!notSigned.isEmpty()) {
                         found.add(entry.getKey());
                     }
                 } catch(Exception e) {
-                    log.warn("Could not verify the signatures of " + entry.getKey(), e);
-                    found.add(entry.getKey());
+                    if(height > 0) {
+                        log.warn("Could not verify the signatures of " + entry.getKey() + ", reported at height " + height + ", so it is kept", e);
+                    } else {
+                        log.warn("Could not verify the signatures of " + entry.getKey(), e);
+                        found.add(entry.getKey());
+                    }
                 }
             }
         }
@@ -3149,7 +3170,9 @@ public class ElectrumServer {
                     Map<Sha256Hash, Transaction> unconfirmed = fetched.values().stream().filter(blkTx -> blkTx.getTransaction() != null
                                     && (blkTx.getHeight() <= 0 || isUnprovenHeight(blkTx, proven)))
                             .collect(Collectors.toMap(BlockTransaction::getHash, BlockTransaction::getTransaction));
-                    fetched.keySet().removeAll(getUnsignedTransactions(wallet, unconfirmed, inputTransactions));
+                    Map<Sha256Hash, Integer> heights = fetched.values().stream().filter(blkTx -> unconfirmed.containsKey(blkTx.getHash()))
+                            .collect(Collectors.toMap(BlockTransaction::getHash, blkTx -> Math.max(blkTx.getHeight(), 0)));
+                    fetched.keySet().removeAll(getUnsignedTransactions(wallet, unconfirmed, heights, inputTransactions));
                 }
                 transactionMap.putAll(fetched);
                 wallet.updateTransactions(fetched);

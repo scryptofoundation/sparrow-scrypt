@@ -14,6 +14,7 @@ import com.sparrowwallet.drongo.protocol.Script;
 import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.protocol.Sha256Hash;
 import com.sparrowwallet.drongo.protocol.Transaction;
+import com.sparrowwallet.drongo.protocol.TransactionInput;
 import com.sparrowwallet.drongo.psbt.PSBT;
 import com.sparrowwallet.drongo.wallet.*;
 import com.sparrowwallet.sparrow.EventManager;
@@ -315,9 +316,9 @@ public class UnconfirmedSpendAllCoinsTest {
 
     /**
      * A Taproot spend commits to every output its transaction spends, so where one of them is not the wallet's it is fetched. Bellscoin, the one coin
-     * besides Litecoin with Taproot, is served by Esplora instances. One that has no such transaction answers 404, which now leaves out only the spend
-     * that needed it, as on an Electrum server, whether the spend is unconfirmed or at a reported height, rather than failing the whole pass. An
-     * instance that fails otherwise still fails the pass, as a lost connection must.
+     * besides Litecoin with Taproot, is served by Esplora instances. One that has no such transaction answers 404, which now affects only the spend that
+     * needed it, as on an Electrum server, rather than failing the whole pass: left out when unconfirmed, kept when reported as mined (it could not be
+     * checked, which is not a finding against it). An instance that fails otherwise still fails the pass, as a lost connection must.
      */
     @Test
     public void bellscoinTaprootSpendWithAnInputTheEsploraServerWillNotReturnIsLeftOut() throws Exception {
@@ -360,7 +361,8 @@ public class UnconfirmedSpendAllCoinsTest {
                 }
                 new ElectrumServer().getReferencedTransactions(wallet, history);
                 Assertions.assertTrue(asked.contains("/tx/" + foreign + "/hex"), "height " + height + " spent transaction asked for");
-                Assertions.assertFalse(holds(history, withForeignInput), "height " + height + " spend left out");
+                //Unconfirmed, a spend not shown to be signed is left out; reported as mined, a spend that could not be checked is kept
+                Assertions.assertEquals(height > 0, holds(history, withForeignInput), "height " + height + (height > 0 ? " spend kept" : " spend left out"));
                 Assertions.assertTrue(holds(history, funding), "height " + height + " funding kept");
             }
 
@@ -382,13 +384,119 @@ public class UnconfirmedSpendAllCoinsTest {
     }
 
     /**
-     * The history the server reports for the funded address with the spend first seen at a height, so it is fetched this pass
+     * A mined Luckycoin spend is checked by the rule at the height the server says it was mined at, which is what ConnectBlock checks: Bitcoin's hash
+     * below 276500, the chain id from 276500 on. Each kind is kept at a height where it could be valid and left out at one where it could not.
+     * Luckycoin test chains (testnet parameters) are used so the wallet can sign either way, by the tip it knows.
      */
-    private static Map<WalletNode, Set<BlockTransactionHash>> minedHistory(Wallet wallet, Transaction funding, Transaction spend) {
+    @Test
+    public void luckycoinSpendsReportedAsMinedAreJudgedByTheirHeight() throws Exception {
+        Network.set(Network.TESTNET);
+        Coin scope = Coin.beginScope(Coin.LUCKYCOIN);
+        try {
+            for(boolean chainId : List.of(false, true)) {
+                for(int height : List.of(Coin.LUCKYCOIN_CHAIN_ID_HEIGHT - 1, Coin.LUCKYCOIN_CHAIN_ID_HEIGHT)) {
+                    ElectrumServer.clearPreviousServerState();
+                    Wallet wallet = wallet(Coin.LUCKYCOIN, PolicyType.SINGLE_HD, ScriptType.P2PKH);
+                    Transaction funding = fund(wallet);
+                    Transaction spend = signedSpend(wallet, chainId ? Coin.LUCKYCOIN_CHAIN_ID_HEIGHT : 1000);
+                    ServingServer server = new ServingServer();
+                    server.serve(spend);
+                    ElectrumServer.electrumServerRpc = server;
+
+                    Map<WalletNode, Set<BlockTransactionHash>> mined = minedHistory(wallet, funding, spend, height);
+                    new ElectrumServer().getReferencedTransactions(wallet, mined);
+                    boolean valid = chainId == (height >= Coin.LUCKYCOIN_CHAIN_ID_HEIGHT);
+                    Assertions.assertEquals(valid, holds(mined, spend), (chainId ? "chain id" : "Bitcoin's hash") + " at height " + height);
+                }
+            }
+        } finally {
+            ElectrumServer.electrumServerRpc = new NoServer();
+            Coin.endScope(scope);
+        }
+    }
+
+    /**
+     * A spend reported as mined is left out only on a definite finding. One carrying a signature drongo cannot read (an encoding older chains
+     * accepted) is kept when mined and left out when unconfirmed, as upstream treats an unconfirmed one.
+     */
+    @Test
+    public void minedSpendWithASignatureThatCannotBeReadIsKept() throws Exception {
+        Coin scope = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            for(int height : List.of(FUNDING_HEIGHT + 1, 0)) {
+                ElectrumServer.clearPreviousServerState();
+                Wallet wallet = wallet(Coin.DOGECOIN, PolicyType.SINGLE_HD, ScriptType.P2PKH);
+                Transaction funding = fund(wallet);
+                Transaction unreadable = new Transaction(signedSpend(wallet).bitcoinSerialize());
+                List<com.sparrowwallet.drongo.protocol.ScriptChunk> chunks = unreadable.getInputs().getFirst().getScriptSig().getChunks();
+                byte[] signature = chunks.getFirst().data.clone();
+                signature[1] = (byte)0x7f;
+                unreadable.getInputs().getFirst().setScriptBytes(new Script(List.of(com.sparrowwallet.drongo.protocol.ScriptChunk.fromData(signature), chunks.get(1))).getProgram());
+                unreadable = new Transaction(unreadable.bitcoinSerialize());
+                Assertions.assertTrue(Wallet.hasUnreadableSignature(unreadable.getInputs().getFirst()));
+                ServingServer server = new ServingServer();
+                server.serve(unreadable);
+                ElectrumServer.electrumServerRpc = server;
+
+                Map<WalletNode, Set<BlockTransactionHash>> history = minedHistory(wallet, funding, unreadable, height);
+                new ElectrumServer().getReferencedTransactions(wallet, history);
+                Assertions.assertEquals(height > 0, holds(history, unreadable), "height " + height);
+            }
+        } finally {
+            ElectrumServer.electrumServerRpc = new NoServer();
+            Coin.endScope(scope);
+        }
+    }
+
+    /**
+     * An exception in the check is not a finding either: a spend reported as mined is kept, an unconfirmed one left out
+     */
+    @Test
+    public void minedSpendWhoseCheckFailsIsKept() throws Exception {
+        Coin scope = Coin.beginScope(Coin.DOGECOIN);
+        try {
+            for(int height : List.of(FUNDING_HEIGHT + 1, 0)) {
+                ElectrumServer.clearPreviousServerState();
+                Wallet wallet = configure(new Wallet("throws") {
+                    @Override
+                    public Set<TransactionInput> getUnsignedInputs(Transaction transaction, java.util.function.Function<Sha256Hash, Transaction> inputTransactions,
+                                                                   Map<Script, WalletNode> walletOutputScripts, Integer blockHeight) {
+                        throw new IllegalStateException("The check failed");
+                    }
+
+                    @Override
+                    public Set<TransactionInput> getInvalidlySignedInputs(Transaction transaction, java.util.function.Function<Sha256Hash, Transaction> inputTransactions,
+                                                                          Map<Script, WalletNode> walletOutputScripts, Integer blockHeight) {
+                        throw new IllegalStateException("The check failed");
+                    }
+                }, Coin.DOGECOIN, PolicyType.SINGLE_HD, ScriptType.P2PKH);
+                Transaction funding = fund(wallet);
+                Transaction spend = signedSpend(wallet);
+                ServingServer server = new ServingServer();
+                server.serve(spend);
+                ElectrumServer.electrumServerRpc = server;
+
+                Map<WalletNode, Set<BlockTransactionHash>> history = minedHistory(wallet, funding, spend, height);
+                new ElectrumServer().getReferencedTransactions(wallet, history);
+                Assertions.assertEquals(height > 0, holds(history, spend), "height " + height);
+            }
+        } finally {
+            ElectrumServer.electrumServerRpc = new NoServer();
+            Coin.endScope(scope);
+        }
+    }
+
+    /**
+     * The history the server reports for the funded address with the spend first seen at a height, so it is fetched this pass
+     */    private static Map<WalletNode, Set<BlockTransactionHash>> minedHistory(Wallet wallet, Transaction funding, Transaction spend) {
+        return minedHistory(wallet, funding, spend, FUNDING_HEIGHT + 1);
+    }
+
+    private static Map<WalletNode, Set<BlockTransactionHash>> minedHistory(Wallet wallet, Transaction funding, Transaction spend, int height) {
         WalletNode node = wallet.getNode(KeyPurpose.RECEIVE).getChildren().iterator().next();
         Map<WalletNode, Set<BlockTransactionHash>> nodeTransactionMap = new LinkedHashMap<>();
         nodeTransactionMap.put(node, new TreeSet<>(List.of(new BlockTransaction(funding.getTxId(), FUNDING_HEIGHT, new Date(), 0L, null),
-                new BlockTransaction(spend.getTxId(), FUNDING_HEIGHT + 1, null, null, null))));
+                new BlockTransaction(spend.getTxId(), height, null, null, null))));
         return nodeTransactionMap;
     }
 
@@ -413,7 +521,10 @@ public class UnconfirmedSpendAllCoinsTest {
     }
 
     private static Wallet wallet(Coin coin, PolicyType policyType, ScriptType scriptType) throws MnemonicException {
-        Wallet wallet = new Wallet(coin.getName());
+        return configure(new Wallet(coin.getName()), coin, policyType, scriptType);
+    }
+
+    private static Wallet configure(Wallet wallet, Coin coin, PolicyType policyType, ScriptType scriptType) throws MnemonicException {
         wallet.setCoin(coin);
         wallet.setPolicyType(policyType);
         wallet.setScriptType(scriptType);
@@ -441,11 +552,19 @@ public class UnconfirmedSpendAllCoinsTest {
     }
 
     private static Transaction signedSpend(Wallet wallet) throws Exception {
+        return signedSpend(wallet, null);
+    }
+
+    /** Signed with the wallet knowing the given tip (its stored height), or the one it has where null */
+    private static Transaction signedSpend(Wallet wallet, Integer tip) throws Exception {
         TransactionParameters params = new TransactionParameters(List.of(new PriorityUtxoSelector(FUNDING_HEIGHT + 6)), Collections.emptyList(),
                 List.of(new Payment(new P2PKHAddress(Utils.hexToBytes("cc00000000000000000000000000000000000033")), "test", 2_000_000_000L, false)),
                 Collections.emptyList(), Collections.emptySet(), 10.0d, 1.0d, 1.0d, null, FUNDING_HEIGHT + 6, false, false, true,
                 (w, utxos, outputs, vSize, rate) -> 0L);
         PSBT psbt = wallet.createWalletTransaction(params).createPSBT();
+        if(tip != null) {
+            wallet.setStoredBlockHeight(tip);
+        }
         wallet.sign(psbt);
         wallet.finalise(psbt);
         return new Transaction(psbt.extractTransaction().bitcoinSerialize());
