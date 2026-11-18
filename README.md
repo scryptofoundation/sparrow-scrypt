@@ -8,7 +8,7 @@ The [wiki](../../wiki) has a guide to every part of the app.
 
 ## Status: beta
 
-Current version: **2.5.7 beta 3** (tag `scrypt-v2.5.7-beta.3`), based on Sparrow Wallet 2.5.7.
+Current version: **2.5.7 beta 4** (tag `scrypt-v2.5.7-beta.4`), based on Sparrow Wallet 2.5.7.
 
 Sparrow-Scrypt is in public testing. Expect bugs. Use test coins where you can and small amounts where you can't, and never put a seed that holds real savings into a beta build.
 
