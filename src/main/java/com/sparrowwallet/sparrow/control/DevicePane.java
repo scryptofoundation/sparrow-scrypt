@@ -873,6 +873,8 @@ public class DevicePane extends TitledDescriptionPane {
     }
 
     private void sign() {
+        //The chain's signature hash, from the wallet that knows the chain and its tip, before anything is signed or refused (see Coin.getSigHashPrefix)
+        psbt.setSigHashPrefix(wallet.getSigHashPrefix());
         if(device.isCard()) {
             try {
                 CardApi cardApi = CardApi.getCardApi(device.getModel(), pin.get());

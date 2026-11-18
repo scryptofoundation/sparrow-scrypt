@@ -161,6 +161,8 @@ public class SatoCardApi extends CardApi {
     }
 
     void sign(Wallet wallet, PSBT psbt) throws CardException {
+        //The chain's signature hash, from the wallet that knows the chain and its tip, before anything is signed or refused (see Coin.getSigHashPrefix)
+        psbt.setSigHashPrefix(wallet.getSigHashPrefix());
         Map<PSBTInput, WalletNode> signingNodes = wallet.getSigningNodes(psbt);
         for(PSBTInput psbtInput : psbt.getPsbtInputs()) {
             if(!psbtInput.isSigned()) {

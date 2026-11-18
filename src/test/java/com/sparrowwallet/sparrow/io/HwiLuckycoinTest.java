@@ -67,6 +67,23 @@ public class HwiLuckycoinTest {
         Network.set(Network.TESTNET);
         PSBT psbt = psbt(Coin.LUCKYCOIN, 1000);
         Assertions.assertEquals(0, psbt.getSigHashPrefix().length);
+        //Past the refusal it goes on to the device, of which there is none here, so it fails there and not with the refusal
+        Throwable failure = Assertions.assertThrows(Throwable.class, () -> new Hwi().signPSBT(null, null, psbt, null, null, null));
+        Assertions.assertNotEquals(Hwi.LUCKYCOIN_HARDWARE_SIGNING_REFUSED, failure.getMessage());
+        Assertions.assertInstanceOf(NullPointerException.class, failure, String.valueOf(failure));
+    }
+
+    @Test
+    public void walletStampsItsChainBeforeTheRefusalIsDecided() throws Exception {
+        //An unmarked PSBT, as another app makes, says nothing of its chain until the signing wallet stamps it, as DevicePane and the card signers do
+        PSBT luckycoin = psbt(Coin.LUCKYCOIN);
+        PSBT unmarked = new PSBT(luckycoin.serialize(), false);
+        unmarked.getGlobalProprietary().remove(PSBT.COIN_MARK_KEY);
+        Assertions.assertEquals(0, unmarked.getSigHashPrefix().length);
+        Wallet wallet = new Wallet("Luckycoin");
+        wallet.setCoin(Coin.LUCKYCOIN);
+        unmarked.setSigHashPrefix(wallet.getSigHashPrefix());
+        Assertions.assertThrows(SignTransactionException.class, () -> new Hwi().signPSBT(null, null, unmarked, null, null, null));
     }
 
     private static PSBT psbt(Coin coin) throws Exception {
